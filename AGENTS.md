@@ -1,5 +1,37 @@
 # Trade History Agent Notes
 
+## Tech Stack
+
+- Backend framework: Python `FastAPI`.
+- Frontend framework: React + Vite + TypeScript.
+- Datastores:
+  - SQLite for trading/activity data.
+  - DuckDB for market/fx price datasets.
+- Package/runtime tooling:
+  - Python dependency and run tool: `uv` (required).
+  - Frontend package manager: `npm`.
+  - Container runtime: Docker / Docker Compose.
+
+## Tooling Rules
+
+- Always use `uv` for Python commands and workflows:
+  - use `uv sync`, `uv run ...`, and `uv run python ...`.
+  - do not use direct `pip`, `python`, or `pytest` commands unless explicitly requested.
+- Keep Python invocations reproducible from the repo root.
+
+## Security Scan Rules
+
+- Before every push, run a security/PII scan across source and config files.
+- Minimum scan scope:
+  - `src/`, `scripts/`, `tests/`, `frontend/src/`, `Dockerfile`, `docker-compose.yml`, `README.md`, `AGENTS.md`, `.env.example`.
+- Exclude local data and statements:
+  - `data/`, `Statements/`, `frontend/node_modules/`, `frontend/dist/`, `.venv/`, `.uv-cache/`.
+- Verify no committed personal identifiers, account numbers, addresses, secrets, private keys, or access tokens.
+- If sensitive values are found:
+  - replace with neutral placeholders,
+  - re-run scans,
+  - then commit/push.
+
 ## Parsing Rules
 
 - Treat account-ID extraction as high-risk.

@@ -1,0 +1,17 @@
+services:
+  trade-history:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trade-history
+    ports:
+      - "8000:8000"
+    environment:
+      TH_STATEMENTS_ROOT: /data/Statements
+      TH_SQLITE_PATH: /app/data/trading.sqlite
+      TH_DUCKDB_PATH: /app/data/market.duckdb
+      TH_AUTH_MODE: none
+    volumes:
+      - ./Statements:/data/Statements:ro
+      - ./data:/app/data
+
