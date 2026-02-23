@@ -87,8 +87,12 @@ export function AssetValueTab({ displayCurrency, privacy }: Props) {
           {[
             { key: "stock", title: t("stocks"), rows: group.positions.filter((p) => p.asset_type !== "option") },
             { key: "option", title: t("options"), rows: group.positions.filter((p) => p.asset_type === "option") }
-          ].map((section) =>
-            section.rows.length > 0 ? (
+          ].map((section) => {
+            if (section.rows.length === 0) {
+              return null;
+            }
+            const isOptionSection = section.key === "option";
+            return (
               <div key={`${group.group_key}-${section.key}`} className="asset-section">
                 <header className="asset-section-header">
                   <h4>{section.title}</h4>
@@ -107,6 +111,9 @@ export function AssetValueTab({ displayCurrency, privacy }: Props) {
                         <th>{t("institution")}</th>
                         <th>{t("account")}</th>
                         <th>{t("symbol")}</th>
+                        {isOptionSection ? <th>{t("optionType")}</th> : null}
+                        {isOptionSection ? <th>{t("strike")}</th> : null}
+                        {isOptionSection ? <th>{t("expiry")}</th> : null}
                         <th>{t("quantity")}</th>
                         <th>Native</th>
                         <th>{displayCurrency}</th>
@@ -116,10 +123,15 @@ export function AssetValueTab({ displayCurrency, privacy }: Props) {
                     </thead>
                     <tbody>
                       {section.rows.map((p) => (
-                        <tr key={`${group.group_key}-${section.key}-${p.symbol}-${p.account_id}`}>
+                        <tr
+                          key={`${group.group_key}-${section.key}-${p.account_id}-${p.symbol}-${p.option_root || ""}-${p.put_call || ""}-${p.strike || ""}-${p.expiry || ""}`}
+                        >
                           <td>{p.institution}</td>
                           <td>{p.account_id}</td>
-                          <td>{p.symbol}</td>
+                          <td>{isOptionSection ? p.option_root || p.symbol : p.symbol}</td>
+                          {isOptionSection ? <td>{p.put_call || "-"}</td> : null}
+                          {isOptionSection ? <td>{number(p.strike)}</td> : null}
+                          {isOptionSection ? <td>{p.expiry || "-"}</td> : null}
                           <td>{number(p.quantity)}</td>
                           <td>{money(p.market_value_native, p.currency_native, privacy)}</td>
                           <td>{money(p.market_value_display, displayCurrency, privacy)}</td>
@@ -131,8 +143,8 @@ export function AssetValueTab({ displayCurrency, privacy }: Props) {
                   </table>
                 </div>
               </div>
-            ) : null
-          )}
+            );
+          })}
         </div>
       ))}
     </section>

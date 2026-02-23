@@ -12,6 +12,7 @@ from trade_history.parsers.common import (
     parse_account_ids,
     parse_trade_like_line,
 )
+from trade_history.parsers.gemini_overrides import apply_event_override, load_event_overrides
 
 
 class RegexStatementParser:
@@ -53,6 +54,7 @@ class RegexStatementParser:
         inferred_year = self._infer_statement_year(file_path)
         account_set = {a.account_id for a in accounts}
         current_account = primary_account
+        event_overrides = load_event_overrides(file_path)
 
         for line in lines:
             found_account = extract_account_id_from_text(line.text)
@@ -80,6 +82,10 @@ class RegexStatementParser:
                 continue
             if parsed_event is None:
                 continue
+            line_ref = f"p{line.page_number}:l{line.line_number}".lower()
+            override = event_overrides.events_by_line_ref.get(line_ref)
+            if override:
+                parsed_event = apply_event_override(parsed_event, override)
             events.append(parsed_event)
             if earliest is None or parsed_event.trade_date < earliest:
                 earliest = parsed_event.trade_date

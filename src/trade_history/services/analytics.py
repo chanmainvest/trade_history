@@ -205,6 +205,10 @@ class AssetRow:
     institution: str
     symbol: str
     asset_type: str
+    option_root: str | None
+    strike: float | None
+    expiry: str | None
+    put_call: str | None
     sector: str
     quantity: float
     currency_native: str
@@ -233,6 +237,10 @@ def asset_values(
               a.institution,
               i.symbol_norm AS symbol,
               COALESCE(NULLIF(TRIM(i.asset_type), ''), 'equity') AS asset_type,
+              i.option_root,
+              i.strike,
+              i.expiry,
+              i.put_call,
               COALESCE(
                 NULLIF(TRIM(so.sector_override), ''),
                 NULLIF(TRIM(i.sector), ''),
@@ -241,7 +249,8 @@ def asset_values(
               ) AS sector,
               p.quantity,
               p.currency,
-              p.cost_total_native
+              p.cost_total_native,
+              COALESCE(i.multiplier, 1) AS multiplier
             FROM position_state p
             JOIN accounts a ON a.account_id = p.account_id
             JOIN instruments i ON i.instrument_id = p.instrument_id
@@ -263,6 +272,7 @@ def asset_values(
         symbol = str(row["symbol"])
         native_ccy = str(row["currency"] or "CAD").upper()
         quantity = float(row["quantity"] or 0.0)
+        multiplier = int(row["multiplier"] or 1)
         price_info = prices.get(symbol)
         if price_info:
             px = price_info[0]
@@ -270,9 +280,13 @@ def asset_values(
         else:
             px = None
             px_ccy = native_ccy
-        mv_native = quantity * px if px is not None else None
-        mv_display = _convert_currency(mv_native, px_ccy, target_currency, usdcad) if mv_native is not None else None
+        # Apply contract multiplier for options (typically 100)
+        mv_price_ccy = quantity * px * multiplier if px is not None else None
+        # Convert market value to native currency for apples-to-apples P&L
+        mv_native = _convert_currency(mv_price_ccy, px_ccy, native_ccy, usdcad) if mv_price_ccy is not None else None
+        mv_display = _convert_currency(mv_price_ccy, px_ccy, target_currency, usdcad) if mv_price_ccy is not None else None
         cost_native = float(row["cost_total_native"] or 0.0)
+        # Both mv_native and cost_native are now in native currency
         unrealized = (mv_native - cost_native) if mv_native is not None else None
 
         if group_by == "account":
@@ -289,6 +303,10 @@ def asset_values(
                 institution=str(row["institution"]),
                 symbol=symbol,
                 asset_type=str(row["asset_type"] or "equity").lower(),
+                option_root=row["option_root"],
+                strike=float(row["strike"]) if row["strike"] is not None else None,
+                expiry=str(row["expiry"]) if row["expiry"] else None,
+                put_call=str(row["put_call"]).upper() if row["put_call"] else None,
                 sector=str(row["sector"]),
                 quantity=quantity,
                 currency_native=native_ccy,
@@ -450,9 +468,11 @@ def monthly_statement_reconciliation(
     for _, item in grouped.items():
         opening = item["statement_cash_opening_native"]
         net_cash = item["txn_net_cash_flow_native"]
+        fee_total = item["txn_fee_total_native"]
         closing = item["statement_cash_closing_native"]
         if opening is not None:
-            item["derived_cash_closing_native"] = float(opening) + float(net_cash)
+            # Correct formula: closing = opening + gross_cash_flow - fees
+            item["derived_cash_closing_native"] = float(opening) + float(net_cash) - float(fee_total)
         if item["derived_cash_closing_native"] is not None and closing is not None:
             item["reconciliation_gap_native"] = float(closing) - float(item["derived_cash_closing_native"])
 

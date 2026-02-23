@@ -21,10 +21,12 @@ class CIBCImperialServiceParser(RegexStatementParser):
     institution = "CIBC Imperial Service"
 
     def _fallback_account_id(self, file_path: Path) -> str:
+        # Try to find an account-like token in the filename (e.g. 586-33338).
         name = file_path.stem.upper()
-        ym = re.search(r"(\d{4})[_-](\d{2})", name)
-        if ym:
-            return f"CIBCIS-{ym.group(1)}{ym.group(2)}"
+        acct = re.search(r"(\d{3}[-]?\d{5})", name)
+        if acct:
+            return acct.group(1)
+        # Use a stable fallback instead of YYYYMM which creates phantom accounts.
         return f"CIBCIS-{super()._fallback_account_id(file_path)}"
 
 

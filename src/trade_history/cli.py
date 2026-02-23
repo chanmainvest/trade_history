@@ -60,10 +60,11 @@ def init_db() -> None:
 def ingest_statements_cmd(
     root: Annotated[Path, typer.Option(help="Root folder containing institution statement folders")] = settings.statements_root,
     institution: Annotated[list[str], typer.Option(help="Institution(s): cibc, hsbc, rbc, td or exact folder name")] = [],
+    force: Annotated[bool, typer.Option(help="Reparse files even when checksum has not changed")] = False,
 ) -> None:
     """Ingest statement PDFs into SQLite."""
     expanded = _expand_institutions(institution)
-    result = run_statement_ingest(root=root, institutions=expanded or None)
+    result = run_statement_ingest(root=root, institutions=expanded or None, force=force)
     typer.echo(result)
 
 

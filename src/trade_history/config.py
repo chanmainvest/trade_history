@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     statements_root: Path = Path("Statements")
     sqlite_path: Path = Path("data/trading.sqlite")
     duckdb_path: Path = Path("data/market.duckdb")
+    gemini_overrides_root: Path = Path("data/gemini_overrides")
     parser_quarantine_csv: Path = Path("data/quarantine/unmapped_transactions.csv")
     default_currency: str = "CAD"
     api_host: str = "127.0.0.1"
@@ -31,7 +32,14 @@ class Settings(BaseSettings):
     auth_read_scope: str = "trade_history.read"
     auth_write_scope: str = "trade_history.write"
 
-    @field_validator("statements_root", "sqlite_path", "duckdb_path", "parser_quarantine_csv", mode="before")
+    @field_validator(
+        "statements_root",
+        "sqlite_path",
+        "duckdb_path",
+        "gemini_overrides_root",
+        "parser_quarantine_csv",
+        mode="before",
+    )
     @classmethod
     def _expand_path(cls, value: str | Path) -> Path:
         return Path(value)

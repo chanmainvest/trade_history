@@ -214,9 +214,29 @@ def _should_skip(conn: sqlite3.Connection, file_path: Path, checksum: str) -> bo
 
 
 def _clear_existing_events_for_file(conn: sqlite3.Connection, source_file_id: int) -> None:
+    conn.execute(
+        """
+        DELETE FROM lot_closures
+        WHERE close_event_id IN (
+          SELECT event_id FROM events WHERE source_file_id = ?
+        )
+        """,
+        (source_file_id,),
+    )
+    conn.execute(
+        """
+        DELETE FROM transfers
+        WHERE from_event_id IN (SELECT event_id FROM events WHERE source_file_id = ?)
+           OR to_event_id IN (SELECT event_id FROM events WHERE source_file_id = ?)
+        """,
+        (source_file_id, source_file_id),
+    )
     conn.execute("DELETE FROM events WHERE source_file_id = ?", (source_file_id,))
     conn.execute("DELETE FROM statement_snapshots WHERE source_file_id = ?", (source_file_id,))
-    conn.execute("DELETE FROM quarantine_transactions WHERE file_path = (SELECT file_path FROM statement_files WHERE id = ?)", (source_file_id,))
+    conn.execute(
+        "DELETE FROM quarantine_transactions WHERE file_path = (SELECT file_path FROM statement_files WHERE id = ?)",
+        (source_file_id,),
+    )
 
 
 def _normalize_institutions(institutions: Iterable[str] | None) -> set[str] | None:
@@ -229,6 +249,7 @@ def _normalize_institutions(institutions: Iterable[str] | None) -> set[str] | No
 def ingest_statements(
     root: Path | None = None,
     institutions: Iterable[str] | None = None,
+    force: bool = False,
 ) -> StatementIngestReport:
     init_db()
     report = StatementIngestReport()
@@ -251,7 +272,7 @@ def ingest_statements(
                 continue
 
             checksum = file_checksum(file_path)
-            if _should_skip(conn, file_path, checksum):
+            if not force and _should_skip(conn, file_path, checksum):
                 report.skipped_files += 1
                 continue
 

@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS raw_stooq_prices (
   volume DOUBLE,
   currency TEXT,
   raw_payload TEXT,
-  ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (symbol_norm, trade_date)
 );
 
 CREATE TABLE IF NOT EXISTS raw_yahoo_prices (
@@ -33,7 +34,8 @@ CREATE TABLE IF NOT EXISTS raw_yahoo_prices (
   volume DOUBLE,
   currency TEXT,
   raw_payload TEXT,
-  ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (symbol_norm, trade_date)
 );
 
 CREATE TABLE IF NOT EXISTS price_crossref (
@@ -44,7 +46,8 @@ CREATE TABLE IF NOT EXISTS price_crossref (
   quality_flag TEXT NOT NULL,
   canonical_source TEXT NOT NULL,
   canonical_close DOUBLE NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (symbol_norm, trade_date)
 );
 
 CREATE TABLE IF NOT EXISTS canonical_prices (
@@ -57,7 +60,8 @@ CREATE TABLE IF NOT EXISTS canonical_prices (
   volume DOUBLE,
   currency TEXT,
   source TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (symbol_norm, trade_date)
 );
 
 CREATE TABLE IF NOT EXISTS raw_boc_fx (
@@ -65,7 +69,8 @@ CREATE TABLE IF NOT EXISTS raw_boc_fx (
   series_id TEXT NOT NULL,
   value DOUBLE NOT NULL,
   raw_payload TEXT,
-  ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (observed_date, series_id)
 );
 
 CREATE TABLE IF NOT EXISTS canonical_fx (
@@ -74,7 +79,8 @@ CREATE TABLE IF NOT EXISTS canonical_fx (
   quote_currency TEXT NOT NULL,
   rate DOUBLE NOT NULL,
   source TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (observed_date, base_currency, quote_currency)
 );
 """
 

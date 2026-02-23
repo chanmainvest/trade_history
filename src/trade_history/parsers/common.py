@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import re
 from pathlib import Path
 from typing import Iterable
@@ -14,8 +14,13 @@ from trade_history.parsers.base import ParseIssue, ParsedEvent, ParsedInstrument
 DATE_FORMATS = (
     "%Y-%m-%d",
     "%Y/%m/%d",
+    "%d%b%Y",
+    "%d%b%y",
     "%d-%b-%Y",
     "%d-%b-%y",
+    "%B %d %Y",
+    "%B %d, %Y",
+    "%B %d",
     "%b %d %Y",
     "%b %d, %Y",
     "%b %d",
@@ -24,34 +29,180 @@ DATE_FORMATS = (
     "%m/%d/%Y",
     "%m/%d/%y",
 )
+MONTH_CODE_TO_NUM = {
+    "JA": 1,
+    "FB": 2,
+    "MR": 3,
+    "AP": 4,
+    "MY": 5,
+    "JN": 6,
+    "JL": 7,
+    "AU": 8,
+    "SE": 9,
+    "SP": 9,
+    "OC": 10,
+    "NV": 11,
+    "DC": 12,
+}
 
 DATE_RE = re.compile(
     r"(?P<date>\d{4}[-/]\d{2}[-/]\d{2}"
     r"|\d{2}[-/]\d{2}[-/]\d{2,4}"
     r"|\d{2}-[A-Za-z]{3}-\d{2,4}"
+    r"|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,?\s*\d{4})?"
     r"|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.?\s*\d{1,2}(?:,\s*\d{4})?)",
     re.IGNORECASE,
 )
 ACTION_RE = re.compile(
     r"\b(?P<action>BUY TO OPEN|SELL TO OPEN|BUY TO CLOSE|SELL TO CLOSE|BUY TO COVER|SELL SHORT|"
-    r"TFR IN|TFR OUT|TFR|TRANSFER IN|TRANSFER OUT|TRANSFER|BUY|SELL|BOT|SOLD|BTO|STO|BTC|STC|DIVIDENDS?|INTEREST|FEE|COMMISSION)\b",
+    r"TFR IN|TFR OUT|TFR|TRANSFER IN|TRANSFER OUT|TRANSFER|BOUGHT|BUY|SELL|BOT|SOLD|BTO|STO|BTC|STC|DIVIDENDS?|DISTRIBUTION|INTEREST|FEE|COMMISSION)\b",
     re.IGNORECASE,
 )
 CURRENCY_RE = re.compile(r"\b(?P<ccy>CAD|USD)\b", re.IGNORECASE)
 MONEY_RE = re.compile(r"(?<![A-Za-z])\(?-?\$?\d[\d,]*\.?\d*\)?(?![A-Za-z])")
-SYMBOL_RE = re.compile(r"\b[A-Z][A-Z0-9\.]{1,9}\b")
+# Keep equity fallback tight: prefer ticker-like tokens, not issuer/legal words.
+SYMBOL_RE = re.compile(r"\b[A-Z][A-Z0-9\.]{0,7}\b")
+PAREN_TICKER_RE = re.compile(r"\((?P<ticker>[A-Z][A-Z0-9\.]{0,7})\)")
 OPTION_RE = re.compile(
     r"(?P<root>[A-Z]{1,6})\s+(?P<expiry>\d{2}[A-Za-z]{3}\d{2}|\d{4}-\d{2}-\d{2})\s+"
     r"(?P<putcall>P|C|PUT|CALL)\s+(?P<strike>\d+(\.\d+)?)",
     re.IGNORECASE,
 )
+BROKER_OPTION_EXPIRY_RE = re.compile(
+    r"['’](?P<year>\d{2})(?:-[A-Z]{2})?\s*(?:(?P<day>\d{1,2})\s*)?"
+    r"(?P<month>JA|FB|MR|AP|MY|JN|JL|AU|SE|SP|OC|NV|DC)\b",
+    re.IGNORECASE,
+)
+NOISY_SYMBOL_TOKENS = {
+    "CAD",
+    "USD",
+    "RRSP",
+    "TFSA",
+    "RESP",
+    "ETF",
+    "DRIP",
+    "WITH",
+    "TAX",
+    "NET",
+    "LTD",
+    "INC",
+    "CORP",
+    "CORPORATION",
+    "COMPANY",
+    "PLC",
+    "HOLDINGS",
+    "FUND",
+    "FUNDS",
+    "DIVIDEND",
+    "DIVIDENDS",
+    "INTEREST",
+    "PREMIUM",
+    "MARKET",
+    "MONEY",
+    "ACCOUNT",
+    "TRANSFER",
+    "FROM",
+    "TO",
+    "CONTRIB",
+    "CONTRIBUTION",
+    "WITHDRAWAL",
+    "WITHDRAW",
+    "DEPOSIT",
+    "ACTIVITY",
+    "STATEMENT",
+    "DIRECT",
+    "WEBBROKER",
+    "INVEST",
+    "THIS",
+    "THAT",
+    "PUT",
+    "CALL",
+    "MAR",
+    "APR",
+    "MAY",
+    "JUN",
+    "JUL",
+    "AUG",
+    "SEP",
+    "OCT",
+    "NOV",
+    "DEC",
+    "JAN",
+    "FEB",
+    "NRT",
+    "CIBC",
+    "RBC",
+    "TD",
+    "HSBC",
+    "BANK",
+    "CANADIAN",
+    "CDN",
+    "INT",
+    "INTL",
+    "INCOME",
+    "ROYAL",
+    "TORONTO",
+    "HORIZONS",
+    "VANGUARD",
+    "ISHARES",
+    "MACKENZIE",
+    "MICROSOFT",
+    "APPLE",
+    "ALPHABET",
+    "PFIZER",
+    "INTEL",
+    "SUNCOR",
+    "NUTRIEN",
+    "NUTRIENLTD",
+    "ENBRIDGE",
+    "CAMECOCORP",
+    "INVGRCRP",
+    "RBB",
+    "CO",
+    "DIV",
+    "OF",
+    "US",
+    "REAL",
+    "BK",
+    "FD",
+    "PPTYS",
+    "CL",
+    "TERM",
+    "SHORT",
+    "GROUP",
+    "AS",
+    "EQ",
+    "NEW",
+    "PAC",
+    "GOLD",
+    "POWER",
+    "SUPER",
+    "RAIL",
+    "HYDRO",
+    "TREAS",
+    "HORZN",
+    "MICRO",
+    "TB",
+    "TR",
+    "LU",
+    "UNITY",
+    "TIPS",
+    "PAN",
+    "ONE",
+    "ICAHN",
+    "GLB",
+    "NL",
+    "MKT",
+    "FIRST",
+    "DOLL",
+}
 TRADE_ROW_RE = re.compile(
-    r"^(?P<date>(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.?\s*\d{1,2})\s+"
+    r"^(?P<date>(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.?\s*\d{1,2})\s+"
     r"(?P<action>[A-Za-z ]+?)\s+"
     r"(?P<desc>.+?)\s+"
-    r"(?P<qty>\(?-?\d[\d,]*(?:\.\d+)?\)?)\s+"
+    r"(?P<qty>\(?-?\d[\d,]*(?:\.\d+)?\)?-?)\s+"
     r"(?P<price>-?\d[\d,]*(?:\.\d+)?)\s+"
-    r"(?P<amount>\(?-?\$?\d[\d,]*(?:\.\d+)?\)?)",
+    r"(?P<amount>\(?-?\$?\d[\d,]*(?:\.\d+)?\)?-?)",
     re.IGNORECASE,
 )
 EXPLICIT_FEE_RE = re.compile(
@@ -78,6 +229,7 @@ SIDE_MAP = {
     "TFR IN": "TRANSFER_IN",
     "TFR OUT": "TRANSFER_OUT",
     "BUY": "BUY",
+    "BOUGHT": "BUY",
     "BOT": "BUY",
     "BUY TO OPEN": "BUY_TO_OPEN",
     "SELL": "SELL",
@@ -96,6 +248,7 @@ SIDE_MAP = {
     "TRANSFER OUT": "TRANSFER_OUT",
     "DIVIDEND": "DIVIDEND",
     "DIVIDENDS": "DIVIDEND",
+    "DISTRIBUTION": "DIVIDEND",
     "INTEREST": "INTEREST",
     "FEE": "FEE",
     "COMMISSION": "COMMISSION",
@@ -113,12 +266,23 @@ def parse_date(value: str | None, default_year: int | None = None) -> date | Non
     if not value:
         return None
     v = value.strip().replace(".", " ").replace("  ", " ")
+    compact_match = re.fullmatch(r"(?P<day>\d{1,2})(?P<month>[A-Za-z]{3})(?P<year>\d{2,4})", v)
+    if compact_match:
+        day = int(compact_match.group("day"))
+        month = compact_match.group("month")
+        year = compact_match.group("year")
+        try:
+            if len(year) == 2:
+                return datetime.strptime(f"{day:02d}{month}{year}", "%d%b%y").date()
+            return datetime.strptime(f"{day:02d}{month}{year}", "%d%b%Y").date()
+        except ValueError:
+            return None
     v = re.sub(r"([A-Za-z]{3,})(\d{1,2})", r"\1 \2", v)
     v = re.sub(r"\s+", " ", v)
     for fmt in DATE_FORMATS:
         try:
             dt = datetime.strptime(v, fmt)
-            if fmt == "%b %d" and default_year is not None:
+            if fmt in {"%b %d", "%B %d"} and default_year is not None:
                 dt = dt.replace(year=default_year)
             if dt.year < 100:
                 dt = dt.replace(year=2000 + dt.year)
@@ -126,6 +290,32 @@ def parse_date(value: str | None, default_year: int | None = None) -> date | Non
         except ValueError:
             continue
     return None
+
+
+def _third_friday(year: int, month: int) -> date:
+    first_day = date(year, month, 1)
+    first_friday_offset = (4 - first_day.weekday()) % 7
+    first_friday = first_day + timedelta(days=first_friday_offset)
+    return first_friday + timedelta(days=14)
+
+
+def _parse_broker_option_expiry(value: str | None) -> date | None:
+    if not value:
+        return None
+    match = BROKER_OPTION_EXPIRY_RE.search(value)
+    if not match:
+        return None
+    year = 2000 + int(match.group("year"))
+    month_code = match.group("month").upper()
+    month = MONTH_CODE_TO_NUM.get(month_code)
+    if month is None:
+        return None
+    day_token = match.group("day")
+    day = int(day_token) if day_token else _third_friday(year, month).day
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
 
 
 def parse_money(value: str | None) -> float | None:
@@ -136,6 +326,9 @@ def parse_money(value: str | None) -> float | None:
     if s.startswith("(") and s.endswith(")"):
         negative = True
         s = s[1:-1]
+    if s.endswith("-"):
+        negative = True
+        s = s[:-1]
     if s.startswith("-"):
         negative = True
         s = s[1:]
@@ -151,11 +344,15 @@ def parse_money(value: str | None) -> float | None:
 def normalize_symbol(symbol: str | None) -> str:
     if not symbol:
         return "UNKNOWN"
-    return symbol.strip().upper().replace("/", ".").replace("-", ".")
+    cleaned = symbol.strip().upper().replace("/", ".").replace("-", ".")
+    cleaned = cleaned.replace("'", "").replace("@", "")
+    cleaned = re.sub(r"[^A-Z0-9\.]", "", cleaned)
+    cleaned = re.sub(r"\.{2,}", ".", cleaned).strip(".")
+    return cleaned or "UNKNOWN"
 
 
 def _clean_symbol(token: str) -> str:
-    return normalize_symbol(token.replace("'", "").replace("@", ""))
+    return normalize_symbol(token)
 
 
 def extract_text_lines(file_path: Path) -> list[TextLine]:
@@ -173,55 +370,93 @@ def extract_text_lines(file_path: Path) -> list[TextLine]:
 
 def guess_instrument(line: str) -> ParsedInstrument | None:
     cibc_option_match = re.search(
-        r"\b(?P<putcall>PUT|CALL)\s+\.?(?P<root>[A-Z]{1,6})\s+"
-        r"(?:[A-Za-z]{3}\s+\d{1,2}\s+\d{4}|\d{2}[A-Za-z]{3}\d{2})\s+"
+        r"\b(?P<putcall>PUT|CALL)\s+\.?(?P<root>[A-Z][A-Z0-9\.\-]{0,9})\s+"
+        r"(?P<expiry>(?:[A-Za-z]{3}\s+\d{1,2}\s+\d{4}|\d{2}[A-Za-z]{3}\d{2}|\d{2}/\d{2}/\d{2,4}))\s+"
         r"(?P<strike>\d+(\.\d+)?)",
         line,
         re.IGNORECASE,
     )
     if cibc_option_match:
         put_call = "P" if cibc_option_match.group("putcall").upper() == "PUT" else "C"
+        expiry = parse_date(cibc_option_match.group("expiry")) or _parse_broker_option_expiry(
+            cibc_option_match.group("expiry")
+        )
         return ParsedInstrument(
             symbol_raw=cibc_option_match.group("root"),
             symbol_norm=_clean_symbol(cibc_option_match.group("root")),
             asset_type="option",
             option_root=_clean_symbol(cibc_option_match.group("root")),
             strike=float(cibc_option_match.group("strike")),
+            expiry=expiry,
             put_call=put_call,
             multiplier=100,
         )
 
     td_option_match = re.search(
-        r"\b(?P<putcall>PUT|CALL)\s*[-\s]?100\s+(?P<root>[A-Z]{1,6})(?:[^@]*@(?P<strike>\d+(\.\d+)?))?",
+        r"\b(?P<putcall>PUT|CALL)\s*-?\s*\d+\s+(?P<root>[A-Z][A-Z0-9\.\-]{0,9})\s*"
+        r"'(?P<year>\d{2})\s*(?:(?P<day>\d{1,2})\s*)?(?P<monthcode>JA|FB|MR|AP|MY|JN|JL|AU|SE|SP|OC|NV|DC)"
+        r"(?:@(?P<strike>\d+(?:\.\d+)?))?",
         line,
         re.IGNORECASE,
     )
     if td_option_match:
         put_call = "P" if td_option_match.group("putcall").upper() == "PUT" else "C"
-        strike = td_option_match.group("strike")
+        year = 2000 + int(td_option_match.group("year"))
+        month_code = td_option_match.group("monthcode").upper()
+        month = MONTH_CODE_TO_NUM.get(month_code)
+        day_token = td_option_match.group("day")
+        if month:
+            day = int(day_token) if day_token else _third_friday(year, month).day
+            try:
+                expiry = date(year, month, day)
+            except ValueError:
+                expiry = _third_friday(year, month)
+        else:
+            expiry = None
+        strike_str = td_option_match.group("strike")
+        strike = float(strike_str) if strike_str else None
         return ParsedInstrument(
             symbol_raw=td_option_match.group("root"),
             symbol_norm=_clean_symbol(td_option_match.group("root")),
             asset_type="option",
             option_root=_clean_symbol(td_option_match.group("root")),
-            strike=float(strike) if strike else None,
+            strike=strike,
+            expiry=expiry,
             put_call=put_call,
             multiplier=100,
         )
 
+    # HSBC option format: PUT-100TLT'2616JA@75 (no spaces between multiplier and root)
     hsbc_option_match = re.search(
-        r"\b(?P<putcall>PUT|CALL)-?100(?P<root>[A-Z]{1,6}).*?@(?P<strike>\d+(\.\d+)?)",
+        r"\b(?P<putcall>PUT|CALL)\s*-\s*(?P<mult>\d+)(?P<root>[A-Z][A-Z0-9\.\-]{0,9})"
+        r"'(?P<year>\d{2})(?:(?P<day>\d{1,2}))?(?P<monthcode>JA|FB|MR|AP|MY|JN|JL|AU|SE|SP|OC|NV|DC)"
+        r"(?:@(?P<strike>\d+(?:\.\d+)?))?",
         line,
         re.IGNORECASE,
     )
     if hsbc_option_match:
         put_call = "P" if hsbc_option_match.group("putcall").upper() == "PUT" else "C"
+        year = 2000 + int(hsbc_option_match.group("year"))
+        month_code = hsbc_option_match.group("monthcode").upper()
+        month = MONTH_CODE_TO_NUM.get(month_code)
+        day_token = hsbc_option_match.group("day")
+        if month:
+            day = int(day_token) if day_token else _third_friday(year, month).day
+            try:
+                expiry = date(year, month, day)
+            except ValueError:
+                expiry = _third_friday(year, month)
+        else:
+            expiry = None
+        strike_str = hsbc_option_match.group("strike")
+        strike = float(strike_str) if strike_str else None
         return ParsedInstrument(
             symbol_raw=hsbc_option_match.group("root"),
             symbol_norm=_clean_symbol(hsbc_option_match.group("root")),
             asset_type="option",
             option_root=_clean_symbol(hsbc_option_match.group("root")),
-            strike=float(hsbc_option_match.group("strike")),
+            strike=strike,
+            expiry=expiry,
             put_call=put_call,
             multiplier=100,
         )
@@ -245,71 +480,32 @@ def guess_instrument(line: str) -> ParsedInstrument | None:
             multiplier=100,
         )
 
-    candidates = SYMBOL_RE.findall(line)
+    paren_match = PAREN_TICKER_RE.search(line)
+    if paren_match:
+        token = normalize_symbol(paren_match.group("ticker"))
+        if token not in NOISY_SYMBOL_TOKENS and token != "UNKNOWN":
+            return ParsedInstrument(
+                symbol_raw=token,
+                symbol_norm=token,
+                asset_type="equity",
+            )
+
+    candidates = [normalize_symbol(token) for token in SYMBOL_RE.findall(line)]
     if not candidates:
         return None
-    # Ignore noisy upper-case tokens that are common text.
-    blocked = {
-        "CAD",
-        "USD",
-        "RRSP",
-        "TFSA",
-        "RESP",
-        "ETF",
-        "DRIP",
-        "WITH",
-        "TAX",
-        "NET",
-        "LTD",
-        "INC",
-        "CORP",
-        "CORPORATION",
-        "COMPANY",
-        "PLC",
-        "HOLDINGS",
-        "FUND",
-        "DIVIDEND",
-        "DIVIDENDS",
-        "INTEREST",
-        "PREMIUM",
-        "MARKET",
-        "MONEY",
-        "ACCOUNT",
-        "TRANSFER",
-        "FROM",
-        "TO",
-        "CONTRIB",
-        "CONTRIBUTION",
-        "WITHDRAWAL",
-        "WITHDRAW",
-        "DEPOSIT",
-        "ACTIVITY",
-        "STATEMENT",
-        "DIRECT",
-        "WEBBROKER",
-        "INVEST",
-        "THIS",
-        "THAT",
-        "PUT",
-        "CALL",
-        "MAR",
-        "APR",
-        "MAY",
-        "JUN",
-        "JUL",
-        "AUG",
-        "SEP",
-        "OCT",
-        "NOV",
-        "DEC",
-        "JAN",
-        "FEB",
-        "NRT",
-    }
     for token in candidates:
-        if token in blocked:
+        if token in NOISY_SYMBOL_TOKENS:
+            continue
+        if token == "UNKNOWN":
             continue
         if len(token) == 1:
+            # Single-letter equities are uncommon and often false positives.
+            continue
+        if token.endswith(".") or token.startswith("."):
+            continue
+        if token.count(".") > 1:
+            continue
+        if len(token) > 5 and "." not in token and not any(ch.isdigit() for ch in token):
             continue
         return ParsedInstrument(
             symbol_raw=token,
@@ -384,6 +580,12 @@ def parse_trade_like_line(
         event_type = "interest"
     elif side in {"FEE", "COMMISSION"}:
         event_type = "fee"
+
+    if event_type in {"dividend", "interest", "fee"}:
+        # Keep instrument for dividends to allow per-symbol dividend tracking.
+        # Only clear for generic interest/fee where no instrument applies.
+        if event_type != "dividend":
+            instrument = None
 
     trade_sides = {
         "BUY",

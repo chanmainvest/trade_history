@@ -22,6 +22,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# JetBrains / DataGrip
+.idea/
+*.iml
+
 # Local datasets / statements
 data/
 Statements/

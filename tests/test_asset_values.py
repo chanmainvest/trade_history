@@ -62,6 +62,11 @@ def test_asset_values_include_asset_type_and_account_group_institution_prefix() 
         position_types = {item["symbol"]: item["asset_type"] for item in group["positions"]}
         assert position_types["AAPL"] == "equity"
         assert position_types["AAPL_OPT"] == "option"
+        option_row = next(item for item in group["positions"] if item["symbol"] == "AAPL_OPT")
+        assert option_row["option_root"] == "AAPL"
+        assert option_row["strike"] == 200.0
+        assert option_row["expiry"] == "2025-03-21"
+        assert option_row["put_call"] == "C"
     finally:
         settings.sqlite_path = original_sqlite_path
         if test_path.exists():

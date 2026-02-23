@@ -1,0 +1,1251 @@
+Analyze this brokerage statement PDF text extract. I need you to identify:
+
+1. ACCOUNT INFORMATION:
+   - Account number(s) found in the document
+   - How and where the account number appears (exact text pattern)
+   - Institution name
+
+2. TRANSACTION FORMAT:
+   - Show 3-5 example transaction lines EXACTLY as they appear
+   - Identify the column layout: what order are date, action, symbol, quantity, price, amount, commission
+   - What date format is used (e.g., "Jan 15", "2024-01-15", "01/15/2024")?
+   - How are BUY/SELL actions written?
+   - How are currency indicators shown (CAD/USD)?
+   - Are transactions split across multiple lines?
+
+3. OPTION TRANSACTIONS (if any):
+   - Show exact option line format
+   - How is PUT/CALL indicated?
+   - How is strike price shown?
+   - How is expiry date shown?
+   - What is the multiplier notation?
+
+4. DIVIDEND/INTEREST LINES:
+   - Show exact format of dividend lines
+   - Is the stock symbol shown on dividend lines?
+   - How is the amount shown?
+
+5. TRANSFER LINES (if any):
+   - Show exact format
+   - How is IN/OUT direction indicated?
+
+6. BALANCE/SNAPSHOT LINES:
+   - Show exact format for opening cash balance
+   - Show exact format for closing cash balance
+   - Show exact format for portfolio total value
+   - What keywords identify these lines?
+
+7. MULTI-CURRENCY:
+   - Does the statement have separate CAD and USD sections?
+   - How are they delineated?
+
+Return the raw text patterns exactly as they appear - do not normalize or clean them. This is for writing regex parsers.
+
+Statement lines JSON follows:
+
+{
+  "file_path": "Statements\\CIBC Invest Direct\\2024_06_eStatements.pdf",
+  "line_count": 445,
+  "lines": [
+    {
+      "source_line_ref": "p1:l14",
+      "text": "083483"
+    },
+    {
+      "source_line_ref": "p1:l45",
+      "text": "$$"
+    },
+    {
+      "source_line_ref": "p1:l46",
+      "text": "$$"
+    },
+    {
+      "source_line_ref": "p1:l47",
+      "text": "$$"
+    },
+    {
+      "source_line_ref": "p1:l48",
+      "text": "Investor's Edge Investment Account"
+    },
+    {
+      "source_line_ref": "p1:l49",
+      "text": "June 1-June 28, 2024"
+    },
+    {
+      "source_line_ref": "p1:l50",
+      "text": "(previous statement May 31, 2024)"
+    },
+    {
+      "source_line_ref": "p1:l51",
+      "text": "Account # 588-93738            YAT HONG CHAN &"
+    },
+    {
+      "source_line_ref": "p1:l52",
+      "text": "WAH FONG SO JT/WROS"
+    },
+    {
+      "source_line_ref": "p1:l53",
+      "text": "Order Execution Only Account"
+    },
+    {
+      "source_line_ref": "p1:l54",
+      "text": "6038 EWART ST"
+    },
+    {
+      "source_line_ref": "p1:l55",
+      "text": "BURNABY BC V5J 2X2"
+    },
+    {
+      "source_line_ref": "p1:l56",
+      "text": "To Contact Us:"
+    },
+    {
+      "source_line_ref": "p1:l57",
+      "text": "1-800-567-3343"
+    },
+    {
+      "source_line_ref": "p1:l58",
+      "text": "www.investorsedge.cibc.com"
+    },
+    {
+      "source_line_ref": "p1:l59",
+      "text": "Items For Your Attention:"
+    },
+    {
+      "source_line_ref": "p1:l60",
+      "text": "Portfolio Overview - C$ equivalent"
+    },
+    {
+      "source_line_ref": "p1:l61",
+      "text": "• You have securities in your account which"
+    },
+    {
+      "source_line_ref": "p1:l62",
+      "text": "percentage of market value"
+    },
+    {
+      "source_line_ref": "p1:l63",
+      "text": "will expire shortly. Please refer to \"Portfolio"
+    },
+    {
+      "source_line_ref": "p1:l64",
+      "text": "market value     at jun 28"
+    },
+    {
+      "source_line_ref": "p1:l65",
+      "text": "Assets\" section for details."
+    },
+    {
+      "source_line_ref": "p1:l66",
+      "text": "• Effective May 27 (in Canada) and May 28 Cash & Cash Equivalents 20% $376,965.81"
+    },
+    {
+      "source_line_ref": "p1:l67",
+      "text": "(in the US), North American markets have Fixed Income  —             —"
+    },
+    {
+      "source_line_ref": "p1:l68",
+      "text": "moved to a settlement period of 1 business day Equities 48%  $884,347.56"
+    },
+    {
+      "source_line_ref": "p1:l69",
+      "text": "after trade date (T+1) from the previous T+2 Mutual Funds 32% $583,986.29"
+    },
+    {
+      "source_line_ref": "p1:l70",
+      "text": "standard. This means that when you buy or Other        0%      $8,281.42"
+    },
+    {
+      "source_line_ref": "p1:l71",
+      "text": "sell equities or some mutual funds, you'll"
+    },
+    {
+      "source_line_ref": "p1:l72",
+      "text": "total portfolio      100%   $1,853,581.08"
+    },
+    {
+      "source_line_ref": "p1:l73",
+      "text": "receive your securities or proceeds in 1 business"
+    },
+    {
+      "source_line_ref": "p1:l74",
+      "text": "day instead of 2.               Income Summary"
+    },
+    {
+      "source_line_ref": "p1:l75",
+      "text": "• Change notice: The Options Trading"
+    },
+    {
+      "source_line_ref": "p1:l76",
+      "text": "Canadian Dollars  this month   year to date"
+    },
+    {
+      "source_line_ref": "p1:l77",
+      "text": "Agreement and Risk Disclosures Statement for"
+    },
+    {
+      "source_line_ref": "p1:l78",
+      "text": "Futures & Options will be replaced by the Dividends $913.68    $2,150.24"
+    },
+    {
+      "source_line_ref": "p1:l79",
+      "text": "Derivatives Trading Agreement and Interest Expense      —        $354.02"
+    },
+    {
+      "source_line_ref": "p1:l80",
+      "text": "Derivatives Risk Disclosure Statement found"
+    },
+    {
+      "source_line_ref": "p1:l81",
+      "text": "U.S. Dollars      this month   year to date"
+    },
+    {
+      "source_line_ref": "p1:l82",
+      "text": "in the CIBC Investor's Edge Agreements and"
+    },
+    {
+      "source_line_ref": "p1:l83",
+      "text": "Disclosures Booklet effective September 2024 Dividends $440.50 $7,494.01"
+    },
+    {
+      "source_line_ref": "p1:l84",
+      "text": "and made available on our Legal page Interest Expense   —         $90.68"
+    },
+    {
+      "source_line_ref": "p1:l85",
+      "text": "• www.investorsedge.cibc.com/en/legal.html for"
+    },
+    {
+      "source_line_ref": "p1:l86",
+      "text": "more details. Questions? Contact us."
+    },
+    {
+      "source_line_ref": "p1:l87",
+      "text": "Account Activity — Canadian Dollars"
+    },
+    {
+      "source_line_ref": "p1:l88",
+      "text": "date activity description                   quantity   price        amount"
+    },
+    {
+      "source_line_ref": "p1:l89",
+      "text": "Jun 1 —       Opening cash balance             —         —         $827.52"
+    },
+    {
+      "source_line_ref": "p1:l90",
+      "text": "Jun 3 Dividend CIBC DIVIDEND INCOME FUND    40.947       —             —"
+    },
+    {
+      "source_line_ref": "p1:l91",
+      "text": "CLASS F"
+    },
+    {
+      "source_line_ref": "p1:l92",
+      "text": "REINVESTED DIV @ 12.0852"
+    },
+    {
+      "source_line_ref": "p1:l93",
+      "text": "Jun 3 Dividend CIBC MONTHLY INCOME FUND    164.175       —             —"
+    },
+    {
+      "source_line_ref": "p1:l94",
+      "text": "CLASS F"
+    },
+    {
+      "source_line_ref": "p1:l95",
+      "text": "REINVESTED DIV @ 9.4531"
+    },
+    {
+      "source_line_ref": "p1:l96",
+      "text": "HRI-*05013100*"
+    },
+    {
+      "source_line_ref": "p1:l97",
+      "text": "083483    account # 588-93738    page 1 of 9  SEE OVER»"
+    },
+    {
+      "source_line_ref": "p2:l3",
+      "text": "Investor's Edge Investment Account"
+    },
+    {
+      "source_line_ref": "p2:l4",
+      "text": "June 1-June 28, 2024"
+    },
+    {
+      "source_line_ref": "p2:l5",
+      "text": "(previous statement May 31, 2024)"
+    },
+    {
+      "source_line_ref": "p2:l10",
+      "text": "$"
+    },
+    {
+      "source_line_ref": "p2:l12",
+      "text": "Jun 11 Dividend WHEATON PRECIOUS METALS        —         —         $426.25"
+    },
+    {
+      "source_line_ref": "p2:l13",
+      "text": "CORP COM CASH DIV ON 2000 SHS"
+    },
+    {
+      "source_line_ref": "p2:l14",
+      "text": "REC MAY 29 2024"
+    },
+    {
+      "source_line_ref": "p2:l15",
+      "text": "PAY JUN 11 2024"
+    },
+    {
+      "source_line_ref": "p2:l16",
+      "text": "Jun 18 Transfer CALL .FNV MAR 21 2025 200       20       —             —"
+    },
+    {
+      "source_line_ref": "p2:l17",
+      "text": "FRANCO-NEVADA CORPORATION"
+    },
+    {
+      "source_line_ref": "p2:l18",
+      "text": "SAME A/C CURRENCY TRANSFER"
+    },
+    {
+      "source_line_ref": "p2:l19",
+      "text": "Jun 18 Transfer PUT .FNV MAR 21 2025 150       -10       —             —"
+    },
+    {
+      "source_line_ref": "p2:l20",
+      "text": "FRANCO-NEVADA CORPORATION"
+    },
+    {
+      "source_line_ref": "p2:l21",
+      "text": "SAME A/C CURRENCY TRANSFER"
+    },
+    {
+      "source_line_ref": "p2:l23",
+      "text": "Jun 18 Transfer PUT .NGT MAR 21 2025 50        -20       —             —"
+    },
+    {
+      "source_line_ref": "p2:l24",
+      "text": "NEWMONT CORPORATION"
+    },
+    {
+      "source_line_ref": "p2:l25",
+      "text": "SAME A/C CURRENCY TRANSFER"
+    },
+    {
+      "source_line_ref": "p2:l26",
+      "text": "Jun 18 Bought CALL .NGT MAR 21 2025 60          10    5.000     -$5,019.45"
+    },
+    {
+      "source_line_ref": "p2:l27",
+      "text": "NEWMONT CORPORATION"
+    },
+    {
+      "source_line_ref": "p2:l28",
+      "text": "UNSOLICITED OPEN CONTRACT"
+    },
+    {
+      "source_line_ref": "p2:l29",
+      "text": "Jun 19 Sold   B2GOLD CORP UNSOLICITED       -3,500    3.542     $12,391.55"
+    },
+    {
+      "source_line_ref": "p2:l30",
+      "text": "Jun 19 Sold   METALLA ROYALTY & STREAMING   -2,200    3.948      $8,678.05"
+    },
+    {
+      "source_line_ref": "p2:l31",
+      "text": "LTD COM UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p2:l32",
+      "text": "Jun 19 Bought SPROTT PHYSICAL URANIUM          600   27.950    -$16,776.95"
+    },
+    {
+      "source_line_ref": "p2:l33",
+      "text": "TRUST UNITS UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p2:l34",
+      "text": "Jun 24 Expired CALL .NGT JUN 21 2024 60        -40       —             —"
+    },
+    {
+      "source_line_ref": "p2:l35",
+      "text": "NEWMONT CORPORATION"
+    },
+    {
+      "source_line_ref": "p2:l36",
+      "text": "OPTION EXPIRATION - EXPIRED"
+    },
+    {
+      "source_line_ref": "p2:l37",
+      "text": "Jun 24 Expired PUT .NGT JUN 21 2024 50          20       —             —"
+    },
+    {
+      "source_line_ref": "p2:l38",
+      "text": "NEWMONT CORPORATION"
+    },
+    {
+      "source_line_ref": "p2:l39",
+      "text": "OPTION EXPIRATION - EXPIRED"
+    },
+    {
+      "source_line_ref": "p2:l41",
+      "text": "Jun 24 Expired PUT .FNV JUN 21 2024 150         10       —             —"
+    },
+    {
+      "source_line_ref": "p2:l42",
+      "text": "FRANCO-NEVADA CORPORATION"
+    },
+    {
+      "source_line_ref": "p2:l43",
+      "text": "OPTION EXPIRATION - EXPIRED"
+    },
+    {
+      "source_line_ref": "p2:l44",
+      "text": "Jun 24 Dividend B2GOLD CORP                    —         —         $191.73"
+    },
+    {
+      "source_line_ref": "p2:l45",
+      "text": "CASH DIV ON 3500 SHS"
+    },
+    {
+      "source_line_ref": "p2:l46",
+      "text": "REC JUN 11 2024"
+    },
+    {
+      "source_line_ref": "p2:l47",
+      "text": "PAY JUN 24 2024"
+    },
+    {
+      "source_line_ref": "p2:l48",
+      "text": "Jun 27 Dividend FRANCO-NEVADA CORPORATION      —         —         $295.70"
+    },
+    {
+      "source_line_ref": "p2:l49",
+      "text": "CASH DIV ON 600 SHS"
+    },
+    {
+      "source_line_ref": "p2:l50",
+      "text": "REC JUN 13 2024"
+    },
+    {
+      "source_line_ref": "p2:l51",
+      "text": "PAY JUN 27 2024"
+    },
+    {
+      "source_line_ref": "p2:l52",
+      "text": "Jun 28 —      Closing cash balance             —         —       $1,014.40"
+    },
+    {
+      "source_line_ref": "p2:l53",
+      "text": "$"
+    },
+    {
+      "source_line_ref": "p2:l54",
+      "text": "Account Activity — Canadian Dollars (continued)"
+    },
+    {
+      "source_line_ref": "p2:l55",
+      "text": "date activity description                   quantity   price        amount"
+    },
+    {
+      "source_line_ref": "p2:l61",
+      "text": "083483    account # 588-93738    page 2 of 9"
+    },
+    {
+      "source_line_ref": "p3:l3",
+      "text": "Investor's Edge Investment Account"
+    },
+    {
+      "source_line_ref": "p3:l4",
+      "text": "June 1-June 28, 2024"
+    },
+    {
+      "source_line_ref": "p3:l5",
+      "text": "(previous statement May 31, 2024)"
+    },
+    {
+      "source_line_ref": "p3:l10",
+      "text": "$$"
+    },
+    {
+      "source_line_ref": "p3:l11",
+      "text": "Account Activity — U.S. Dollars"
+    },
+    {
+      "source_line_ref": "p3:l12",
+      "text": "date activity description                   quantity   price        amount"
+    },
+    {
+      "source_line_ref": "p3:l13",
+      "text": "Jun 1 —       Opening cash balance             —         —     $170,340.84"
+    },
+    {
+      "source_line_ref": "p3:l14",
+      "text": "Jun 7 Dividend FIRST MAJESTIC SILVER CORP      —         —          $9.25"
+    },
+    {
+      "source_line_ref": "p3:l15",
+      "text": "CASH DIV ON 2500 SHS"
+    },
+    {
+      "source_line_ref": "p3:l16",
+      "text": "REC MAY 17 2024"
+    },
+    {
+      "source_line_ref": "p3:l17",
+      "text": "PAY JUN 07 2024"
+    },
+    {
+      "source_line_ref": "p3:l18",
+      "text": "Jun 11 Dividend HECLA MINING COMPANY           —         —         $31.25"
+    },
+    {
+      "source_line_ref": "p3:l19",
+      "text": "CASH DIV ON 5000 SHS"
+    },
+    {
+      "source_line_ref": "p3:l20",
+      "text": "REC MAY 24 2024"
+    },
+    {
+      "source_line_ref": "p3:l21",
+      "text": "PAY JUN 11 2024"
+    },
+    {
+      "source_line_ref": "p3:l22",
+      "text": "Jun 11 Tax    NON-RES TAX WITHHELD             —         —         -$4.68"
+    },
+    {
+      "source_line_ref": "p3:l23",
+      "text": "Jun 14 Dividend WEYERHAEUSER CO                —         —         $400.00"
+    },
+    {
+      "source_line_ref": "p3:l24",
+      "text": "CASH DIV ON 2000 SHS"
+    },
+    {
+      "source_line_ref": "p3:l25",
+      "text": "REC MAY 31 2024"
+    },
+    {
+      "source_line_ref": "p3:l26",
+      "text": "PAY JUN 14 2024"
+    },
+    {
+      "source_line_ref": "p3:l27",
+      "text": "Jun 14 Tax    NON-RES TAX WITHHELD             —         —         -$60.00"
+    },
+    {
+      "source_line_ref": "p3:l28",
+      "text": "Jun 18 Transfer CALL .FNV MAR 21 2025 200      -20       —             —"
+    },
+    {
+      "source_line_ref": "p3:l29",
+      "text": "FRANCO-NEVADA CORPORATION"
+    },
+    {
+      "source_line_ref": "p3:l30",
+      "text": "SAME A/C CURRENCY TRANSFER"
+    },
+    {
+      "source_line_ref": "p3:l31",
+      "text": "Jun 18 Transfer PUT .FNV MAR 21 2025 150        10       —             —"
+    },
+    {
+      "source_line_ref": "p3:l32",
+      "text": "FRANCO-NEVADA CORPORATION"
+    },
+    {
+      "source_line_ref": "p3:l33",
+      "text": "SAME A/C CURRENCY TRANSFER"
+    },
+    {
+      "source_line_ref": "p3:l34",
+      "text": "Jun 18 Transfer PUT .NGT MAR 21 2025 50         20       —             —"
+    },
+    {
+      "source_line_ref": "p3:l35",
+      "text": "NEWMONT CORPORATION"
+    },
+    {
+      "source_line_ref": "p3:l36",
+      "text": "SAME A/C CURRENCY TRANSFER"
+    },
+    {
+      "source_line_ref": "p3:l37",
+      "text": "Jun 18 Bought CALL .FNV MAR 21 2025 200         20    4.300     -$6,382.22"
+    },
+    {
+      "source_line_ref": "p3:l38",
+      "text": "FRANCO-NEVADA CORPORATION"
+    },
+    {
+      "source_line_ref": "p3:l39",
+      "text": "UNSOLICITED OPEN CONTRACT"
+    },
+    {
+      "source_line_ref": "p3:l40",
+      "text": "EXCHANGE RATE .73937153"
+    },
+    {
+      "source_line_ref": "p3:l41",
+      "text": "Jun 18 Bought PUT GLD JAN 16 2026 180          150    1.750    -$26,444.45"
+    },
+    {
+      "source_line_ref": "p3:l42",
+      "text": "SPDR GOLD TR UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p3:l43",
+      "text": "OPEN CONTRACT"
+    },
+    {
+      "source_line_ref": "p3:l45",
+      "text": "Jun 18 Bought PUT GLD JAN 16 2026 200          100    5.000    -$50,131.95"
+    },
+    {
+      "source_line_ref": "p3:l46",
+      "text": "SPDR GOLD TR UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p3:l47",
+      "text": "OPEN CONTRACT"
+    },
+    {
+      "source_line_ref": "p3:l48",
+      "text": "Jun 18 Sold   PUT .FNV MAR 21 2025 150         -10    9.250      $6,605.04"
+    },
+    {
+      "source_line_ref": "p3:l49",
+      "text": "FRANCO-NEVADA CORPORATION"
+    },
+    {
+      "source_line_ref": "p3:l50",
+      "text": "UNSOLICITED OPEN CONTRACT"
+    },
+    {
+      "source_line_ref": "p3:l51",
+      "text": "EXCHANGE RATE .71556351"
+    },
+    {
+      "source_line_ref": "p3:l52",
+      "text": "Jun 18 Sold   PUT .NGT MAR 21 2025 50          -20    2.800      $3,984.29"
+    },
+    {
+      "source_line_ref": "p3:l53",
+      "text": "NEWMONT CORPORATION"
+    },
+    {
+      "source_line_ref": "p3:l54",
+      "text": "UNSOLICITED OPEN CONTRACT"
+    },
+    {
+      "source_line_ref": "p3:l55",
+      "text": "EXCHANGE RATE .71556351"
+    },
+    {
+      "source_line_ref": "p3:l59",
+      "text": "HRI-*05023200*"
+    },
+    {
+      "source_line_ref": "p3:l61",
+      "text": "083483    account # 588-93738    page 3 of 9  SEE OVER»"
+    },
+    {
+      "source_line_ref": "p4:l3",
+      "text": "Investor's Edge Investment Account"
+    },
+    {
+      "source_line_ref": "p4:l4",
+      "text": "June 1-June 28, 2024"
+    },
+    {
+      "source_line_ref": "p4:l5",
+      "text": "(previous statement May 31, 2024)"
+    },
+    {
+      "source_line_ref": "p4:l10",
+      "text": "$"
+    },
+    {
+      "source_line_ref": "p4:l12",
+      "text": "Jun 18 Sold   CALL GLD JAN 16 2026 250         -50   10.208     $50,968.13"
+    },
+    {
+      "source_line_ref": "p4:l13",
+      "text": "SPDR GOLD TR UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p4:l14",
+      "text": "OPEN CONTRACT"
+    },
+    {
+      "source_line_ref": "p4:l15",
+      "text": "Jun 18 Sold   CALL GLD JAN 16 2026 300         -50    4.100     $20,429.98"
+    },
+    {
+      "source_line_ref": "p4:l16",
+      "text": "SPDR GOLD TR UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p4:l17",
+      "text": "OPEN CONTRACT"
+    },
+    {
+      "source_line_ref": "p4:l18",
+      "text": "Jun 18 Bought CALL SOXS1 JAN 17 2025 130        20    0.100       -$231.95"
+    },
+    {
+      "source_line_ref": "p4:l19",
+      "text": "DIREXION DAILY SMCNDCTR BEAR"
+    },
+    {
+      "source_line_ref": "p4:l20",
+      "text": "ADJ 1:10 REV SPLIT D:10 SOXS"
+    },
+    {
+      "source_line_ref": "p4:l21",
+      "text": "UNSOLICITED CLOSING CONTRACT"
+    },
+    {
+      "source_line_ref": "p4:l23",
+      "text": "Jun 18 Bought CALL SOXS1 JAN 16 2026 25         20    0.290       -$611.95"
+    },
+    {
+      "source_line_ref": "p4:l24",
+      "text": "DIREXION DAILY SMCNDCTR BEAR"
+    },
+    {
+      "source_line_ref": "p4:l25",
+      "text": "ADJ 1:10 REV SPLIT D:10 SOXS"
+    },
+    {
+      "source_line_ref": "p4:l26",
+      "text": "UNSOLICITED CLOSING CONTRACT"
+    },
+    {
+      "source_line_ref": "p4:l27",
+      "text": "Jun 20 Dividend QUALCOMM INC                   —         —        -$680.00"
+    },
+    {
+      "source_line_ref": "p4:l28",
+      "text": "DIV CHG 800 SHS SHORT"
+    },
+    {
+      "source_line_ref": "p4:l29",
+      "text": "REC MAY 30 2024"
+    },
+    {
+      "source_line_ref": "p4:l30",
+      "text": "PAY JUN 20 2024"
+    },
+    {
+      "source_line_ref": "p4:l31",
+      "text": "Jun 20 Sold   VALE S A                      -4,000   11.175     $44,691.80"
+    },
+    {
+      "source_line_ref": "p4:l32",
+      "text": "SPONSORED ADR UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p4:l33",
+      "text": "Jun 20 Sold   WEYERHAEUSER CO UNSOLICITED   -2,000   28.860     $57,711.84"
+    },
+    {
+      "source_line_ref": "p4:l34",
+      "text": "Jun 21 Sold   ETF SERIES SOLUTIONS          -5,000   19.720     $98,590.80"
+    },
+    {
+      "source_line_ref": "p4:l35",
+      "text": "U S GLOBAL JETS ETF"
+    },
+    {
+      "source_line_ref": "p4:l36",
+      "text": "UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p4:l37",
+      "text": "Jun 21 Bought SPROTT PHYSICAL PLATINUM      10,000    9.596    -$95,966.15"
+    },
+    {
+      "source_line_ref": "p4:l38",
+      "text": "AND PALLADIUM TRUST UNIT"
+    },
+    {
+      "source_line_ref": "p4:l39",
+      "text": "UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p4:l40",
+      "text": "Jun 21 Sold   PUT WY JAN 17 2025 26            -20    0.750      $1,468.00"
+    },
+    {
+      "source_line_ref": "p4:l41",
+      "text": "WEYERHAEUSER CO UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p4:l42",
+      "text": "OPEN CONTRACT"
+    },
+    {
+      "source_line_ref": "p4:l43",
+      "text": "Jun 24 Expired PUT QCOM JUN 21 2024 160         -4       —             —"
+    },
+    {
+      "source_line_ref": "p4:l44",
+      "text": "QUALCOMM INC"
+    },
+    {
+      "source_line_ref": "p4:l45",
+      "text": "OPTION EXPIRATION - EXPIRED"
+    },
+    {
+      "source_line_ref": "p4:l46",
+      "text": "Jun 24 Expired PUT GLD JUN 21 2024 180         -10       —             —"
+    },
+    {
+      "source_line_ref": "p4:l47",
+      "text": "SPDR GOLD TR"
+    },
+    {
+      "source_line_ref": "p4:l48",
+      "text": "OPTION EXPIRATION - EXPIRED"
+    },
+    {
+      "source_line_ref": "p4:l49",
+      "text": "Jun 24 Expired PUT FCX JUN 21 2024 35          -15       —             —"
+    },
+    {
+      "source_line_ref": "p4:l50",
+      "text": "FREEPORT MCMORAN INC"
+    },
+    {
+      "source_line_ref": "p4:l51",
+      "text": "OPTION EXPIRATION - EXPIRED"
+    },
+    {
+      "source_line_ref": "p4:l53",
+      "text": "Jun 24 Expired PUT GLD JUN 21 2024 170          20       —             —"
+    },
+    {
+      "source_line_ref": "p4:l54",
+      "text": "SPDR GOLD TR"
+    },
+    {
+      "source_line_ref": "p4:l55",
+      "text": "OPTION EXPIRATION - EXPIRED"
+    },
+    {
+      "source_line_ref": "p4:l56",
+      "text": "$"
+    },
+    {
+      "source_line_ref": "p4:l57",
+      "text": "Account Activity — U.S. Dollars (continued)"
+    },
+    {
+      "source_line_ref": "p4:l58",
+      "text": "date activity description                   quantity   price        amount"
+    },
+    {
+      "source_line_ref": "p4:l61",
+      "text": "083483    account # 588-93738    page 4 of 9"
+    },
+    {
+      "source_line_ref": "p5:l3",
+      "text": "Investor's Edge Investment Account"
+    },
+    {
+      "source_line_ref": "p5:l4",
+      "text": "June 1-June 28, 2024"
+    },
+    {
+      "source_line_ref": "p5:l5",
+      "text": "(previous statement May 31, 2024)"
+    },
+    {
+      "source_line_ref": "p5:l10",
+      "text": "$"
+    },
+    {
+      "source_line_ref": "p5:l20",
+      "text": "$$"
+    },
+    {
+      "source_line_ref": "p5:l21",
+      "text": "Jun 24 Expired PUT FCX JUN 21 2024 30           30       —             —"
+    },
+    {
+      "source_line_ref": "p5:l22",
+      "text": "FREEPORT MCMORAN INC"
+    },
+    {
+      "source_line_ref": "p5:l23",
+      "text": "OPTION EXPIRATION - EXPIRED"
+    },
+    {
+      "source_line_ref": "p5:l24",
+      "text": "Jun 28 —      Closing cash balance             —         —     $274,717.87"
+    },
+    {
+      "source_line_ref": "p5:l25",
+      "text": "Canadian dollar equivalent                       $375,951.41"
+    },
+    {
+      "source_line_ref": "p5:l26",
+      "text": "($1.00 U.S. equals $1.36850 CAN)"
+    },
+    {
+      "source_line_ref": "p5:l27",
+      "text": "Total closing cash balance in Canadian dollars —         —     $376,965.81"
+    },
+    {
+      "source_line_ref": "p5:l28",
+      "text": "Portfolio Assets — Canadian Dollars"
+    },
+    {
+      "source_line_ref": "p5:l29",
+      "text": "description                  quantity book value current market value segregation"
+    },
+    {
+      "source_line_ref": "p5:l30",
+      "text": "price     at jun 28 †custody"
+    },
+    {
+      "source_line_ref": "p5:l31",
+      "text": "Cash & Cash Equivalents"
+    },
+    {
+      "source_line_ref": "p5:l32",
+      "text": "CASH                             —   $1,014.40    —     $1,014.40      —"
+    },
+    {
+      "source_line_ref": "p5:l33",
+      "text": "Equities"
+    },
+    {
+      "source_line_ref": "p5:l34",
+      "text": "FRANCO-NEVADA CORPORATION       600 $96,014.45 162.200 $97,320.00     600"
+    },
+    {
+      "source_line_ref": "p5:l35",
+      "text": "(FNV/TSX)"
+    },
+    {
+      "source_line_ref": "p5:l36",
+      "text": "GIGA METALS CORP COM         62,500 $10,006.95  0.160  $10,000.00  62,500"
+    },
+    {
+      "source_line_ref": "p5:l37",
+      "text": "(GIGA/CDNX)"
+    },
+    {
+      "source_line_ref": "p5:l38",
+      "text": "MCEWEN MINING INC               800 $10,198.95 12.550  $10,040.00     800"
+    },
+    {
+      "source_line_ref": "p5:l39",
+      "text": "COMMON STOCK"
+    },
+    {
+      "source_line_ref": "p5:l40",
+      "text": "(MUX/TSX)"
+    },
+    {
+      "source_line_ref": "p5:l41",
+      "text": "OSISKO GOLD ROYALTIES LTD COM 3,500 $52,506.95 21.320  $74,620.00   3,500"
+    },
+    {
+      "source_line_ref": "p5:l42",
+      "text": "(OR/TSX)"
+    },
+    {
+      "source_line_ref": "p5:l43",
+      "text": "SANDSTORM GOLD LTD COM       10,000 $70,131.95  7.440  $74,400.00  10,000"
+    },
+    {
+      "source_line_ref": "p5:l44",
+      "text": "(SSL/TSX)"
+    },
+    {
+      "source_line_ref": "p5:l45",
+      "text": "SPROTT PHYSICAL URANIUM         600 $16,776.95 25.360  $15,216.00     600"
+    },
+    {
+      "source_line_ref": "p5:l46",
+      "text": "TRUST UNITS"
+    },
+    {
+      "source_line_ref": "p5:l47",
+      "text": "(U.UN/TSX)"
+    },
+    {
+      "source_line_ref": "p5:l48",
+      "text": "WHEATON PRECIOUS METALS       2,000 $100,006.95 71.730 $143,460.00  2,000"
+    },
+    {
+      "source_line_ref": "p5:l49",
+      "text": "CORP COM"
+    },
+    {
+      "source_line_ref": "p5:l50",
+      "text": "(WPM/TSX)"
+    },
+    {
+      "source_line_ref": "p5:l51",
+      "text": "subtotal                           $355,643.15        $425,056.00"
+    },
+    {
+      "source_line_ref": "p5:l52",
+      "text": "Mutual Funds"
+    },
+    {
+      "source_line_ref": "p5:l53",
+      "text": "CIBC DIVIDEND GROWTH FUND 13,420.902 $160,842.07 14.254 $191,301.54 13420.902"
+    },
+    {
+      "source_line_ref": "p5:l54",
+      "text": "CLASS F"
+    },
+    {
+      "source_line_ref": "p5:l55",
+      "text": "CIBC DIVIDEND INCOME FUND 12,412.264 $138,338.70 11.928 $148,053.48 12412.264"
+    },
+    {
+      "source_line_ref": "p5:l56",
+      "text": "CLASS F"
+    },
+    {
+      "source_line_ref": "p5:l57",
+      "text": "CIBC MONTHLY INCOME FUND  26,030.141 $223,492.28 9.398 $244,631.27 26030.141"
+    },
+    {
+      "source_line_ref": "p5:l58",
+      "text": "CLASS F"
+    },
+    {
+      "source_line_ref": "p5:l59",
+      "text": "subtotal                           $522,673.05        $583,986.29"
+    },
+    {
+      "source_line_ref": "p5:l60",
+      "text": "$"
+    },
+    {
+      "source_line_ref": "p5:l61",
+      "text": "Account Activity — U.S. Dollars (continued)"
+    },
+    {
+      "source_line_ref": "p5:l62",
+      "text": "date activity description                   quantity   price        amount"
+    },
+    {
+      "source_line_ref": "p5:l63",
+      "text": "HRI-*05033300*"
+    },
+    {
+      "source_line_ref": "p5:l64",
+      "text": "083483    account # 588-93738    page 5 of 9  SEE OVER»"
+    },
+    {
+      "source_line_ref": "p6:l3",
+      "text": "Investor's Edge Investment Account"
+    },
+    {
+      "source_line_ref": "p6:l4",
+      "text": "June 1-June 28, 2024"
+    },
+    {
+      "source_line_ref": "p6:l5",
+      "text": "(previous statement May 31, 2024)"
+    },
+    {
+      "source_line_ref": "p6:l10",
+      "text": "$$"
+    },
+    {
+      "source_line_ref": "p6:l25",
+      "text": "$$"
+    },
+    {
+      "source_line_ref": "p6:l26",
+      "text": "Portfolio Assets — Canadian Dollars (continued)"
+    },
+    {
+      "source_line_ref": "p6:l27",
+      "text": "description                  quantity book value current market value segregation"
+    },
+    {
+      "source_line_ref": "p6:l28",
+      "text": "price     at jun 28 †custody"
+    },
+    {
+      "source_line_ref": "p6:l29",
+      "text": "Other"
+    },
+    {
+      "source_line_ref": "p6:l30",
+      "text": "CALL .FNV MAR 21 2025 200        20  $8,600.00 ƒ 4.350  $8,700.00      —"
+    },
+    {
+      "source_line_ref": "p6:l31",
+      "text": "FRANCO-NEVADA CORPORATION"
+    },
+    {
+      "source_line_ref": "p6:l32",
+      "text": "CALL .NGT MAR 21 2025 60         10  $5,019.45  5.000   $5,000.00      —"
+    },
+    {
+      "source_line_ref": "p6:l33",
+      "text": "NEWMONT CORPORATION"
+    },
+    {
+      "source_line_ref": "p6:l34",
+      "text": "PUT .FNV MAR 21 2025 150        -10 -$8,450.00 ƒ 7.000 -$7,000.00      —"
+    },
+    {
+      "source_line_ref": "p6:l35",
+      "text": "FRANCO-NEVADA CORPORATION"
+    },
+    {
+      "source_line_ref": "p6:l36",
+      "text": "PUT .NGT MAR 21 2025 50         -20 -$4,900.00 ƒ 2.350 -$4,700.00      —"
+    },
+    {
+      "source_line_ref": "p6:l37",
+      "text": "NEWMONT CORPORATION"
+    },
+    {
+      "source_line_ref": "p6:l38",
+      "text": "subtotal                              $269.45           $2,000.00"
+    },
+    {
+      "source_line_ref": "p6:l39",
+      "text": "subtotal for Canadian Dollars      $879,600.05       $1,012,056.69"
+    },
+    {
+      "source_line_ref": "p6:l40",
+      "text": "Portfolio Assets — U.S. Dollars"
+    },
+    {
+      "source_line_ref": "p6:l41",
+      "text": "description                  quantity book value current market value segregation"
+    },
+    {
+      "source_line_ref": "p6:l42",
+      "text": "price     at jun 28 †custody"
+    },
+    {
+      "source_line_ref": "p6:l43",
+      "text": "Cash & Cash Equivalents"
+    },
+    {
+      "source_line_ref": "p6:l44",
+      "text": "CASH                             — $274,717.87    —   $274,717.87      —"
+    },
+    {
+      "source_line_ref": "p6:l45",
+      "text": "Equities"
+    },
+    {
+      "source_line_ref": "p6:l46",
+      "text": "BHP GROUP LIMITED             1,200 $68,745.74 57.090  $68,508.00   1,200"
+    },
+    {
+      "source_line_ref": "p6:l47",
+      "text": "AMERICAN DEPOSITARY SHARES ON"
+    },
+    {
+      "source_line_ref": "p6:l48",
+      "text": "ECH RPSNTNG TWO ORD SHS"
+    },
+    {
+      "source_line_ref": "p6:l49",
+      "text": "(BHP/US)"
+    },
+    {
+      "source_line_ref": "p6:l50",
+      "text": "FIRST MAJESTIC SILVER CORP    2,500 $12,534.72  5.920  $14,800.00   2,500"
+    },
+    {
+      "source_line_ref": "p6:l51",
+      "text": "(AG/US)"
+    },
+    {
+      "source_line_ref": "p6:l52",
+      "text": "FREEPORT MCMORAN INC          1,500 $54,310.85 48.600  $72,900.00   1,500"
+    },
+    {
+      "source_line_ref": "p6:l53",
+      "text": "(FCX/US)"
+    },
+    {
+      "source_line_ref": "p6:l54",
+      "text": "HECLA MINING COMPANY          5,000 $30,069.45  4.850  $24,250.00   5,000"
+    },
+    {
+      "source_line_ref": "p6:l55",
+      "text": "(HL/US)"
+    },
+    {
+      "source_line_ref": "p6:l56",
+      "text": "METALLA ROYALTY & STREAMING  18,000 $58,146.95  2.780  $50,040.00  18,000"
+    },
+    {
+      "source_line_ref": "p6:l57",
+      "text": "LTD COM"
+    },
+    {
+      "source_line_ref": "p6:l58",
+      "text": "(MTA/US)"
+    },
+    {
+      "source_line_ref": "p6:l59",
+      "text": "QUALCOMM INC                   -800-$163,240.00 ƒ 199.180 -$159,344.00 —"
+    },
+    {
+      "source_line_ref": "p6:l60",
+      "text": "(QCOM/US)"
+    },
+    {
+      "source_line_ref": "p6:l61",
+      "text": "RIO TINTO PLC SPONSORED ADR   1,150 $74,825.32 65.930  $75,819.50   1,150"
+    },
+    {
+      "source_line_ref": "p6:l62",
+      "text": "(RIO/US)"
+    },
+    {
+      "source_line_ref": "p6:l63",
+      "text": "SPROTT PHYSICAL PLATINUM     10,000 $95,966.15  9.777  $97,771.28  10,000"
+    },
+    {
+      "source_line_ref": "p6:l64",
+      "text": "AND PALLADIUM TRUST UNIT"
+    },
+    {
+      "source_line_ref": "p6:l65",
+      "text": "(SPPP/US)"
+    },
+    {
+      "source_line_ref": "p6:l66",
+      "text": "083483    account # 588-93738    page 6 of 9"
+    },
+    {
+      "source_line_ref": "p7:l3",
+      "text": "Investor's Edge Investment Account"
+    },
+    {
+      "source_line_ref": "p7:l4",
+      "text": "June 1-June 28, 2024"
+    },
+    {
+      "source_line_ref": "p7:l5",
+      "text": "(previous statement May 31, 2024)"
+    },
+    {
+      "source_line_ref": "p7:l10",
+      "text": "$$"
+    }
+  ]
+}

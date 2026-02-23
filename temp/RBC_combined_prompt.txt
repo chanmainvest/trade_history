@@ -1,0 +1,1251 @@
+Analyze this brokerage statement PDF text extract. I need you to identify:
+
+1. ACCOUNT INFORMATION:
+   - Account number(s) found in the document
+   - How and where the account number appears (exact text pattern)
+   - Institution name
+
+2. TRANSACTION FORMAT:
+   - Show 3-5 example transaction lines EXACTLY as they appear
+   - Identify the column layout: what order are date, action, symbol, quantity, price, amount, commission
+   - What date format is used (e.g., "Jan 15", "2024-01-15", "01/15/2024")?
+   - How are BUY/SELL actions written?
+   - How are currency indicators shown (CAD/USD)?
+   - Are transactions split across multiple lines?
+
+3. OPTION TRANSACTIONS (if any):
+   - Show exact option line format
+   - How is PUT/CALL indicated?
+   - How is strike price shown?
+   - How is expiry date shown?
+   - What is the multiplier notation?
+
+4. DIVIDEND/INTEREST LINES:
+   - Show exact format of dividend lines
+   - Is the stock symbol shown on dividend lines?
+   - How is the amount shown?
+
+5. TRANSFER LINES (if any):
+   - Show exact format
+   - How is IN/OUT direction indicated?
+
+6. BALANCE/SNAPSHOT LINES:
+   - Show exact format for opening cash balance
+   - Show exact format for closing cash balance
+   - Show exact format for portfolio total value
+   - What keywords identify these lines?
+
+7. MULTI-CURRENCY:
+   - Does the statement have separate CAD and USD sections?
+   - How are they delineated?
+
+Return the raw text patterns exactly as they appear - do not normalize or clean them. This is for writing regex parsers.
+
+Statement lines JSON follows:
+
+{
+  "file_path": "Statements\\RBC Invest Direct\\Statement-7469 2024-06-28.pdf",
+  "line_count": 395,
+  "lines": [
+    {
+      "source_line_ref": "p1:l4",
+      "text": "Order Execution  Only         JUNE 28"
+    },
+    {
+      "source_line_ref": "p1:l5",
+      "text": "Cdn. Dollar Statement         2024"
+    },
+    {
+      "source_line_ref": "p1:l7",
+      "text": "Page 1 of 4"
+    },
+    {
+      "source_line_ref": "p1:l10",
+      "text": "Your Account Number: 670-27469-2-3"
+    },
+    {
+      "source_line_ref": "p1:l12",
+      "text": "JERT YAN CHAN"
+    },
+    {
+      "source_line_ref": "p1:l13",
+      "text": "YAT CHAN                         Date of Last Statement: MAY 31, 2024"
+    },
+    {
+      "source_line_ref": "p1:l14",
+      "text": "6038 EWART STREET"
+    },
+    {
+      "source_line_ref": "p1:l15",
+      "text": "BURNABY BC  V5J 2X2"
+    },
+    {
+      "source_line_ref": "p1:l16",
+      "text": "RBC  Direct Investing Inc.       Asset Summary"
+    },
+    {
+      "source_line_ref": "p1:l18",
+      "text": "Local Calls:"
+    },
+    {
+      "source_line_ref": "p1:l19",
+      "text": "MARKET VALUE"
+    },
+    {
+      "source_line_ref": "p1:l20",
+      "text": "416-313-8613                                    AT JUNE 28            %"
+    },
+    {
+      "source_line_ref": "p1:l21",
+      "text": "Cash                  $81.84        0.01 %"
+    },
+    {
+      "source_line_ref": "p1:l22",
+      "text": "Fixed Income           $0.00        0.00 %"
+    },
+    {
+      "source_line_ref": "p1:l23",
+      "text": "Toll Free Calls:"
+    },
+    {
+      "source_line_ref": "p1:l24",
+      "text": "Preferred Shares       $0.00        0.00 %"
+    },
+    {
+      "source_line_ref": "p1:l25",
+      "text": "1-877-722-2372"
+    },
+    {
+      "source_line_ref": "p1:l26",
+      "text": "Common Shares    $789,748.00      104.33 %"
+    },
+    {
+      "source_line_ref": "p1:l27",
+      "text": "1-877-722-2372"
+    },
+    {
+      "source_line_ref": "p1:l28",
+      "text": "Mutual Funds           $0.00        0.00 %"
+    },
+    {
+      "source_line_ref": "p1:l29",
+      "text": "Postal Address:                  Foreign Securities     $0.00        0.00 %"
+    },
+    {
+      "source_line_ref": "p1:l30",
+      "text": "200 Bay Street                   Other             $32,870.00-       4.34-%"
+    },
+    {
+      "source_line_ref": "p1:l31",
+      "text": "P.O. Box 75"
+    },
+    {
+      "source_line_ref": "p1:l32",
+      "text": "Toronto, ON                      Total on JUNE 28 $756,959.84      100.00 %"
+    },
+    {
+      "source_line_ref": "p1:l33",
+      "text": "M5J 2Z5                          Total on MAY 31  $799,303.80"
+    },
+    {
+      "source_line_ref": "p1:l34",
+      "text": "Income  Summary"
+    },
+    {
+      "source_line_ref": "p1:l35",
+      "text": "THIS MONTH    YEAR-TO-DATE"
+    },
+    {
+      "source_line_ref": "p1:l36",
+      "text": "Dividends           $850.31      $850.31"
+    },
+    {
+      "source_line_ref": "p1:l37",
+      "text": "Interest              $0.00        $0.00"
+    },
+    {
+      "source_line_ref": "p1:l38",
+      "text": "Total Income        $850.31      $850.31"
+    },
+    {
+      "source_line_ref": "p1:l40",
+      "text": "Cash Balance"
+    },
+    {
+      "source_line_ref": "p1:l42",
+      "text": "ACCOUNT        OPENING BALANCE CLOSING BALANCE"
+    },
+    {
+      "source_line_ref": "p1:l43",
+      "text": "TYPE           AT MAY 31      AT JUNE 28"
+    },
+    {
+      "source_line_ref": "p1:l44",
+      "text": "Margin - Long   $507,030.80        $81.84"
+    },
+    {
+      "source_line_ref": "p1:l56",
+      "text": "-CONTINUEDONNEXTPAGE-"
+    },
+    {
+      "source_line_ref": "p1:l57",
+      "text": "0023577 -DIC43"
+    },
+    {
+      "source_line_ref": "p1:l59",
+      "text": "Member-Canadian Investor Protection Fund"
+    },
+    {
+      "source_line_ref": "p2:l4",
+      "text": "Order  Execution Only         JUNE  28"
+    },
+    {
+      "source_line_ref": "p2:l5",
+      "text": "Cdn. Dollar Statement         2024"
+    },
+    {
+      "source_line_ref": "p2:l7",
+      "text": "Your Account Number: 670-27469-2-3 2 of 4"
+    },
+    {
+      "source_line_ref": "p2:l8",
+      "text": "______________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p2:l9",
+      "text": "Asset Review"
+    },
+    {
+      "source_line_ref": "p2:l10",
+      "text": "( Exchange rate 1USD = 1.3686 CAD as of JUNE 28, 2024 )"
+    },
+    {
+      "source_line_ref": "p2:l11",
+      "text": "SECURITY  QUANTITY/  MKT.     BOOK        MARKET"
+    },
+    {
+      "source_line_ref": "p2:l12",
+      "text": "SYMBOL    SEGREGATED PRICE    COST        VALUE"
+    },
+    {
+      "source_line_ref": "p2:l13",
+      "text": "_________________________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p2:l14",
+      "text": "Common  Shares"
+    },
+    {
+      "source_line_ref": "p2:l16",
+      "text": "GLOBAL X HIGH INT SVGS ETF CASH      10,100  50.030    505,309.88 $505,303.00"
+    },
+    {
+      "source_line_ref": "p2:l17",
+      "text": "CL A UNIT                           10,100"
+    },
+    {
+      "source_line_ref": "p2:l18",
+      "text": "ROGERS COMMUNICATIONS INC RCI.B       2,000  50.600    120,139.50 # $101,200.00"
+    },
+    {
+      "source_line_ref": "p2:l19",
+      "text": "CL B NON-VTG                         2,000"
+    },
+    {
+      "source_line_ref": "p2:l20",
+      "text": "SPROTT INC               SII          2,500  56.730    106,653.76 # $141,825.00"
+    },
+    {
+      "source_line_ref": "p2:l21",
+      "text": "COM NEW                              2,500"
+    },
+    {
+      "source_line_ref": "p2:l22",
+      "text": "TELUS CORPORATION        T            2,000  20.710     52,171.00 # $41,420.00"
+    },
+    {
+      "source_line_ref": "p2:l23",
+      "text": "2,000"
+    },
+    {
+      "source_line_ref": "p2:l24",
+      "text": "Total Value of Common Shares                           784,274.14 $789,748.00"
+    },
+    {
+      "source_line_ref": "p2:l25",
+      "text": "_________________________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p2:l26",
+      "text": "Other"
+    },
+    {
+      "source_line_ref": "p2:l28",
+      "text": "CALL .BCE 09/20/24 54                   40    0.020        80.00 ²    $80.00"
+    },
+    {
+      "source_line_ref": "p2:l29",
+      "text": "BCE INC NEW"
+    },
+    {
+      "source_line_ref": "p2:l30",
+      "text": "PUT .BCE 09/20/24 50                    20-   6.050      3,961.24-# $12,100.00-"
+    },
+    {
+      "source_line_ref": "p2:l31",
+      "text": "BCE INC NEW"
+    },
+    {
+      "source_line_ref": "p2:l32",
+      "text": "PUT .CVE 09/20/24 22                    40-   0.080      7,943.12-#  $320.00-"
+    },
+    {
+      "source_line_ref": "p2:l33",
+      "text": "CENOVUS ENERGY INC"
+    },
+    {
+      "source_line_ref": "p2:l34",
+      "text": "PUT .FTS 09/20/24 55                    18-   2.450      4,470.62-# $4,410.00-"
+    },
+    {
+      "source_line_ref": "p2:l35",
+      "text": "FORTIS INC"
+    },
+    {
+      "source_line_ref": "p2:l36",
+      "text": "CALL .NTR 09/20/24 100                  50    0.030     10,539.38 #  $150.00"
+    },
+    {
+      "source_line_ref": "p2:l37",
+      "text": "NUTRIEN LTD"
+    },
+    {
+      "source_line_ref": "p2:l38",
+      "text": "PUT .NTR 09/20/24 75                    30-   5.900     22,455.62-# $17,700.00-"
+    },
+    {
+      "source_line_ref": "p2:l39",
+      "text": "NUTRIEN LTD"
+    },
+    {
+      "source_line_ref": "p2:l40",
+      "text": "PUT .SHOP 09/20/24 70                   14-   0.810      2,128.00-² $1,134.00-"
+    },
+    {
+      "source_line_ref": "p2:l41",
+      "text": "SHOPIFY INC"
+    },
+    {
+      "source_line_ref": "p2:l42",
+      "text": "PUT .SHOP 09/20/24 80                    7    2.720      4,915.63 # $1,904.00"
+    },
+    {
+      "source_line_ref": "p2:l43",
+      "text": "SHOPIFY INC"
+    },
+    {
+      "source_line_ref": "p2:l44",
+      "text": "CALL .TRP 09/20/24 55                   40    0.490      5,841.88 # $1,960.00"
+    },
+    {
+      "source_line_ref": "p2:l45",
+      "text": "TC ENERGY CORP"
+    },
+    {
+      "source_line_ref": "p2:l46",
+      "text": "PUT .TRP 09/20/24 50                    20-   0.650      6,268.12-# $1,300.00-"
+    },
+    {
+      "source_line_ref": "p2:l47",
+      "text": "TC ENERGY CORP"
+    },
+    {
+      "source_line_ref": "p2:l48",
+      "text": "Total Value of Other                                    25,849.83- $32,870.00-"
+    },
+    {
+      "source_line_ref": "p2:l49",
+      "text": "_________________________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p2:l50",
+      "text": "Total Value of All Securities                          758,424.31 $756,878.00"
+    },
+    {
+      "source_line_ref": "p2:l51",
+      "text": "_________________________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p2:l52",
+      "text": "Account  Activity"
+    },
+    {
+      "source_line_ref": "p2:l53",
+      "text": "PRICE"
+    },
+    {
+      "source_line_ref": "p2:l54",
+      "text": "DATE ACTIVITY DESCRIPTION               QUANTITY  \\RATE     DEBIT    CREDIT"
+    },
+    {
+      "source_line_ref": "p2:l56",
+      "text": "-CONTINUEDONNEXTPAGE-"
+    },
+    {
+      "source_line_ref": "p3:l4",
+      "text": "Order  Execution Only         JUNE  28"
+    },
+    {
+      "source_line_ref": "p3:l5",
+      "text": "Cdn. Dollar Statement         2024"
+    },
+    {
+      "source_line_ref": "p3:l7",
+      "text": "Your Account Number: 670-27469-2-3 3 of 4"
+    },
+    {
+      "source_line_ref": "p3:l8",
+      "text": "______________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p3:l9",
+      "text": "Account  Activity"
+    },
+    {
+      "source_line_ref": "p3:l10",
+      "text": "PRICE"
+    },
+    {
+      "source_line_ref": "p3:l11",
+      "text": "DATE  ACTIVITY DESCRIPTION              QUANTITY  \\RATE      DEBIT    CREDIT"
+    },
+    {
+      "source_line_ref": "p3:l13",
+      "text": "Opening Balance (MAY 31, 2024)                       $507,030.80"
+    },
+    {
+      "source_line_ref": "p3:l14",
+      "text": "JUNE 01 DEPOSIT RBCRewards # 1117085895                                9.41"
+    },
+    {
+      "source_line_ref": "p3:l16",
+      "text": "JUNE 01 DEPOSIT RBCRewards # 1117085896                                9.41"
+    },
+    {
+      "source_line_ref": "p3:l18",
+      "text": "JUNE 01 DEPOSIT RBCRewards # 1117085897                                6.88"
+    },
+    {
+      "source_line_ref": "p3:l19",
+      "text": "JUNE 01 DEPOSIT RBCRewards # 1117085898                                9.41"
+    },
+    {
+      "source_line_ref": "p3:l21",
+      "text": "JUNE 04 BOUGHT GLOBAL X HIGH INT SVGS ETF 10,100  50.03  505,309.88"
+    },
+    {
+      "source_line_ref": "p3:l22",
+      "text": "CL A UNIT"
+    },
+    {
+      "source_line_ref": "p3:l23",
+      "text": "UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p3:l24",
+      "text": "DA"
+    },
+    {
+      "source_line_ref": "p3:l26",
+      "text": "JUNE 05 DEPOSIT RBCRewards # 1119526596                                6.88"
+    },
+    {
+      "source_line_ref": "p3:l28",
+      "text": "JUNE 05 DIVIDEND SPROTT INC                      0.34012              850.31"
+    },
+    {
+      "source_line_ref": "p3:l29",
+      "text": "COM NEW"
+    },
+    {
+      "source_line_ref": "p3:l30",
+      "text": "CASH DIV ON 2500 SHS"
+    },
+    {
+      "source_line_ref": "p3:l31",
+      "text": "REC 05/21/24 PAY 06/05/24"
+    },
+    {
+      "source_line_ref": "p3:l32",
+      "text": "JUNE 10 WIRE TFR TRANSFER FUNDS TO RBC                    2,600.00"
+    },
+    {
+      "source_line_ref": "p3:l34",
+      "text": "JUNE 19 DEPOSIT RBCRewards # 1124260596                                68.62"
+    },
+    {
+      "source_line_ref": "p3:l36",
+      "text": "JUNE 20 TRANSFER CALL .BCE 09/20/24 54      40"
+    },
+    {
+      "source_line_ref": "p3:l37",
+      "text": "BCE INC NEW"
+    },
+    {
+      "source_line_ref": "p3:l38",
+      "text": "MOVE FROM USD SIDE OF ACCOUNT"
+    },
+    {
+      "source_line_ref": "p3:l40",
+      "text": "Closing Balance (JUNE 28, 2024)                         $81.84"
+    },
+    {
+      "source_line_ref": "p3:l41",
+      "text": "_________________________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p3:l57",
+      "text": "0023578 -DIC43            -CONTINUEDONNEXTPAGE-"
+    },
+    {
+      "source_line_ref": "p4:l4",
+      "text": "Order  Execution Only         JUNE  28"
+    },
+    {
+      "source_line_ref": "p4:l5",
+      "text": "Cdn. Dollar Statement         2024"
+    },
+    {
+      "source_line_ref": "p4:l7",
+      "text": "Your Account Number: 670-27469-2-3 4 of 4"
+    },
+    {
+      "source_line_ref": "p4:l8",
+      "text": "______________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p4:l10",
+      "text": "FOOTNOTES *- Indicates fully paid for securities registered in your name and held by us on your behalf."
+    },
+    {
+      "source_line_ref": "p4:l11",
+      "text": "#- Part or all of the Book Cost for this security was obtained from a source other than RBC Direct Investing. As"
+    },
+    {
+      "source_line_ref": "p4:l12",
+      "text": "such, RBC Direct Investing is not responsible for the completeness or accuracy of the information provided."
+    },
+    {
+      "source_line_ref": "p4:l13",
+      "text": "¹- Includes accrued interest."
+    },
+    {
+      "source_line_ref": "p4:l14",
+      "text": "²- Part of or all of the Book Cost on this security position is unknown resulting in the use of market value. The"
+    },
+    {
+      "source_line_ref": "p4:l15",
+      "text": "market value applied was September 30, 2015 or later, depending on the transaction activity for this security"
+    },
+    {
+      "source_line_ref": "p4:l16",
+      "text": "position. Please contact us to update the statement records."
+    },
+    {
+      "source_line_ref": "p4:l17",
+      "text": "³- The Book Cost of this security is temporarily unavailable due to a pending corporate event. Please contact"
+    },
+    {
+      "source_line_ref": "p4:l18",
+      "text": "us for additional information."
+    },
+    {
+      "source_line_ref": "p4:l19",
+      "text": "¤- The Book Cost of this security cannot be determined. Please contact us for additional information."
+    },
+    {
+      "source_line_ref": "p4:l20",
+      "text": "***- Converted U.S. dollar contributions or withdrawals are included in your plan summary."
+    },
+    {
+      "source_line_ref": "p4:l21",
+      "text": "- This security may be subject to a deferred sales charge at the time that it is sold."
+    },
+    {
+      "source_line_ref": "p4:l22",
+      "text": "⁴"
+    },
+    {
+      "source_line_ref": "p4:l23",
+      "text": "- There is no active market for this security so its market value has been estimated."
+    },
+    {
+      "source_line_ref": "p4:l24",
+      "text": "ⁿ"
+    },
+    {
+      "source_line_ref": "p4:l25",
+      "text": "-We may facilitate trades in securities of related issuers and connected issuers of the firm in your account. For a list of such related issuers"
+    },
+    {
+      "source_line_ref": "p4:l26",
+      "text": "and connected issuers, refer to the following website: www.rbc.com/issuers-disclosures or contact us."
+    },
+    {
+      "source_line_ref": "p4:l27",
+      "text": "-Please be advised that if you have set-up an Automatic Investment Plan (\"AIP\") to purchase one or more mutual funds, you will not receive a copy of the"
+    },
+    {
+      "source_line_ref": "p4:l28",
+      "text": "respective Fund Facts when you subsequently purchase securities of the applicable Fund under your AIP. You may at any time request to receive, at no cost to"
+    },
+    {
+      "source_line_ref": "p4:l29",
+      "text": "you, the most recently filed Fund Facts by sending us a secure message through the online investing site's Message Centre or by calling or writing to us at the"
+    },
+    {
+      "source_line_ref": "p4:l30",
+      "text": "coordinates below. The most recently filed Fund Facts may also be found by visiting either www.sedar.com or the website of the applicable Mutual Fund Manager."
+    },
+    {
+      "source_line_ref": "p4:l31",
+      "text": "-Market price and Book Cost represent currently available prices. Some securities in your portfolio may not be priced because data was unavailable. Market"
+    },
+    {
+      "source_line_ref": "p4:l32",
+      "text": "prices and Book Costs shown are obtained from sources we believe are reliable but we do not guarantee their accuracy."
+    },
+    {
+      "source_line_ref": "p4:l33",
+      "text": "-In cases where securities in your portfolio display a Market Price of 'UNPRICED', the current market value is not determinable."
+    },
+    {
+      "source_line_ref": "p4:l34",
+      "text": "-Unless otherwise advised, the Book Cost means: In the case of a long security position, the total amount paid for the security, including any"
+    },
+    {
+      "source_line_ref": "p4:l35",
+      "text": "transaction charges related to the purchase, adjusted for reinvested distributions, returns of capital and corporate actions; or In the case of a"
+    },
+    {
+      "source_line_ref": "p4:l36",
+      "text": "short security position, the total amount received for the security, net of any transaction charges related to the sale, adjusted for any distributions"
+    },
+    {
+      "source_line_ref": "p4:l37",
+      "text": "(other than dividends), returns of capital and corporate actions. Where a book cost is not available on a security position; market value will be"
+    },
+    {
+      "source_line_ref": "p4:l38",
+      "text": "used to calculate the book cost."
+    },
+    {
+      "source_line_ref": "p4:l39",
+      "text": "-Fully paid securities are segregated on the records of our custodian and cannot be used in the normal course of our business. Any free credit balance"
+    },
+    {
+      "source_line_ref": "p4:l40",
+      "text": "for non-registered accounts represents funds payable on demand, which although properly recorded in our books, are not segregated and may be used in"
+    },
+    {
+      "source_line_ref": "p4:l41",
+      "text": "the normal course of our business."
+    },
+    {
+      "source_line_ref": "p4:l42",
+      "text": "-A copy of our most recent summary of financial position, a list of directors and senior officers and certain additional information about us including information"
+    },
+    {
+      "source_line_ref": "p4:l43",
+      "text": "about commissions, fees and administrative proceedings that may relate to the firm or our staff are available for your personal inspection at our office, or a copy"
+    },
+    {
+      "source_line_ref": "p4:l44",
+      "text": "will be mailed to you upon written request."
+    },
+    {
+      "source_line_ref": "p4:l45",
+      "text": "-Customers accounts are protected by the Canadian Investor Protection Fund within specified limits. A brochure describing the nature and limits of the coverage"
+    },
+    {
+      "source_line_ref": "p4:l46",
+      "text": "is available upon request."
+    },
+    {
+      "source_line_ref": "p4:l47",
+      "text": "-Income derived from mutual funds will be included on a T5 or T3 that will be issued by each mutual fund management company. As such, this income is"
+    },
+    {
+      "source_line_ref": "p4:l48",
+      "text": "not reported in the \"Income Summary\" of your account statement."
+    },
+    {
+      "source_line_ref": "p4:l49",
+      "text": "-With the exception of registered plans, Canadian Income Tax regulations require RBC Direct Investing Inc. to disclose to Canada Revenue Agency on a"
+    },
+    {
+      "source_line_ref": "p4:l50",
+      "text": "yearly basis transactions involving the sale, redemption or maturity of securities. Such transactions must be reported on your Annual Income Tax return."
+    },
+    {
+      "source_line_ref": "p4:l51",
+      "text": "This statement should be retained with your Income Tax records as evidence of disposition."
+    },
+    {
+      "source_line_ref": "p4:l52",
+      "text": "-We or our affiliate act as principal on foreign currency conversions and fixed income transactions and apply discretionary currency conversion rates. The"
+    },
+    {
+      "source_line_ref": "p4:l53",
+      "text": "foreign currency conversion rate shown on the confirmation statement includes our or our affiliates' spread-based revenues for performing this function."
+    },
+    {
+      "source_line_ref": "p4:l54",
+      "text": "Spread means the difference between the rate we or our affiliates obtain and the rate you receive."
+    },
+    {
+      "source_line_ref": "p4:l55",
+      "text": "-RBC Direct Investing Inc. may obtain trade execution and certain other services for client accounts from RBC Dominion Securities Inc."
+    },
+    {
+      "source_line_ref": "p4:l56",
+      "text": "-Please note that the following security description abbreviations may appear on your statement : NON VTG for non-voting shares; RES VTG for restricted"
+    },
+    {
+      "source_line_ref": "p4:l57",
+      "text": "voting shares; SUB VTG for subordinate voting shares; DSC for securities which may be subject to a deferred sales charge; LL, LL2, LL3 or LL4 for"
+    },
+    {
+      "source_line_ref": "p4:l58",
+      "text": "securities which may be subject to a low load deferred sales charge."
+    },
+    {
+      "source_line_ref": "p4:l59",
+      "text": "-RBC Direct Investing Inc. and Royal Bank of Canada are separate corporate entities which are affiliated. RBC Direct Investing Inc. is a wholly owned"
+    },
+    {
+      "source_line_ref": "p4:l60",
+      "text": "subsidiary of Royal Bank of Canada and is a member of the Investment Industry Regulatory Organization of Canada and the Canadian Investor Protection"
+    },
+    {
+      "source_line_ref": "p4:l61",
+      "text": "Fund. Royal Bank of Canada and certain of its issuers are related to RBC Direct Investing Inc. RBC Direct Investing Inc. does not provide investment"
+    },
+    {
+      "source_line_ref": "p4:l62",
+      "text": "advice or recommendations regarding the purchase or sale of any securities. Investors are responsible for their own investment decisions. RBC Direct"
+    },
+    {
+      "source_line_ref": "p4:l63",
+      "text": "Investing is a business name used by RBC Direct Investing Inc. ® / TM Trademark(s) of Royal Bank of Canada. RBC and Royal Bank are registered trademarks"
+    },
+    {
+      "source_line_ref": "p4:l64",
+      "text": "of Royal Bank of Canada. Used under licence. © Royal Bank of Canada 2016. All rights reserved."
+    },
+    {
+      "source_line_ref": "p4:l65",
+      "text": "-Please note that RBC Direct Investing Inc.'s trade execution, trade settlement and custody of securities are handled by RBC Dominion Securities Inc., an affiliated"
+    },
+    {
+      "source_line_ref": "p4:l66",
+      "text": "company."
+    },
+    {
+      "source_line_ref": "p4:l67",
+      "text": "If you have a service request or a question about the details of your statement, please contact RBC Direct Investing at 1-800-769-2560 or"
+    },
+    {
+      "source_line_ref": "p4:l68",
+      "text": "write to us at:"
+    },
+    {
+      "source_line_ref": "p4:l69",
+      "text": "200 Bay Street                          GST/HST # R122780893"
+    },
+    {
+      "source_line_ref": "p4:l70",
+      "text": "P.O. Box 75                             QST # R122780893"
+    },
+    {
+      "source_line_ref": "p4:l71",
+      "text": "Toronto, ON"
+    },
+    {
+      "source_line_ref": "p4:l72",
+      "text": "M5J 2Z5                                 www.rbcdirectinvesting.com"
+    },
+    {
+      "source_line_ref": "p4:l73",
+      "text": "Please check this Account Statement without delay and advise us of any error or omission within 30 days of the statement date."
+    },
+    {
+      "source_line_ref": "p5:l4",
+      "text": "Order Execution  Only         JUNE 28"
+    },
+    {
+      "source_line_ref": "p5:l5",
+      "text": "U.S. Dollar Statement         2024"
+    },
+    {
+      "source_line_ref": "p5:l7",
+      "text": "Page 1 of 5"
+    },
+    {
+      "source_line_ref": "p5:l10",
+      "text": "Your Account Number: 670-27469-2-3"
+    },
+    {
+      "source_line_ref": "p5:l12",
+      "text": "JERT YAN CHAN"
+    },
+    {
+      "source_line_ref": "p5:l13",
+      "text": "YAT CHAN                         Date of Last Statement: MAY 31, 2024"
+    },
+    {
+      "source_line_ref": "p5:l14",
+      "text": "6038 EWART STREET"
+    },
+    {
+      "source_line_ref": "p5:l15",
+      "text": "BURNABY BC  V5J 2X2"
+    },
+    {
+      "source_line_ref": "p5:l16",
+      "text": "RBC  Direct Investing Inc.       Asset Summary"
+    },
+    {
+      "source_line_ref": "p5:l18",
+      "text": "Local Calls:"
+    },
+    {
+      "source_line_ref": "p5:l19",
+      "text": "MARKET VALUE"
+    },
+    {
+      "source_line_ref": "p5:l20",
+      "text": "416-313-8613                                    AT JUNE 28            %"
+    },
+    {
+      "source_line_ref": "p5:l21",
+      "text": "Cash               $2,129.95        0.19 %"
+    },
+    {
+      "source_line_ref": "p5:l22",
+      "text": "Fixed Income           $0.00        0.00 %"
+    },
+    {
+      "source_line_ref": "p5:l23",
+      "text": "Toll Free Calls:"
+    },
+    {
+      "source_line_ref": "p5:l24",
+      "text": "Preferred Shares       $0.00        0.00 %"
+    },
+    {
+      "source_line_ref": "p5:l25",
+      "text": "1-877-722-2372"
+    },
+    {
+      "source_line_ref": "p5:l26",
+      "text": "Common Shares   $1,141,237.50      99.42 %"
+    },
+    {
+      "source_line_ref": "p5:l27",
+      "text": "1-877-722-2372"
+    },
+    {
+      "source_line_ref": "p5:l28",
+      "text": "Mutual Funds           $0.00        0.00 %"
+    },
+    {
+      "source_line_ref": "p5:l29",
+      "text": "Postal Address:                  Foreign Securities     $0.00        0.00 %"
+    },
+    {
+      "source_line_ref": "p5:l30",
+      "text": "200 Bay Street                   Other              $4,485.00        0.39 %"
+    },
+    {
+      "source_line_ref": "p5:l31",
+      "text": "P.O. Box 75"
+    },
+    {
+      "source_line_ref": "p5:l32",
+      "text": "Toronto, ON                      Total on JUNE 28 $1,147,852.45    100.00 %"
+    },
+    {
+      "source_line_ref": "p5:l33",
+      "text": "M5J 2Z5                          Total on MAY 31 $1,175,706.65"
+    },
+    {
+      "source_line_ref": "p5:l34",
+      "text": "Income  Summary"
+    },
+    {
+      "source_line_ref": "p5:l35",
+      "text": "THIS MONTH    YEAR-TO-DATE"
+    },
+    {
+      "source_line_ref": "p5:l36",
+      "text": "Dividends         $4,524.83    $12,837.88"
+    },
+    {
+      "source_line_ref": "p5:l37",
+      "text": "Interest              $0.00        $0.00"
+    },
+    {
+      "source_line_ref": "p5:l38",
+      "text": "Total Income      $4,524.83    $12,837.88"
+    },
+    {
+      "source_line_ref": "p5:l40",
+      "text": "Cash Balance"
+    },
+    {
+      "source_line_ref": "p5:l42",
+      "text": "ACCOUNT        OPENING BALANCE CLOSING BALANCE"
+    },
+    {
+      "source_line_ref": "p5:l43",
+      "text": "TYPE           AT MAY 31      AT JUNE 28"
+    },
+    {
+      "source_line_ref": "p5:l44",
+      "text": "Margin - Long       $813.97      $2,129.95"
+    },
+    {
+      "source_line_ref": "p5:l56",
+      "text": "-CONTINUEDONNEXTPAGE-"
+    },
+    {
+      "source_line_ref": "p5:l57",
+      "text": "0023579 -DIC43"
+    },
+    {
+      "source_line_ref": "p5:l59",
+      "text": "Member-Canadian Investor Protection Fund"
+    },
+    {
+      "source_line_ref": "p6:l4",
+      "text": "Order  Execution Only         JUNE  28"
+    },
+    {
+      "source_line_ref": "p6:l5",
+      "text": "U.S. Dollar Statement         2024"
+    },
+    {
+      "source_line_ref": "p6:l7",
+      "text": "Your Account Number: 670-27469-2-3 2 of 5"
+    },
+    {
+      "source_line_ref": "p6:l8",
+      "text": "______________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p6:l9",
+      "text": "Asset Review"
+    },
+    {
+      "source_line_ref": "p6:l10",
+      "text": "SECURITY  QUANTITY/  MKT.     BOOK       MARKET"
+    },
+    {
+      "source_line_ref": "p6:l11",
+      "text": "SYMBOL    SEGREGATED PRICE    COST       VALUE"
+    },
+    {
+      "source_line_ref": "p6:l12",
+      "text": "_________________________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p6:l14",
+      "text": "Common  Shares"
+    },
+    {
+      "source_line_ref": "p6:l16",
+      "text": "ISHARES IBOXX $ INVESTMENT LQD        5,000  107.120   534,006.88 # $535,600.00"
+    },
+    {
+      "source_line_ref": "p6:l17",
+      "text": "GRADE CORPORATE BOND ETF             5,000"
+    },
+    {
+      "source_line_ref": "p6:l18",
+      "text": "VANGUARD INTERMEDIATE TERM VCIT       4,000  79.930    314,246.88 # $319,720.00"
+    },
+    {
+      "source_line_ref": "p6:l19",
+      "text": "CORPORATE BOND ETF                   4,000"
+    },
+    {
+      "source_line_ref": "p6:l20",
+      "text": "VANGUARD SHORT TERM CORPORATE VCSH    3,700  77.275    279,874.88 # $285,917.50"
+    },
+    {
+      "source_line_ref": "p6:l21",
+      "text": "BOND ETF                             3,700"
+    },
+    {
+      "source_line_ref": "p6:l22",
+      "text": "Total Value of Common Shares                          1,128,128.64 $1,141,237.50"
+    },
+    {
+      "source_line_ref": "p6:l23",
+      "text": "_________________________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p6:l24",
+      "text": "Other"
+    },
+    {
+      "source_line_ref": "p6:l26",
+      "text": "PUT TLT 01/16/26 75                     30-   1.340      3,600.00-² $4,020.00-"
+    },
+    {
+      "source_line_ref": "p6:l27",
+      "text": "ISHS 20 PLUS YEAR TREASURY BD"
+    },
+    {
+      "source_line_ref": "p6:l28",
+      "text": "PUT TLT 01/16/26 90                     15    4.850      7,750.63 # $7,275.00"
+    },
+    {
+      "source_line_ref": "p6:l29",
+      "text": "ISHS 20 PLUS YEAR TREASURY BD"
+    },
+    {
+      "source_line_ref": "p6:l30",
+      "text": "PUT TSLA 01/17/25 55                    40    0.240     16,056.88 #  $960.00"
+    },
+    {
+      "source_line_ref": "p6:l31",
+      "text": "TESLA INC"
+    },
+    {
+      "source_line_ref": "p6:l32",
+      "text": "PUT TSLA 09/20/24 100                   10    0.270     11,019.38 #  $270.00"
+    },
+    {
+      "source_line_ref": "p6:l33",
+      "text": "TESLA INC"
+    },
+    {
+      "source_line_ref": "p6:l34",
+      "text": "Total Value of Other                                    31,226.89   $4,485.00"
+    },
+    {
+      "source_line_ref": "p6:l35",
+      "text": "_________________________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p6:l36",
+      "text": "Total Value of All Securities                         1,159,355.53 $1,145,722.50"
+    },
+    {
+      "source_line_ref": "p6:l37",
+      "text": "_________________________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p6:l39",
+      "text": "Account  Activity"
+    },
+    {
+      "source_line_ref": "p6:l40",
+      "text": "PRICE"
+    },
+    {
+      "source_line_ref": "p6:l41",
+      "text": "DATE ACTIVITY DESCRIPTION               QUANTITY  \\RATE     DEBIT    CREDIT"
+    },
+    {
+      "source_line_ref": "p6:l43",
+      "text": "Opening Balance (MAY 31, 2024)                          $813.97"
+    },
+    {
+      "source_line_ref": "p6:l44",
+      "text": "JUNE 05 DIVIDEND VANGUARD INTERMEDIATE TERM      0.2992 179.52 NRT  1,196.80"
+    },
+    {
+      "source_line_ref": "p6:l45",
+      "text": "CORPORATE BOND ETF"
+    },
+    {
+      "source_line_ref": "p6:l46",
+      "text": "CASH DIV ON 4000 SHS"
+    },
+    {
+      "source_line_ref": "p6:l47",
+      "text": "REC 06/03/24 PAY 06/05/24"
+    },
+    {
+      "source_line_ref": "p6:l48",
+      "text": "NON-RES TAX WITHHELD"
+    },
+    {
+      "source_line_ref": "p6:l49",
+      "text": "JUNE 05 DIVIDEND VANGUARD SHORT TERM CORPORATE   0.258  143.19 NRT   954.60"
+    },
+    {
+      "source_line_ref": "p6:l50",
+      "text": "BOND ETF"
+    },
+    {
+      "source_line_ref": "p6:l51",
+      "text": "CASH DIV ON 3700 SHS"
+    },
+    {
+      "source_line_ref": "p6:l52",
+      "text": "REC 06/03/24 PAY 06/05/24"
+    },
+    {
+      "source_line_ref": "p6:l53",
+      "text": "NON-RES TAX WITHHELD"
+    },
+    {
+      "source_line_ref": "p6:l56",
+      "text": "-CONTINUEDONNEXTPAGE-"
+    },
+    {
+      "source_line_ref": "p7:l4",
+      "text": "Order  Execution Only         JUNE  28"
+    },
+    {
+      "source_line_ref": "p7:l5",
+      "text": "U.S. Dollar Statement         2024"
+    },
+    {
+      "source_line_ref": "p7:l7",
+      "text": "Your Account Number: 670-27469-2-3 3 of 5"
+    },
+    {
+      "source_line_ref": "p7:l8",
+      "text": "______________________________________________________________________________"
+    },
+    {
+      "source_line_ref": "p7:l9",
+      "text": "Account  Activity"
+    },
+    {
+      "source_line_ref": "p7:l10",
+      "text": "PRICE"
+    },
+    {
+      "source_line_ref": "p7:l11",
+      "text": "DATE  ACTIVITY DESCRIPTION              QUANTITY  \\RATE      DEBIT    CREDIT"
+    },
+    {
+      "source_line_ref": "p7:l13",
+      "text": "JUNE 07 NONRES TX ISHARES IBOXX $ INVESTMENT                          258.87"
+    },
+    {
+      "source_line_ref": "p7:l14",
+      "text": "GRADE CORPORATE BOND ETF"
+    },
+    {
+      "source_line_ref": "p7:l15",
+      "text": "AS OF 06/07/24 REV QI TAX"
+    },
+    {
+      "source_line_ref": "p7:l17",
+      "text": "JUNE 07 DIVIDEND ISHARES IBOXX $ INVESTMENT      0.4045  303.38 NRT  2,022.54"
+    },
+    {
+      "source_line_ref": "p7:l18",
+      "text": "GRADE CORPORATE BOND ETF"
+    },
+    {
+      "source_line_ref": "p7:l19",
+      "text": "CASH DIV ON 5000 SHS"
+    },
+    {
+      "source_line_ref": "p7:l20",
+      "text": "REC 06/03/24 PAY 06/07/24"
+    },
+    {
+      "source_line_ref": "p7:l21",
+      "text": "NON-RES TAX WITHHELD"
+    },
+    {
+      "source_line_ref": "p7:l22",
+      "text": "JUNE 17 DIVIDEND ISHARES INC                     0.35088  52.63 NRT   350.89"
+    },
+    {
+      "source_line_ref": "p7:l23",
+      "text": "ISHARES MSCI SINGAPORE ETF"
+    },
+    {
+      "source_line_ref": "p7:l24",
+      "text": "CASH DIV ON 1000 SHS"
+    },
+    {
+      "source_line_ref": "p7:l25",
+      "text": "REC 06/11/24 PAY 06/17/24"
+    },
+    {
+      "source_line_ref": "p7:l26",
+      "text": "NON-RES TAX WITHHELD"
+    },
+    {
+      "source_line_ref": "p7:l28",
+      "text": "JUNE 18 BOUGHT PUT TSLA 01/17/25 40         40    0.123     544.00"
+    },
+    {
+      "source_line_ref": "p7:l29",
+      "text": "TESLA INC"
+    },
+    {
+      "source_line_ref": "p7:l30",
+      "text": "UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p7:l31",
+      "text": "DA"
+    },
+    {
+      "source_line_ref": "p7:l32",
+      "text": "CLOSE CONTRACT"
+    },
+    {
+      "source_line_ref": "p7:l33",
+      "text": "JUNE 18 BOUGHT PUT TSLA 01/17/25 45         40     0.18     770.00"
+    },
+    {
+      "source_line_ref": "p7:l34",
+      "text": "TESLA INC"
+    },
+    {
+      "source_line_ref": "p7:l35",
+      "text": "UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p7:l36",
+      "text": "DA"
+    },
+    {
+      "source_line_ref": "p7:l37",
+      "text": "CLOSE CONTRACT"
+    },
+    {
+      "source_line_ref": "p7:l39",
+      "text": "JUNE 18 BOUGHT PUT TSLA 09/20/24 75         20     0.15     325.00"
+    },
+    {
+      "source_line_ref": "p7:l40",
+      "text": "TESLA INC"
+    },
+    {
+      "source_line_ref": "p7:l41",
+      "text": "UNSOLICITED"
+    },
+    {
+      "source_line_ref": "p7:l42",
+      "text": "DA"
+    },
+    {
+      "source_line_ref": "p7:l43",
+      "text": "CLOSE CONTRACT"
+    }
+  ]
+}

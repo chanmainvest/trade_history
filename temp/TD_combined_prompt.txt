@@ -1,0 +1,1251 @@
+Analyze this brokerage statement PDF text extract. I need you to identify:
+
+1. ACCOUNT INFORMATION:
+   - Account number(s) found in the document
+   - How and where the account number appears (exact text pattern)
+   - Institution name
+
+2. TRANSACTION FORMAT:
+   - Show 3-5 example transaction lines EXACTLY as they appear
+   - Identify the column layout: what order are date, action, symbol, quantity, price, amount, commission
+   - What date format is used (e.g., "Jan 15", "2024-01-15", "01/15/2024")?
+   - How are BUY/SELL actions written?
+   - How are currency indicators shown (CAD/USD)?
+   - Are transactions split across multiple lines?
+
+3. OPTION TRANSACTIONS (if any):
+   - Show exact option line format
+   - How is PUT/CALL indicated?
+   - How is strike price shown?
+   - How is expiry date shown?
+   - What is the multiplier notation?
+
+4. DIVIDEND/INTEREST LINES:
+   - Show exact format of dividend lines
+   - Is the stock symbol shown on dividend lines?
+   - How is the amount shown?
+
+5. TRANSFER LINES (if any):
+   - Show exact format
+   - How is IN/OUT direction indicated?
+
+6. BALANCE/SNAPSHOT LINES:
+   - Show exact format for opening cash balance
+   - Show exact format for closing cash balance
+   - Show exact format for portfolio total value
+   - What keywords identify these lines?
+
+7. MULTI-CURRENCY:
+   - Does the statement have separate CAD and USD sections?
+   - How are they delineated?
+
+Return the raw text patterns exactly as they appear - do not normalize or clean them. This is for writing regex parsers.
+
+Statement lines JSON follows:
+
+{
+  "file_path": "Statements\\TD Webbroker\\Statement_58MRB0_2024-06.pdf",
+  "line_count": 705,
+  "lines": [
+    {
+      "source_line_ref": "p1:l3",
+      "text": "TD Direct Investing"
+    },
+    {
+      "source_line_ref": "p1:l7",
+      "text": "For the period ending June 30, 2024"
+    },
+    {
+      "source_line_ref": "p1:l9",
+      "text": "Account number: 58MRB0"
+    },
+    {
+      "source_line_ref": "p1:l13",
+      "text": "Do you have a question?"
+    },
+    {
+      "source_line_ref": "p1:l14",
+      "text": "For questions about your statement or further"
+    },
+    {
+      "source_line_ref": "p1:l15",
+      "text": "information, we provide support Monday through"
+    },
+    {
+      "source_line_ref": "p1:l16",
+      "text": "MS WAH-FONG SO OR                     Friday, in 4 languages:"
+    },
+    {
+      "source_line_ref": "p1:l17",
+      "text": "MR YAT HONG CHAN OR"
+    },
+    {
+      "source_line_ref": "p1:l18",
+      "text": "English: 1-800-668-1972"
+    },
+    {
+      "source_line_ref": "p1:l19",
+      "text": "MR JERT-YAN CHAN                      French: 1-866-211-3847"
+    },
+    {
+      "source_line_ref": "p1:l20",
+      "text": "6038 EWART ST                         Cantonese: 1-800-838-3223 option 1"
+    },
+    {
+      "source_line_ref": "p1:l21",
+      "text": "BURNABY BC"
+    },
+    {
+      "source_line_ref": "p1:l22",
+      "text": "Mandarin: 1-800-838-3223 option 2"
+    },
+    {
+      "source_line_ref": "p1:l23",
+      "text": "V5J 2X2"
+    },
+    {
+      "source_line_ref": "p1:l25",
+      "text": "Summary    of your accounts"
+    },
+    {
+      "source_line_ref": "p1:l27",
+      "text": "This period    This period"
+    },
+    {
+      "source_line_ref": "p1:l28",
+      "text": "ending Jun 30, 2024 ending Jun 30, 2024"
+    },
+    {
+      "source_line_ref": "p1:l29",
+      "text": "Account type                                 Market value USD ($) Market value CDN ($)"
+    },
+    {
+      "source_line_ref": "p1:l30",
+      "text": "Non-registered accounts"
+    },
+    {
+      "source_line_ref": "p1:l31",
+      "text": "Direct Trading - CDN                                           1,131,433.25"
+    },
+    {
+      "source_line_ref": "p1:l32",
+      "text": "Direct Trading - US                             1,387,150.25   1,896,927.97"
+    },
+    {
+      "source_line_ref": "p1:l34",
+      "text": "Total non-registered holdings in Canadian dollars             $3,028,361.22"
+    },
+    {
+      "source_line_ref": "p1:l38",
+      "text": "Summary of account holdings in Canadian dollars             $3,028,361.22"
+    },
+    {
+      "source_line_ref": "p1:l42",
+      "text": "All USD balances are converted with the following month end rate ($1 US = $1.3675 CDN)"
+    },
+    {
+      "source_line_ref": "p1:l58",
+      "text": "Order-Execution-Only Account."
+    },
+    {
+      "source_line_ref": "p1:l59",
+      "text": "TD Waterhouse Canada Inc."
+    },
+    {
+      "source_line_ref": "p1:l60",
+      "text": "Member - Canadian Investor Protection Fund                               Page 1 of 1"
+    },
+    {
+      "source_line_ref": "p2:l3",
+      "text": "TD Direct Investing"
+    },
+    {
+      "source_line_ref": "p2:l6",
+      "text": "Your   investment     account     statement"
+    },
+    {
+      "source_line_ref": "p2:l7",
+      "text": "June 1, 2024 to June 30, 2024"
+    },
+    {
+      "source_line_ref": "p2:l9",
+      "text": "Account number: 58MRB0"
+    },
+    {
+      "source_line_ref": "p2:l10",
+      "text": "Account type: Direct Trading - CDN"
+    },
+    {
+      "source_line_ref": "p2:l11",
+      "text": "Account currency: Canadian dollars"
+    },
+    {
+      "source_line_ref": "p2:l13",
+      "text": "Do you have a question?"
+    },
+    {
+      "source_line_ref": "p2:l14",
+      "text": "For questions about your statement or further"
+    },
+    {
+      "source_line_ref": "p2:l15",
+      "text": "information, we provide support Monday through"
+    },
+    {
+      "source_line_ref": "p2:l16",
+      "text": "MS WAH-FONG SO OR"
+    },
+    {
+      "source_line_ref": "p2:l17",
+      "text": "Friday, in 4 languages:"
+    },
+    {
+      "source_line_ref": "p2:l18",
+      "text": "MR YAT HONG CHAN OR"
+    },
+    {
+      "source_line_ref": "p2:l19",
+      "text": "MR JERT-YAN CHAN                         English: 1-800-668-1972"
+    },
+    {
+      "source_line_ref": "p2:l20",
+      "text": "6038 EWART ST                            French: 1-866-211-3847"
+    },
+    {
+      "source_line_ref": "p2:l21",
+      "text": "Cantonese: 1-800-838-3223 option 1"
+    },
+    {
+      "source_line_ref": "p2:l22",
+      "text": "BURNABY BC"
+    },
+    {
+      "source_line_ref": "p2:l23",
+      "text": "V5J 2X2                                  Mandarin: 1-800-838-3223 option 2"
+    },
+    {
+      "source_line_ref": "p2:l25",
+      "text": "Your account  at a glance"
+    },
+    {
+      "source_line_ref": "p2:l27",
+      "text": "This period Last period  Year to date"
+    },
+    {
+      "source_line_ref": "p2:l28",
+      "text": "i"
+    },
+    {
+      "source_line_ref": "p2:l29",
+      "text": "You need to know"
+    },
+    {
+      "source_line_ref": "p2:l30",
+      "text": "(Jun 1 - Jun 30, 2024) (May 1 - May 31, 2024) (Jan 1 - Jun 30, 2024)"
+    },
+    {
+      "source_line_ref": "p2:l31",
+      "text": "Beginning balance    $1,174,286.34 $1,133,957.48 $1,090,283.56"
+    },
+    {
+      "source_line_ref": "p2:l32",
+      "text": "Please see p age 3 for"
+    },
+    {
+      "source_line_ref": "p2:l33",
+      "text": "Change in your account -$42,853.09 $40,328.86   $41,149.69"
+    },
+    {
+      "source_line_ref": "p2:l34",
+      "text": "important information"
+    },
+    {
+      "source_line_ref": "p2:l35",
+      "text": "balance"
+    },
+    {
+      "source_line_ref": "p2:l36",
+      "text": "about your account."
+    },
+    {
+      "source_line_ref": "p2:l37",
+      "text": "Ending balance       $1,131,433.25 $1,174,286.34 $1,131,433.25"
+    },
+    {
+      "source_line_ref": "p2:l38",
+      "text": "Holdings  in your account"
+    },
+    {
+      "source_line_ref": "p2:l39",
+      "text": "on June 30, 2024"
+    },
+    {
+      "source_line_ref": "p2:l40",
+      "text": "Unrealized"
+    },
+    {
+      "source_line_ref": "p2:l41",
+      "text": "%"
+    },
+    {
+      "source_line_ref": "p2:l42",
+      "text": "Quantity or           Book        Market    gain of your"
+    },
+    {
+      "source_line_ref": "p2:l43",
+      "text": "Description        par value ($) Price ($) cost ($)  value ($) or loss ($) holdings"
+    },
+    {
+      "source_line_ref": "p2:l44",
+      "text": "Cash"
+    },
+    {
+      "source_line_ref": "p2:l45",
+      "text": "Cash                                  12,525.27    12,525.27    0.00 1.11%"
+    },
+    {
+      "source_line_ref": "p2:l46",
+      "text": "Equities"
+    },
+    {
+      "source_line_ref": "p2:l47",
+      "text": "Canadian common shares & equivalents"
+    },
+    {
+      "source_line_ref": "p2:l48",
+      "text": "BANK OF MONTREAL    1,600 SEG 114.830 45,606.97   183,728.00 138,121.03 16.24%"
+    },
+    {
+      "source_line_ref": "p2:l49",
+      "text": "(BMO )"
+    },
+    {
+      "source_line_ref": "p2:l50",
+      "text": "BMO MID CORP BND    3,200 SEG  14.910 46,037.01    47,712.00 1,674.99 4.22%"
+    },
+    {
+      "source_line_ref": "p2:l51",
+      "text": "INDX ETF (ZCM )"
+    },
+    {
+      "source_line_ref": "p2:l52",
+      "text": "BANK OF NOVA        1,200 SEG  62.580 28,678.97    75,096.00 46,417.03 6.64%"
+    },
+    {
+      "source_line_ref": "p2:l53",
+      "text": "SCOTIA (BNS)"
+    },
+    {
+      "source_line_ref": "p2:l54",
+      "text": "CDN IMPERIAL BK     2,400 SEG  65.050 61,469.99   156,120.00 94,650.01 13.80%"
+    },
+    {
+      "source_line_ref": "p2:l55",
+      "text": "COMMERCE (CM )"
+    },
+    {
+      "source_line_ref": "p2:l56",
+      "text": "CANADIAN NATIONAL    305 SEG  161.660 42,316.38    49,306.30 6,989.92 4.36%"
+    },
+    {
+      "source_line_ref": "p2:l57",
+      "text": "RAILWAY (CNR)"
+    },
+    {
+      "source_line_ref": "p2:l58",
+      "text": "CANADIAN PAC         400 SEG  107.740 36,205.99    43,096.00 6,890.01 3.81%"
+    },
+    {
+      "source_line_ref": "p2:l59",
+      "text": "KANSAS CITY (CP)"
+    },
+    {
+      "source_line_ref": "p2:l60",
+      "text": "(continued on next page)"
+    },
+    {
+      "source_line_ref": "p2:l61",
+      "text": "Order-Execution-Only Account."
+    },
+    {
+      "source_line_ref": "p2:l62",
+      "text": "TD Waterhouse Canada Inc."
+    },
+    {
+      "source_line_ref": "p2:l63",
+      "text": "Member - Canadian Investor Protection Fund                               Page 1 of 4"
+    },
+    {
+      "source_line_ref": "p3:l3",
+      "text": "Account number: 58MRB0"
+    },
+    {
+      "source_line_ref": "p3:l4",
+      "text": "Account type: Direct Trading - CDN"
+    },
+    {
+      "source_line_ref": "p3:l5",
+      "text": "Your investment account statement: Jun 30, 2024"
+    },
+    {
+      "source_line_ref": "p3:l8",
+      "text": "Holdings  in your account  (continued)"
+    },
+    {
+      "source_line_ref": "p3:l9",
+      "text": "on June 30, 2024"
+    },
+    {
+      "source_line_ref": "p3:l11",
+      "text": "Unrealized"
+    },
+    {
+      "source_line_ref": "p3:l12",
+      "text": "%"
+    },
+    {
+      "source_line_ref": "p3:l13",
+      "text": "Quantity or           Book        Market     gain of your"
+    },
+    {
+      "source_line_ref": "p3:l14",
+      "text": "Description        par value ($) Price ($) cost ($) value ($) or loss ($) holdings"
+    },
+    {
+      "source_line_ref": "p3:l15",
+      "text": "Equities (continued)"
+    },
+    {
+      "source_line_ref": "p3:l16",
+      "text": "Canadian common shares & equivalents (continued)"
+    },
+    {
+      "source_line_ref": "p3:l17",
+      "text": "NATIONAL BANK OF    170 SEG  108.510  19,480.79   18,446.70 -1,034.09 1.63%"
+    },
+    {
+      "source_line_ref": "p3:l18",
+      "text": "CDA (NA)"
+    },
+    {
+      "source_line_ref": "p3:l19",
+      "text": "NUTRIEN LTD (NTR)  1,000 SEG  69.650  75,015.00   69,650.00 -5,365.00 6.16%"
+    },
+    {
+      "source_line_ref": "p3:l20",
+      "text": "ROYAL BANK OF      1,200 SEG 145.650  39,787.98  174,780.00 134,992.02 15.45%"
+    },
+    {
+      "source_line_ref": "p3:l21",
+      "text": "CANADA (RY)"
+    },
+    {
+      "source_line_ref": "p3:l22",
+      "text": "SUNCOR ENERGY INC  1,600 SEG  52.150  65,234.99   83,440.00 18,205.01 7.37%"
+    },
+    {
+      "source_line_ref": "p3:l23",
+      "text": "NEW (SU)"
+    },
+    {
+      "source_line_ref": "p3:l24",
+      "text": "TORONTO DOMINION   1,600 SEG  75.200  28,203.98  120,320.00 92,116.02 10.63%"
+    },
+    {
+      "source_line_ref": "p3:l25",
+      "text": "BANK (TD )"
+    },
+    {
+      "source_line_ref": "p3:l26",
+      "text": "CALL-100 CNQ'25        20      2.790  4,234.99     5,580.00  1,345.01 0.49%"
+    },
+    {
+      "source_line_ref": "p3:l27",
+      "text": "JA@50"
+    },
+    {
+      "source_line_ref": "p3:l28",
+      "text": "PUT -100 CNQ'25        -40     0.660  -3,940.01   -2,640.00  1,300.01 -0.23%"
+    },
+    {
+      "source_line_ref": "p3:l29",
+      "text": "JA@40"
+    },
+    {
+      "source_line_ref": "p3:l30",
+      "text": "Total Canadian common shares & equivalents $488,333.03 $1,024,635.00 90.56%"
+    },
+    {
+      "source_line_ref": "p3:l31",
+      "text": "Canadian equity mutual funds"
+    },
+    {
+      "source_line_ref": "p3:l32",
+      "text": "RBC CDN DIV-F /NL 41.347 SEG  98.961  1,705.98     4,091.74  2,385.76 0.36%"
+    },
+    {
+      "source_line_ref": "p3:l33",
+      "text": "(RBF607C )"
+    },
+    {
+      "source_line_ref": "p3:l34",
+      "text": "TD CDN EQ-D /NL 2,649.921 SEG 16.610  26,481.67   44,015.18 17,533.51 3.89%"
+    },
+    {
+      "source_line_ref": "p3:l35",
+      "text": "(TDB3089C )"
+    },
+    {
+      "source_line_ref": "p3:l36",
+      "text": "TD DIV INCM-D /NL 1,630.364 SEG 14.270 14,270.55  23,265.29  8,994.74 2.06%"
+    },
+    {
+      "source_line_ref": "p3:l37",
+      "text": "(TDB3087C )"
+    },
+    {
+      "source_line_ref": "p3:l38",
+      "text": "RBC OSH CD        813.787 SEG 28.141  12,166.00   22,900.77 10,734.77 2.02%"
+    },
+    {
+      "source_line_ref": "p3:l39",
+      "text": "EQTY-F/NL (RBF610C )"
+    },
+    {
+      "source_line_ref": "p3:l40",
+      "text": "Total Canadian equity mutual funds  $54,624.20  $94,272.98         8.33%"
+    },
+    {
+      "source_line_ref": "p3:l41",
+      "text": "Total equities                      $542,957.23 $1,118,907.98      98.89%"
+    },
+    {
+      "source_line_ref": "p3:l42",
+      "text": "Total Portfolio                     $555,482.50 $1,131,433.25     100.00%"
+    },
+    {
+      "source_line_ref": "p3:l43",
+      "text": "Definitions"
+    },
+    {
+      "source_line_ref": "p3:l44",
+      "text": "An explanation of terms shown in the tables above"
+    },
+    {
+      "source_line_ref": "p3:l45",
+      "text": "Book cost for long positions is the total amount paid to purchase Market value is the price of Unrealized Gain or Loss is"
+    },
+    {
+      "source_line_ref": "p3:l46",
+      "text": "a security including any transaction charges related to the purchase, the security or fund multiplied the gain or loss that would"
+    },
+    {
+      "source_line_ref": "p3:l47",
+      "text": "adjusted for reinvested distributions, return of capital and corporate by the quantity held. be incurred, if your holdings"
+    },
+    {
+      "source_line_ref": "p3:l48",
+      "text": "actions.                                                were liquidated as at the"
+    },
+    {
+      "source_line_ref": "p3:l49",
+      "text": "end of the statement period."
+    },
+    {
+      "source_line_ref": "p3:l50",
+      "text": "Book cost for short positions is the total amount received for the It is calculated by"
+    },
+    {
+      "source_line_ref": "p3:l51",
+      "text": "security, net of any transaction charges related to the sale, adjusted subtracting book cost from"
+    },
+    {
+      "source_line_ref": "p3:l52",
+      "text": "for any distribution (other than dividends), returns of capital and market value."
+    },
+    {
+      "source_line_ref": "p3:l53",
+      "text": "corporate actions."
+    },
+    {
+      "source_line_ref": "p3:l58",
+      "text": "Order-Execution-Only Account."
+    },
+    {
+      "source_line_ref": "p3:l60",
+      "text": "Page 2 of 4"
+    },
+    {
+      "source_line_ref": "p4:l3",
+      "text": "Account number: 58MRB0"
+    },
+    {
+      "source_line_ref": "p4:l4",
+      "text": "Account type: Direct Trading - CDN"
+    },
+    {
+      "source_line_ref": "p4:l5",
+      "text": "Your investment account statement: Jun 30, 2024"
+    },
+    {
+      "source_line_ref": "p4:l8",
+      "text": "Activity in your account  this period"
+    },
+    {
+      "source_line_ref": "p4:l11",
+      "text": "Cash"
+    },
+    {
+      "source_line_ref": "p4:l12",
+      "text": "Date  Activity    Description            Quantity Price ($) Amount ($) balance ($)"
+    },
+    {
+      "source_line_ref": "p4:l13",
+      "text": "Beginning cash balance                                      11,893.01"
+    },
+    {
+      "source_line_ref": "p4:l14",
+      "text": "May 30 Dividend   TD DIV INCM-D /NL'FRAC 4.309              0.00  11,893.01"
+    },
+    {
+      "source_line_ref": "p4:l15",
+      "text": "Reinvestment Plan VALUE = 62.31"
+    },
+    {
+      "source_line_ref": "p4:l16",
+      "text": "Jun 4 Distribution BMO MID CORP BND INDX 3,200             160.00 12,053.01"
+    },
+    {
+      "source_line_ref": "p4:l17",
+      "text": "ETF"
+    },
+    {
+      "source_line_ref": "p4:l18",
+      "text": "Jun 18 Buy        PUT -100 ENB'24 SP@44    10    0.340    -362.49 11,690.52"
+    },
+    {
+      "source_line_ref": "p4:l19",
+      "text": "CLOSING TRANSACTION"
+    },
+    {
+      "source_line_ref": "p4:l20",
+      "text": "EXPIRES ON SEP 20,2024"
+    },
+    {
+      "source_line_ref": "p4:l21",
+      "text": "MG-692051"
+    },
+    {
+      "source_line_ref": "p4:l22",
+      "text": "Jun 18 Buy        CALL-100 CNQ'25 JA@50    20    2.100   -4,234.99 7,455.53"
+    },
+    {
+      "source_line_ref": "p4:l23",
+      "text": "OPENING TRANSACTION"
+    },
+    {
+      "source_line_ref": "p4:l24",
+      "text": "EXPIRES ON JAN 17,2025"
+    },
+    {
+      "source_line_ref": "p4:l25",
+      "text": "IZ-689169"
+    },
+    {
+      "source_line_ref": "p4:l26",
+      "text": "Jun 18 Sell       PUT -100 CNQ'25 JA@40    -40   1.000    3,940.01 11,395.54"
+    },
+    {
+      "source_line_ref": "p4:l27",
+      "text": "OPENING TRANS -"
+    },
+    {
+      "source_line_ref": "p4:l28",
+      "text": "UNCOVERED EXPIRES ON"
+    },
+    {
+      "source_line_ref": "p4:l29",
+      "text": "JAN 17,2025 YP-690956"
+    },
+    {
+      "source_line_ref": "p4:l30",
+      "text": "Jun 25 Dividends  SUNCOR ENERGY INC NEW  1,600             872.00 12,267.54"
+    },
+    {
+      "source_line_ref": "p4:l31",
+      "text": "Jun 28 Dividends  CANADIAN NATIONAL       305              257.73 12,525.27"
+    },
+    {
+      "source_line_ref": "p4:l32",
+      "text": "RAILWAY"
+    },
+    {
+      "source_line_ref": "p4:l33",
+      "text": "Jun 30 Ending cash balance                                       $12,525.27"
+    },
+    {
+      "source_line_ref": "p4:l35",
+      "text": "Details of investment  income"
+    },
+    {
+      "source_line_ref": "p4:l37",
+      "text": "This period Year to date"
+    },
+    {
+      "source_line_ref": "p4:l38",
+      "text": "Earnings/ Expenses (Jun 1 - Jun 30, 2024) (Jan 1 - Jun 30, 2024)"
+    },
+    {
+      "source_line_ref": "p4:l39",
+      "text": "Dividends             1,289.73   22,428.41"
+    },
+    {
+      "source_line_ref": "p4:l40",
+      "text": "Interest                0.00       -70.27"
+    },
+    {
+      "source_line_ref": "p4:l41",
+      "text": "Total                $1,289.73  $22,358.14"
+    },
+    {
+      "source_line_ref": "p4:l45",
+      "text": "i Important information about your account"
+    },
+    {
+      "source_line_ref": "p4:l47",
+      "text": "Discover our top digital tools for investing, managing your account, and other self-serve options. Visit the TD Direct"
+    },
+    {
+      "source_line_ref": "p4:l48",
+      "text": "Investing Help Centre at www.td.com/TDDirectInvestingHelp to get the answers you need quickly and easily."
+    },
+    {
+      "source_line_ref": "p4:l58",
+      "text": "Order-Execution-Only Account."
+    },
+    {
+      "source_line_ref": "p4:l60",
+      "text": "Page 3 of 4"
+    },
+    {
+      "source_line_ref": "p5:l3",
+      "text": "Account number: 58MRB0"
+    },
+    {
+      "source_line_ref": "p5:l4",
+      "text": "Account type: Direct Trading - CDN"
+    },
+    {
+      "source_line_ref": "p5:l5",
+      "text": "Your investment account statement: Jun 30, 2024"
+    },
+    {
+      "source_line_ref": "p5:l8",
+      "text": "Disclosures"
+    },
+    {
+      "source_line_ref": "p5:l10",
+      "text": "Important Information                (d) Market value information as at December 31, 2018 has been used to"
+    },
+    {
+      "source_line_ref": "p5:l11",
+      "text": "estimate part or all of the book cost of this security position."
+    },
+    {
+      "source_line_ref": "p5:l12",
+      "text": "This statement is an important document and contains a record of all"
+    },
+    {
+      "source_line_ref": "p5:l13",
+      "text": "transactions between TD Direct Investing (herein referred to as \"we\", Prices for mutual funds do not necessarily reflect the month end close Net"
+    },
+    {
+      "source_line_ref": "p5:l14",
+      "text": "\"us\" and \"our\") and the account holder (herein referred to as \"you\" and Asset Value Per Share (NAVPS). The NAVPS expressed for mutual funds"
+    },
+    {
+      "source_line_ref": "p5:l15",
+      "text": "\"your\"). The information provided in this statement should not be used represents the last value received by TD Direct Investing prior to the production"
+    },
+    {
+      "source_line_ref": "p5:l16",
+      "text": "for the purpose of tax reporting as certain events are dependent on of our statements."
+    },
+    {
+      "source_line_ref": "p5:l17",
+      "text": "individual circumstances. Book cost shown for your holdings has been Securities listed under the heading \"Pending activity in your account\" denote"
+    },
+    {
+      "source_line_ref": "p5:l18",
+      "text": "calculated to the best of our ability based on the information available to trades which are for settlement subsequent to the date of the statement. The"
+    },
+    {
+      "source_line_ref": "p5:l19",
+      "text": "us and may not reflect all required adjustments. It is your obligation as settlement dates of such trades are printed in the date column."
+    },
+    {
+      "source_line_ref": "p5:l20",
+      "text": "an account holder to review this statement carefully and notify us"
+    },
+    {
+      "source_line_ref": "p5:l21",
+      "text": "immediately of any errors, omissions or objections to the statement, The activity description column may contain abbreviations related to mutual"
+    },
+    {
+      "source_line_ref": "p5:l22",
+      "text": "including any transactions that you did not authorize. A written funds, restricted voting shares, segregated investments and investments in"
+    },
+    {
+      "source_line_ref": "p5:l23",
+      "text": "notification may be sent to:         safekeeping. Common abbreviations related to mutual funds are NL - No Load,"
+    },
+    {
+      "source_line_ref": "p5:l24",
+      "text": "D - Deferred Sales Charge, LL - Low Load and FRAC - Fractional Shares."
+    },
+    {
+      "source_line_ref": "p5:l25",
+      "text": "TD Direct Investing                  Abbreviations related to restricted voting privileges are NVS - Non - Voting"
+    },
+    {
+      "source_line_ref": "p5:l26",
+      "text": "3500 Steeles Ave East, Tower 5, Level 3 Shares, RS - Restricted Shares, SVS - Subordinate Voting Shares and RVS -"
+    },
+    {
+      "source_line_ref": "p5:l27",
+      "text": "Markham, Ontario L3R 2Z1             Restricted Voting Shares. SEG is an abbreviation to indicate that the"
+    },
+    {
+      "source_line_ref": "p5:l28",
+      "text": "investments are segregated. SFK is an abbreviation to indicate that the"
+    },
+    {
+      "source_line_ref": "p5:l29",
+      "text": "This enables you to contact us directly regarding any comments and"
+    },
+    {
+      "source_line_ref": "p5:l30",
+      "text": "investments are in safekeeping. If you have any questions about your"
+    },
+    {
+      "source_line_ref": "p5:l31",
+      "text": "concerns. You may also contact an Investment Representative at the"
+    },
+    {
+      "source_line_ref": "p5:l32",
+      "text": "statement, please speak with your Investment Representative."
+    },
+    {
+      "source_line_ref": "p5:l33",
+      "text": "number on the front page of this statement."
+    },
+    {
+      "source_line_ref": "p5:l34",
+      "text": "Limits on Investment Coverage        All securities paid in full, and margin securities above the legal minimum"
+    },
+    {
+      "source_line_ref": "p5:l35",
+      "text": "cannot be used by us in the conduct of our business and are displayed on the"
+    },
+    {
+      "source_line_ref": "p5:l36",
+      "text": "Client accounts are protected by the Canadian Investor Protection Fund statement as segregated (SEG). If you have a credit balance in your TD Direct"
+    },
+    {
+      "source_line_ref": "p5:l37",
+      "text": "within specified limits. A brochure describing the nature and limits of Investing accounts, it is payable on demand. We'll record it on our books but"
+    },
+    {
+      "source_line_ref": "p5:l38",
+      "text": "coverage is available upon request or at cipf.ca. To learn more about we may use it in the conduct of our business."
+    },
+    {
+      "source_line_ref": "p5:l39",
+      "text": "CDIC deposit insurance coverage, visit cdic.ca."
+    },
+    {
+      "source_line_ref": "p5:l40",
+      "text": "In any currency conversion conducted by us, we or a related party may earn"
+    },
+    {
+      "source_line_ref": "p5:l41",
+      "text": "Your account at a glance – Additional information revenue."
+    },
+    {
+      "source_line_ref": "p5:l42",
+      "text": "Beginning balance - The opening balance of the account as of the start The elected annual payout is calculated based on the Dec 31 s t market value"
+    },
+    {
+      "source_line_ref": "p5:l43",
+      "text": "of the first day of the statement period. It is the same as the previous of the previous year and is effective Jan 1s t of the current year. This amount"
+    },
+    {
+      "source_line_ref": "p5:l44",
+      "text": "statement ending balance. It does not include accrued income for reflects the original annual minimum payment for the current + any additional"
+    },
+    {
+      "source_line_ref": "p5:l45",
+      "text": "certain fixed income and equity securities. payment elected by you."
+    },
+    {
+      "source_line_ref": "p5:l46",
+      "text": "Change in your account balance - Includes deposits, withdrawals, Corporate Information"
+    },
+    {
+      "source_line_ref": "p5:l47",
+      "text": "income received, fees charged, and the change in the value of your"
+    },
+    {
+      "source_line_ref": "p5:l48",
+      "text": "investments for the period referenced. TD Direct Investing is a division of TD Waterhouse Canada Inc., a subsidiary of"
+    },
+    {
+      "source_line_ref": "p5:l49",
+      "text": "Ending balance - This is the total market value of the account including The Toronto-Dominion Bank. TD Direct Investing does not provide investment"
+    },
+    {
+      "source_line_ref": "p5:l50",
+      "text": "cash and security holdings. It does not include accrued income for advice or recommendations regarding the purchase or sale of any securities."
+    },
+    {
+      "source_line_ref": "p5:l51",
+      "text": "certain fixed income and equity securities. Investors are responsible for their own investment decisions."
+    },
+    {
+      "source_line_ref": "p5:l52",
+      "text": "Ending Balance at reporting period end - The amount shown in the If you would like a copy of our most recent financial statement and a list of our"
+    },
+    {
+      "source_line_ref": "p5:l53",
+      "text": "“Activity in your account this period” section excludes amounts arising directors and senior officers, please write to us or call us at the telephone"
+    },
+    {
+      "source_line_ref": "p5:l54",
+      "text": "from any trades pending settlement which are not due for payment until number on the front page of this statement."
+    },
+    {
+      "source_line_ref": "p5:l55",
+      "text": "the dates printed against such trades. An affiliate of TD Waterhouse Canada Inc. owns an equity interest in TMX"
+    },
+    {
+      "source_line_ref": "p5:l56",
+      "text": "Holdings and Activity – Additional information Group Limited (¨TMX¨) and The Toronto-Dominion Bank (TD) has a nominee"
+    },
+    {
+      "source_line_ref": "p5:l57",
+      "text": "director serving on the board thereof. As such, TD may be considered to have"
+    },
+    {
+      "source_line_ref": "p5:l58",
+      "text": "¨N/D¨ means that all or a portion of the book cost or market value, as"
+    },
+    {
+      "source_line_ref": "p5:l59",
+      "text": "an economic interest in the listing and trading of securities on an exchange"
+    },
+    {
+      "source_line_ref": "p5:l60",
+      "text": "applicable, of the security position cannot be determined or has not been"
+    },
+    {
+      "source_line_ref": "p5:l61",
+      "text": "owned or controlled by TMX, including the Toronto Stock Exchange, the TSX"
+    },
+    {
+      "source_line_ref": "p5:l62",
+      "text": "assigned. The total book cost or total market value, or rate of return, as"
+    },
+    {
+      "source_line_ref": "p5:l63",
+      "text": "Venture Exchange and Alpha Exchange, and in the clearing, settlement and"
+    },
+    {
+      "source_line_ref": "p5:l64",
+      "text": "applicable, provided for your portfolio excludes security positions whose"
+    },
+    {
+      "source_line_ref": "p5:l65",
+      "text": "depository services provided by The Canadian Depository for Securities and its"
+    },
+    {
+      "source_line_ref": "p5:l66",
+      "text": "book cost or market value is ¨N/D¨."
+    },
+    {
+      "source_line_ref": "p5:l67",
+      "text": "affiliates."
+    },
+    {
+      "source_line_ref": "p5:l68",
+      "text": "(a) Market value information has been used to estimate part or all of the"
+    },
+    {
+      "source_line_ref": "p5:l69",
+      "text": "No person or company is required to obtain products or services from TMX or"
+    },
+    {
+      "source_line_ref": "p5:l70",
+      "text": "book cost of this security position."
+    },
+    {
+      "source_line_ref": "p5:l71",
+      "text": "its affiliates as a condition of TD or its affiliates continuing to supply a product"
+    },
+    {
+      "source_line_ref": "p5:l72",
+      "text": "(b) There is no active market for this security. The price has been or service."
+    },
+    {
+      "source_line_ref": "p5:l73",
+      "text": "estimated."
+    },
+    {
+      "source_line_ref": "p5:l74",
+      "text": "® The TD logo and other TD trademarks are the property of The"
+    },
+    {
+      "source_line_ref": "p5:l75",
+      "text": "(c) The market value of these compound interest investments includes Toronto-Dominion Bank or its subsidiaries."
+    },
+    {
+      "source_line_ref": "p5:l76",
+      "text": "the par value and the accrued interest to date. In the event you choose"
+    },
+    {
+      "source_line_ref": "p5:l77",
+      "text": "to redeem your securities prior to maturity, the redemption value may"
+    },
+    {
+      "source_line_ref": "p5:l78",
+      "text": "differ from the market value reported."
+    },
+    {
+      "source_line_ref": "p5:l79",
+      "text": "Order-Execution-Only Account."
+    },
+    {
+      "source_line_ref": "p5:l80",
+      "text": "Page 4 of 4"
+    },
+    {
+      "source_line_ref": "p6:l3",
+      "text": "TD Direct Investing"
+    },
+    {
+      "source_line_ref": "p6:l6",
+      "text": "Your   investment     account     statement"
+    },
+    {
+      "source_line_ref": "p6:l7",
+      "text": "June 1, 2024 to June 30, 2024"
+    },
+    {
+      "source_line_ref": "p6:l9",
+      "text": "Account number: 58MRB0"
+    },
+    {
+      "source_line_ref": "p6:l10",
+      "text": "Account type: Direct Trading - US"
+    },
+    {
+      "source_line_ref": "p6:l11",
+      "text": "Account currency: US dollars"
+    },
+    {
+      "source_line_ref": "p6:l13",
+      "text": "Do you have a question?"
+    },
+    {
+      "source_line_ref": "p6:l14",
+      "text": "For questions about your statement or further"
+    },
+    {
+      "source_line_ref": "p6:l15",
+      "text": "information, we provide support Monday through"
+    },
+    {
+      "source_line_ref": "p6:l16",
+      "text": "MS WAH-FONG SO OR"
+    },
+    {
+      "source_line_ref": "p6:l17",
+      "text": "Friday, in 4 languages:"
+    },
+    {
+      "source_line_ref": "p6:l18",
+      "text": "MR YAT HONG CHAN OR"
+    },
+    {
+      "source_line_ref": "p6:l19",
+      "text": "MR JERT-YAN CHAN                         English: 1-800-668-1972"
+    },
+    {
+      "source_line_ref": "p6:l20",
+      "text": "6038 EWART ST                            French: 1-866-211-3847"
+    },
+    {
+      "source_line_ref": "p6:l21",
+      "text": "Cantonese: 1-800-838-3223 option 1"
+    },
+    {
+      "source_line_ref": "p6:l22",
+      "text": "BURNABY BC"
+    },
+    {
+      "source_line_ref": "p6:l23",
+      "text": "V5J 2X2                                  Mandarin: 1-800-838-3223 option 2"
+    },
+    {
+      "source_line_ref": "p6:l25",
+      "text": "Your account  at a glance"
+    },
+    {
+      "source_line_ref": "p6:l27",
+      "text": "This period Last period  Year to date"
+    },
+    {
+      "source_line_ref": "p6:l28",
+      "text": "i"
+    },
+    {
+      "source_line_ref": "p6:l29",
+      "text": "You need to know"
+    },
+    {
+      "source_line_ref": "p6:l30",
+      "text": "(Jun 1 - Jun 30, 2024) (May 1 - May 31, 2024) (Jan 1 - Jun 30, 2024)"
+    },
+    {
+      "source_line_ref": "p6:l31",
+      "text": "Beginning balance    $1,410,035.02 $1,364,378.11 $1,326,875.33"
+    },
+    {
+      "source_line_ref": "p6:l32",
+      "text": "Please see p age 8 for"
+    },
+    {
+      "source_line_ref": "p6:l33",
+      "text": "Change in your account -$22,884.77 $45,656.91   $60,274.92"
+    },
+    {
+      "source_line_ref": "p6:l34",
+      "text": "important information"
+    },
+    {
+      "source_line_ref": "p6:l35",
+      "text": "balance"
+    },
+    {
+      "source_line_ref": "p6:l36",
+      "text": "about your account."
+    },
+    {
+      "source_line_ref": "p6:l37",
+      "text": "Ending balance       $1,387,150.25 $1,410,035.02 $1,387,150.25"
+    },
+    {
+      "source_line_ref": "p6:l38",
+      "text": "Holdings  in your account"
+    },
+    {
+      "source_line_ref": "p6:l39",
+      "text": "on June 30, 2024"
+    },
+    {
+      "source_line_ref": "p6:l40",
+      "text": "Unrealized"
+    },
+    {
+      "source_line_ref": "p6:l41",
+      "text": "%"
+    },
+    {
+      "source_line_ref": "p6:l42",
+      "text": "Quantity or           Book        Market    gain of your"
+    },
+    {
+      "source_line_ref": "p6:l43",
+      "text": "Description        par value ($) Price ($) cost ($)  value ($) or loss ($) holdings"
+    },
+    {
+      "source_line_ref": "p6:l44",
+      "text": "Cash"
+    },
+    {
+      "source_line_ref": "p6:l45",
+      "text": "Cash                                  22,371.35    22,371.35    0.00 1.61%"
+    },
+    {
+      "source_line_ref": "p6:l46",
+      "text": "Equities"
+    },
+    {
+      "source_line_ref": "p6:l47",
+      "text": "Foreign common shares & equivalents"
+    },
+    {
+      "source_line_ref": "p6:l48",
+      "text": "ADVANCED MICRO        1,000   162.210  6,259.99   162,210.00 155,950.01 11.69%"
+    },
+    {
+      "source_line_ref": "p6:l49",
+      "text": "DEVICES IN (AMD )"
+    },
+    {
+      "source_line_ref": "p6:l50",
+      "text": "ALCOA CORP (AA)      55 SEG    39.780  1,328.25    2,187.90   859.65 0.16%"
+    },
+    {
+      "source_line_ref": "p6:l51",
+      "text": "ALPHABET INC CL-C   1,000 SEG 183.420 90,015.00   183,420.00 93,405.00 13.22%"
+    },
+    {
+      "source_line_ref": "p6:l52",
+      "text": "(GOOG )"
+    },
+    {
+      "source_line_ref": "p6:l53",
+      "text": "CATERPILLAR INC      600 SEG  333.100 22,629.97   199,860.00 177,230.03 14.41%"
+    },
+    {
+      "source_line_ref": "p6:l54",
+      "text": "(CAT)"
+    },
+    {
+      "source_line_ref": "p6:l55",
+      "text": "CHECK POINT          200 SEG  165.000  4,776.72    33,000.00 28,223.28 2.38%"
+    },
+    {
+      "source_line_ref": "p6:l56",
+      "text": "SOFTWARE TECH"
+    },
+    {
+      "source_line_ref": "p6:l57",
+      "text": "(CHKP)"
+    },
+    {
+      "source_line_ref": "p6:l58",
+      "text": "CISCO SYSTEMS INC    400 SEG   47.510  9,017.50    19,004.00 9,986.50 1.37%"
+    },
+    {
+      "source_line_ref": "p6:l59",
+      "text": "(CSCO )"
+    },
+    {
+      "source_line_ref": "p6:l60",
+      "text": "(continued on next page)"
+    },
+    {
+      "source_line_ref": "p6:l61",
+      "text": "Order-Execution-Only Account."
+    },
+    {
+      "source_line_ref": "p6:l62",
+      "text": "TD Waterhouse Canada Inc."
+    },
+    {
+      "source_line_ref": "p6:l63",
+      "text": "Member - Canadian Investor Protection Fund                               Page 1 of 9"
+    }
+  ]
+}

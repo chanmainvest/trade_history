@@ -41,6 +41,10 @@ export type AssetPosition = {
   institution: string;
   symbol: string;
   asset_type: string;
+  option_root: string | null;
+  strike: number | null;
+  expiry: string | null;
+  put_call: string | null;
   sector: string;
   quantity: number;
   currency_native: Currency;

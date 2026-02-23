@@ -14,9 +14,10 @@ from trade_history.ingest.statements import ingest_statements
 def run_statement_ingest(
     root: Path | str | None = None,
     institutions: list[str] | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     root_path = Path(root) if isinstance(root, str) else root
-    report = ingest_statements(root=root_path or settings.statements_root, institutions=institutions)
+    report = ingest_statements(root=root_path or settings.statements_root, institutions=institutions, force=force)
     with db_session() as conn:
         position_report = rebuild_positions(conn)
     return {"statements": report.to_dict(), "positions": position_report}

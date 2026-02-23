@@ -14,6 +14,7 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 class StatementIngestRequest(BaseModel):
     root: str | None = None
     institutions: list[str] = Field(default_factory=list)
+    force: bool = False
 
 
 class PriceIngestRequest(BaseModel):
@@ -30,6 +31,7 @@ def ingest_statements_job(
     result = run_statement_ingest(
         root=None if payload.root is None else payload.root,
         institutions=payload.institutions or None,
+        force=payload.force,
     )
     return {"status": "ok", "result": result}
 

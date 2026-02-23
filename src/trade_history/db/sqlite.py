@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS events (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (account_id) REFERENCES accounts(account_id),
   FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
-  FOREIGN KEY (source_file_id) REFERENCES statement_files(id)
+  FOREIGN KEY (source_file_id) REFERENCES statement_files(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_trade_date ON events(trade_date);
@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS statement_snapshots (
   source_line_ref TEXT,
   raw_line TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (source_file_id) REFERENCES statement_files(id),
+  FOREIGN KEY (source_file_id) REFERENCES statement_files(id) ON DELETE CASCADE,
   FOREIGN KEY (account_id) REFERENCES accounts(account_id)
 );
 
@@ -145,10 +145,13 @@ CREATE TABLE IF NOT EXISTS lot_closures (
   currency TEXT NOT NULL,
   method TEXT NOT NULL DEFAULT 'average_cost',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (close_event_id) REFERENCES events(event_id),
+  FOREIGN KEY (close_event_id) REFERENCES events(event_id) ON DELETE CASCADE,
   FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
   FOREIGN KEY (account_id) REFERENCES accounts(account_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_lot_closures_close_event ON lot_closures(close_event_id);
+CREATE INDEX IF NOT EXISTS idx_lot_closures_account_instrument ON lot_closures(account_id, instrument_id);
 
 CREATE TABLE IF NOT EXISTS position_state (
   account_id TEXT NOT NULL,

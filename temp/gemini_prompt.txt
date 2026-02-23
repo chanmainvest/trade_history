@@ -1,0 +1,44 @@
+Analyze this brokerage statement PDF text extract. I need you to identify:
+
+1. ACCOUNT INFORMATION:
+   - Account number(s) found in the document
+   - How and where the account number appears (exact text pattern)
+   - Institution name
+
+2. TRANSACTION FORMAT:
+   - Show 3-5 example transaction lines EXACTLY as they appear
+   - Identify the column layout: what order are date, action, symbol, quantity, price, amount, commission
+   - What date format is used (e.g., "Jan 15", "2024-01-15", "01/15/2024")?
+   - How are BUY/SELL actions written?
+   - How are currency indicators shown (CAD/USD)?
+   - Are transactions split across multiple lines?
+
+3. OPTION TRANSACTIONS (if any):
+   - Show exact option line format
+   - How is PUT/CALL indicated?
+   - How is strike price shown?
+   - How is expiry date shown?
+   - What is the multiplier notation?
+
+4. DIVIDEND/INTEREST LINES:
+   - Show exact format of dividend lines
+   - Is the stock symbol shown on dividend lines?
+   - How is the amount shown?
+
+5. TRANSFER LINES (if any):
+   - Show exact format
+   - How is IN/OUT direction indicated?
+
+6. BALANCE/SNAPSHOT LINES:
+   - Show exact format for opening cash balance
+   - Show exact format for closing cash balance
+   - Show exact format for portfolio total value
+   - What keywords identify these lines?
+
+7. MULTI-CURRENCY:
+   - Does the statement have separate CAD and USD sections?
+   - How are they delineated?
+
+Return the raw text patterns exactly as they appear - do not normalize or clean them. This is for writing regex parsers.
+
+Statement lines JSON follows:
