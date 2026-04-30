@@ -254,8 +254,14 @@ def _instr_from_desc(desc: str, currency: str) -> ParsedInstrument:
             asset_type=atype, symbol=sym, currency=currency,
             exchange=exch, name=desc.strip()[:120],
         )
-    # mutual funds at CIBC often have no ticker; build a synthetic name-symbol
-    sym = re.sub(r"\s+", "_", desc.strip().upper())[:40] or "UNKNOWN"
+    # mutual funds at CIBC often have no ticker; build a synthetic name-symbol.
+    # Strip trailing quantity / arrow / percent fragments before underscoring,
+    # so we don't end up with garbage like "ARM_HOLDINGS_PLC_-2,000_↑↑".
+    cleaned = desc.strip().upper()
+    cleaned = re.sub(r"[↑↓\u2191\u2193]+", "", cleaned)
+    cleaned = re.sub(r"\s[-+]?\d[\d,]*\.?\d*\s*$", "", cleaned)  # trailing qty
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    sym = re.sub(r"\s+", "_", cleaned)[:40] or "UNKNOWN"
     atype = "mutual_fund" if "FUND" in desc.upper() else "equity"
     return ParsedInstrument(
         asset_type=atype, symbol=sym, currency=currency, name=desc.strip()[:120],

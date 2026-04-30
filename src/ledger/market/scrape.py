@@ -6,6 +6,7 @@ into DuckDB. Rate-limited and retried with tenacity.
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timedelta
 
@@ -21,13 +22,38 @@ log = get_logger("market_scrape")
 
 
 def _held_symbols() -> list[tuple[str, str]]:
-    """Return [(symbol, currency)] for every instrument we've ever held."""
+    """Return [(symbol, currency)] for every instrument we've ever held.
+
+    Filters out synthetic/mangled symbols (e.g. CIBC fallback names that
+    underscore-joined the description). yfinance only accepts canonical
+    tickers like AAPL, BRK-B, RY.TO, BAM-A.TO. We accept:
+      ^[A-Z][A-Z0-9-]{0,8}(\\.[A-Z]{1,3})?$
+    """
+    pat = re.compile(r"^[A-Z][A-Z0-9-]{0,8}(\.[A-Z]{1,3})?$")
+    # Common English words that pass the regex but aren't real tickers.
+    # These leak in from CIBC/TD desc rows where there's no parens-ticker.
+    blocklist = {
+        "BOUGHT", "SOLD", "CASH", "CAD", "USD", "DIVIDEND", "INTEREST",
+        "TRANSFER", "DEPOSIT", "WITHDRAW", "FEE", "TAX", "BUY", "SELL",
+        "OPEN", "CLOSE", "EXPIRY", "ASSIGNED", "EXERCISED",
+    }
     with sqlite_db.session() as conn:
         rows = conn.execute(
             "SELECT DISTINCT symbol, currency FROM instruments "
             "WHERE asset_type IN ('equity','etf') ORDER BY symbol"
         ).fetchall()
-    return [(r["symbol"], r["currency"]) for r in rows]
+    out: list[tuple[str, str]] = []
+    skipped: list[str] = []
+    for r in rows:
+        sym = (r["symbol"] or "").strip().upper()
+        if pat.match(sym) and sym not in blocklist:
+            out.append((sym, r["currency"]))
+        else:
+            skipped.append(sym)
+    if skipped:
+        log.info("Skipping %d non-canonical symbols (e.g. %s)",
+                 len(skipped), ", ".join(skipped[:5]))
+    return out
 
 
 def _yf_symbol(symbol: str, currency: str) -> str:
