@@ -39,12 +39,11 @@ src/ledger/
     types.py           ParsedStatement / ParsedTxn / ParsedPosition / …
     helpers.py         parse_money, parse_date, parse_option_expiry
     registry.py        register() / select_parser()
-    cibc_is/           CIBC Imperial Service
-    cibc_id/           CIBC Investor's Edge ("Invest Direct")
-    cibc_tfsa/         CIBC TFSA
-    hsbc/              HSBC Direct Invest
-    rbc/               RBC Direct Investing
-    td/                TD WebBroker
+    cibc.py            CIBC IS / Investor's Edge / TFSA (single parser, claims all CIBC folders)
+    hsbc.py            HSBC Direct Invest (multi-account split per PDF; CAD + USD)
+    rbc.py             RBC Direct Investing (CAD + USD currency blocks per PDF; annual reports)
+    td.py              TD WebBroker / TD Direct Investing (CDN + US sub-statements per PDF; legacy 2016-2017)
+    generic.py         catch-all fallback
   ingest/
     pipeline.py        walk Statements/, run parser, write to SQLite
   market/
@@ -116,12 +115,28 @@ class Parser(Protocol):
 
 | Institution | Folder | Format quirks |
 |---|---|---|
-| CIBC Imperial Service | `CIBC Imperial Service/` | Monthly. Account # often only in filename. |
-| CIBC Investor's Edge | `CIBC Invest Direct/` | Monthly. `DISTRIBUTION` = dividend. Option expiry `MM/DD/YY`. |
-| CIBC TFSA | `CIBC TSFA/` | Same engine as CIBC IE. |
-| HSBC Direct Invest | `HSBC direct invest/` | Compact options like `PUT-100TLT'2616JA@75`. Multiple sub-accounts in some PDFs. |
-| RBC Direct Investing | `RBC Invest Direct/` | Full month names. Trailing `-` negatives. `BOUGHT/SOLD` keywords. Annual reports separate. |
-| TD WebBroker | `TD Webbroker/` | Abbreviated month + day. `Statement-<acct> YYYY-MM-DD.pdf` plus legacy `<acct>-YYYY<MMM>dd-…pdf` filenames. |
+| CIBC Imperial Service | `CIBC Imperial Service/` | Monthly. `ð` PDF artifact replaced with em-dash; "(continued)" headers ignored when splitting sections. |
+| CIBC Investor's Edge | `CIBC Invest Direct/` | Monthly. Tax-Document_*.pdf intentionally skipped. Option expiry `MM/DD/YY`. |
+| CIBC TFSA | `CIBC TSFA/` | Same engine as CIBC IE; account-type heuristic detects TFSA. |
+| HSBC Direct Invest | `HSBC direct invest/` | pdfplumber drops spaces; `_normalize()` re-inserts space after `MmmDD` prefix. Compact options `PUT-100TLT'2616JA@75`. Multi-account split per PDF. Fee-summary PDFs emit annual statement. |
+| RBC Direct Investing | `RBC Invest Direct/` | One PDF holds BOTH "Cdn. Dollar Statement" + "U.S. Dollar Statement" → split into 2 ParsedStatements. Full month names (`JUNE`, `JULY`). Trailing-hyphen negatives. Page-repeated currency headers grouped by *change* in currency. Annual reports detected and emitted as empty annual statement. |
+| TD WebBroker | `TD Webbroker/` | Two sub-accounts per PDF (`<acct>-CDN` / `<acct>-USD`). Option positions span 2 lines (numbers on first, `[DD]MM@strike` on second). Legacy 2016-2017 quarterly format also handled (no `Account type:` literal — falls back to standalone `Direct Trading - CDN`/`US` markers; mid_year_summary PDFs emit annual). Filename patterns: modern `Statement_<acct>_YYYY-MM.pdf`, legacy `Statement_<acct>_YYYY_MM-MM.pdf`, summary `*_summary.pdf` / `*_mid_year_summary.pdf`. |
+
+### Validation results (current)
+
+After running `uv run ledger ingest run` against `Statements/`:
+
+- **324 PDFs** scanned. **323 ok**, **1 intentionally skipped** (`CIBC Tax-Document_58MRB0.pdf`).
+- **398 statements**, **2,776 transactions**, **5,519 position snapshots**, **404 cash balances**.
+- **6 institution accounts** mapped (CIBC IS, CIBC ID, CIBC TFSA, HSBC IDI, RBC DI, TD WB).
+- 13/13 parser unit tests pass (`tests/test_cibc.py`, `test_hsbc.py`, `test_rbc.py`, `test_td.py`).
+- TD 2025-12 USD statement reconciles to portfolio total $1,915,163.16 within $1.
+
+### Known limitations
+
+- TD legacy quarterly PDFs (2016-2017) currently emit one statement per file (the first month); the bundled later months are not separately split. Listed positions for the first month are captured.
+- RBC annual investment performance reports are recorded as empty annual statements; the cumulative IRR is not parsed into the schema (it lives in DuckDB price history instead).
+- Quarantine count is non-zero (~4,400 lines) — these are mostly continuation lines, holding rows lacking a parens-symbol, and footer noise; *no transaction values are fabricated*.
 
 ## Currency & FX
 
