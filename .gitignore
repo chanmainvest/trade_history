@@ -13,3 +13,8 @@ Statements/
 frontend/node_modules/
 frontend/dist/
 .env
+
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+

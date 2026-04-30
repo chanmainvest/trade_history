@@ -138,6 +138,53 @@ def market_refresh(symbols: tuple[str, ...], lookback_years: int) -> None:
     refresh_market_data(symbols=list(symbols) or None, lookback_years=lookback_years)
 
 
+@market.command("refresh-dividends")
+def market_refresh_dividends() -> None:
+    from .market.extras import refresh_dividends
+    refresh_dividends()
+
+
+@market.command("refresh-splits")
+def market_refresh_splits() -> None:
+    from .market.extras import refresh_splits
+    refresh_splits()
+
+
+@market.command("refresh-financials")
+def market_refresh_financials() -> None:
+    from .market.extras import refresh_financials
+    refresh_financials()
+
+
+@market.command("refresh-earnings")
+def market_refresh_earnings() -> None:
+    from .market.extras import refresh_earnings
+    refresh_earnings()
+
+
+@market.command("refresh-fx")
+@click.option("--lookback-years", type=int, default=15)
+def market_refresh_fx(lookback_years: int) -> None:
+    from .market.extras import refresh_fx
+    refresh_fx(lookback_years=lookback_years)
+
+
+@market.command("refresh-all")
+@click.option("--lookback-years", type=int, default=15)
+def market_refresh_all(lookback_years: int) -> None:
+    """Run prices + dividends + splits + financials + earnings + FX."""
+    from .market.scrape import refresh_market_data
+    from .market.extras import (refresh_dividends, refresh_splits,
+                                refresh_financials, refresh_earnings,
+                                refresh_fx)
+    refresh_market_data(lookback_years=lookback_years)
+    refresh_dividends()
+    refresh_splits()
+    refresh_financials()
+    refresh_earnings()
+    refresh_fx(lookback_years=lookback_years)
+
+
 # ------------------------------------------------------------------------ serve
 @main.command("serve")
 @click.option("--host", default="127.0.0.1")
