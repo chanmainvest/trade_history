@@ -33,10 +33,12 @@ export const api = {
   financials: (symbol: string, period: "quarterly" | "annual" = "quarterly") =>
     get<{ symbol: string; period: string; rows: any[] }>("/research/financials", { symbol, period }),
 
-  vizSector: () => get<any>("/viz/holdings_by_sector"),
-  vizCorrelation: () => get<any>("/viz/correlation"),
-  vizRRG: (benchmark = "SPY", window_days = 60) =>
-    get<any>("/viz/rrg", { benchmark, window_days }),
+  vizSector: (month_end: string) =>
+    get<any>("/viz/holdings_by_sector", { month_end }),
+  vizCorrelation: (start: string, end: string) =>
+    get<any>("/viz/correlation", { start, end }),
+  vizRRG: (benchmark = "SPY", window_days = 60, start?: string, end?: string) =>
+    get<any>("/viz/rrg", { benchmark, window_days, start, end }),
 };
 
 export type TxnRow = {

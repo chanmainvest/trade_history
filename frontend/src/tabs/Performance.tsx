@@ -9,18 +9,20 @@ export default function Performance() {
   const totalRows = totalQ.data?.rows ?? [];
   const cashRows = cashQ.data?.rows ?? [];
 
+  // total/total returns per (date, currency); split into series per currency
+  const totalCurrencies = Array.from(new Set(totalRows.map((r: any) => r.currency)));
+
   return (
     <>
       <h2>Performance</h2>
       <div className="card">
-        <h3>Total market value over time</h3>
+        <h3>Total market value over time (by currency)</h3>
         <Plot
-          data={[{
-            type: "scatter", mode: "lines", name: "Total MV",
-            x: totalRows.map((r: any) => r.as_of_date),
-            y: totalRows.map((r: any) => r.market_value),
-            line: { color: "#4a8cff" },
-          }]}
+          data={totalCurrencies.map((ccy) => ({
+            type: "scatter", mode: "lines", name: String(ccy),
+            x: totalRows.filter((r: any) => r.currency === ccy).map((r: any) => r.as_of_date),
+            y: totalRows.filter((r: any) => r.currency === ccy).map((r: any) => r.market_value),
+          }))}
           layout={{
             paper_bgcolor: "#161a22", plot_bgcolor: "#161a22",
             font: { color: "#d6d8dc" }, margin: { t: 10, r: 10, b: 40, l: 60 },
@@ -39,12 +41,12 @@ export default function Performance() {
             {
               type: "scatter", mode: "lines", name: "CAD",
               x: cashRows.filter((r: any) => r.currency === "CAD").map((r: any) => r.as_of_date),
-              y: cashRows.filter((r: any) => r.currency === "CAD").map((r: any) => r.balance),
+              y: cashRows.filter((r: any) => r.currency === "CAD").map((r: any) => r.closing_balance),
             },
             {
               type: "scatter", mode: "lines", name: "USD",
               x: cashRows.filter((r: any) => r.currency === "USD").map((r: any) => r.as_of_date),
-              y: cashRows.filter((r: any) => r.currency === "USD").map((r: any) => r.balance),
+              y: cashRows.filter((r: any) => r.currency === "USD").map((r: any) => r.closing_balance),
             },
           ]}
           layout={{
