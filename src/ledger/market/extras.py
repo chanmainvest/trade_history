@@ -50,6 +50,9 @@ def refresh_dividends(*, sleep_s: float = 1.5) -> None:
                 _audit(jsonl, kind="dividends", symbol=sym, status="empty")
                 time.sleep(sleep_s); continue
             df = ser.reset_index()
+            # yfinance sometimes returns extra columns (e.g. timezone). Take
+            # the first two columns only: date and amount.
+            df = df.iloc[:, :2]
             df.columns = ["ex_date", "amount"]
             df["ex_date"] = pd.to_datetime(df["ex_date"]).dt.date
             df["symbol"] = sym
@@ -82,6 +85,7 @@ def refresh_splits(*, sleep_s: float = 1.5) -> None:
                 _audit(jsonl, kind="splits", symbol=sym, status="empty")
                 time.sleep(sleep_s); continue
             df = ser.reset_index()
+            df = df.iloc[:, :2]
             df.columns = ["split_date", "ratio"]
             df["split_date"] = pd.to_datetime(df["split_date"]).dt.date
             df["symbol"] = sym
