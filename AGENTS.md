@@ -137,6 +137,7 @@ After running `uv run ledger ingest run` against `Statements/`:
 - TD legacy quarterly PDFs (2016-2017) currently emit one statement per file (the first month); the bundled later months are not separately split. Listed positions for the first month are captured.
 - RBC annual investment performance reports are recorded as empty annual statements; the cumulative IRR is not parsed into the schema (it lives in DuckDB price history instead).
 - Quarantine count is non-zero (~4,400 lines) — these are mostly continuation lines, holding rows lacking a parens-symbol, and footer noise; *no transaction values are fabricated*.
+- CIBC has many activity rows where the position description has no parens-ticker; the parser falls back to a synthetic `WORD_WORD_WORD` symbol. These are *not real tickers* — `market.scrape._held_symbols` filters them out via `^[A-Z][A-Z0-9-]{0,8}(\.[A-Z]{1,3})?$` plus a small blocklist (`BOUGHT`, `CASH`, `CAD`, …) so yfinance is never asked for nonsense. ~104 of ~407 instruments are canonical and scraped; the remainder still appear correctly in the transactions/snapshot tabs but are skipped from market-data joins.
 
 ## Currency & FX
 
