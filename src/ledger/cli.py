@@ -169,6 +169,17 @@ def market_refresh_fx(lookback_years: int) -> None:
     refresh_fx(lookback_years=lookback_years)
 
 
+@market.command("refresh-benchmarks")
+@click.option("--symbol", "symbols", multiple=True,
+              help="Benchmark symbols. Default: SPY QQQ DIA IWM TLT GLD VTI ACWI.")
+@click.option("--lookback-years", type=int, default=15)
+def market_refresh_benchmarks(symbols: tuple[str, ...], lookback_years: int) -> None:
+    """Scrape benchmark indices/ETFs (not in our holdings) for RRG, charts, etc."""
+    from .market.scrape import refresh_market_data
+    bms = list(symbols) or ["SPY", "QQQ", "DIA", "IWM", "TLT", "GLD", "VTI", "ACWI"]
+    refresh_market_data(symbols=bms, lookback_years=lookback_years)
+
+
 @market.command("refresh-all")
 @click.option("--lookback-years", type=int, default=15)
 def market_refresh_all(lookback_years: int) -> None:

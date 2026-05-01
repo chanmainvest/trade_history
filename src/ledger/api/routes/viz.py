@@ -83,12 +83,20 @@ def rrg(benchmark: str = Query("SPY"), window_days: int = 60,
             "SELECT DISTINCT symbol FROM instruments "
             "WHERE asset_type IN ('equity','etf') ORDER BY symbol"
         ).fetchall()]
-    targets = sorted(set(symbols + [benchmark]))
-    if not targets:
-        return {"frames": []}
-    import pandas as pd
     con = _duck()
     try:
+        priced = {r[0] for r in con.execute(
+            "SELECT DISTINCT symbol FROM daily_prices"
+        ).fetchall()}
+        symbols = [s for s in symbols if s in priced and s != benchmark]
+        if benchmark not in priced or not symbols:
+            return {"benchmark": benchmark, "window_days": window_days,
+                    "frames": [],
+                    "note": (f"benchmark {benchmark} not in daily_prices — "
+                             f"run `uv run ledger market refresh-benchmarks`")
+                            if benchmark not in priced else None}
+        targets = symbols + [benchmark]
+        import pandas as pd
         ph = ",".join(["?"] * len(targets))
         sql = (f"SELECT symbol, trade_date, adj_close FROM daily_prices "
                f"WHERE symbol IN ({ph})")
@@ -106,6 +114,12 @@ def rrg(benchmark: str = Query("SPY"), window_days: int = 60,
     p = df.pivot(index="trade_date", columns="symbol", values="adj_close").sort_index()
     if benchmark not in p.columns:
         return {"frames": []}
+    # Restrict to dates where the benchmark trades (avoids TSX-only days
+    # creating NaN gaps that break the rolling window / diff).
+    p = p.loc[p[benchmark].notna()]
+    # Forward-fill cross-listed symbols across short gaps so a single missing
+    # day does not blank an entire 60-row window.
+    p = p.ffill(limit=5)
     rs = p.div(p[benchmark], axis=0)
     rs_norm = 100 * rs / rs.rolling(window_days).mean()
     rs_mom = rs_norm.diff(window_days)
