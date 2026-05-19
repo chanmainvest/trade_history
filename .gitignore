@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.uv-cache/
+*.egg-info/
+dist/
+build/
+
+# Data (contains PII / large files)
+data/
+experiments/
+Statements/
+
+# Environment
+.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Personal / session artifacts
+.playwright-mcp/
+ingest_output.txt
+.claude/settings.local.json
+*.sqlite
+*.db
+*.duckdb
+logs/
+
+# Windows reserved-name device file (git cannot index it)
+frontend/NUL

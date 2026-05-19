@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s \"http://localhost:8000/sectors\")",
+      "Bash(curl -s \"http://localhost:8000/trades?limit=20&asset_type=option\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d[:5], indent=2\\)\\)\")"
+    ]
+  }
+}
