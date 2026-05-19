@@ -1,6 +1,6 @@
-# Ledger — User Guide
+# Trade History — User Guide
 
-A personal investment ledger for Canadian retail brokers. Imports your
+A personal investment tracker for Canadian retail brokers. Imports your
 monthly PDF statements from CIBC, HSBC, RBC, and TD, joins them against
 free market data, and gives you a single dashboard for your whole
 family's accounts.

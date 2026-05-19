@@ -1,7 +1,7 @@
 # Architecture
 
 This document is the authoritative description of how data flows through
-the **ledger** app. [AGENTS.md](../AGENTS.md) intentionally stays short
+the **Trade History** app. [AGENTS.md](../AGENTS.md) intentionally stays short
 (AI-ops rules only) and points here for any structural detail.
 
 The app has three core data planes:

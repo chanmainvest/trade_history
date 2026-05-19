@@ -1,4 +1,4 @@
-# Ledger — Personal Multi-Broker Trading History & Analytics
+# Trade History — Personal Multi-Broker Trading History & Analytics
 
 A from-scratch pipeline + web app to consolidate every brokerage statement I
 have (CIBC Imperial Service, CIBC Investor's Edge, CIBC TFSA, HSBC Direct
@@ -45,6 +45,8 @@ mixed at ingest. FX conversion is a presentation-layer concern.
 
 ## Quick start
 
+### Local development
+
 ```powershell
 # 1. install
 uv sync
@@ -69,6 +71,29 @@ cd frontend && npm install && npm run dev
 ```
 
 All scripts log to `logs/<command>.log` (and JSONL where structured).
+
+### Docker
+
+```powershell
+docker compose up --build
+```
+
+Open <http://localhost:5173>. The frontend container serves the built Vite app
+with nginx and proxies `/api/*` to the backend container. The backend also
+binds to <http://localhost:8000> for direct API checks. Local `data/`, `logs/`,
+and `Statements/` folders are mounted into the backend container.
+
+### MCP server
+
+Trade History includes a stdio Model Context Protocol server for AI agents:
+
+```powershell
+uv run ledger mcp serve
+```
+
+The MCP tools expose allowlisted frontend/API operations and bounded backend
+CLI operations such as ingest, symbol repair, initial-position inference, and
+market-data refresh. They do not provide arbitrary shell access.
 
 ## Folder layout
 

@@ -1,7 +1,7 @@
 # AGENTS.md — AI coding-agent instructions
 
 This file is the operating manual for AI coding agents working on
-**ledger** (`trade_history_opus47`). It is intentionally short.
+**Trade History** (`trade_history_opus47`). It is intentionally short.
 
 > **Structural detail** — schemas, ingestion design, market-data pipeline,
 > per-institution parsing quirks — lives in
