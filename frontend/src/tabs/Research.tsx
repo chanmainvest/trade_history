@@ -1,20 +1,50 @@
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Plot from "react-plotly.js";
 import { api } from "../api";
+import { plotlyTheme } from "../theme";
+import { useI18n } from "../i18n";
 
 type Freq = "D" | "W" | "M";
+type Period = "1m" | "3m" | "6m" | "1y" | "3y" | "5y" | "10y" | "max";
+const PERIODS: Period[] = ["1m", "3m", "6m", "1y", "3y", "5y", "10y", "max"];
+
+function daysFor(p: Period): number {
+  switch (p) {
+    case "1m": return 30;
+    case "3m": return 90;
+    case "6m": return 180;
+    case "1y": return 365;
+    case "3y": return 365 * 3;
+    case "5y": return 365 * 5;
+    case "10y": return 365 * 10;
+    case "max": return 365 * 100;
+  }
+}
+
+function fmtNum(n: number | null | undefined, dec = 2) {
+  if (n == null) return "";
+  return n.toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+
+const OPTION_TYPES = new Set([
+  "option_buy_to_open", "option_sell_to_open",
+  "option_buy_to_close", "option_sell_to_close",
+  "option_assignment", "option_exercise", "option_expiration",
+]);
 
 export default function Research() {
   const params = useParams<{ symbol: string }>();
   const nav = useNavigate();
+  const { t } = useI18n();
   const symbol = (params.symbol || "").toUpperCase();
   const [input, setInput] = useState(symbol);
   const [freq, setFreq] = useState<Freq>("D");
+  const [period, setPeriod] = useState<Period>("1y");
   const [showMA50, setShowMA50] = useState(true);
   const [showMA200, setShowMA200] = useState(true);
-  const [period, setPeriod] = useState<"quarterly" | "annual">("quarterly");
+  const [finPeriod, setFinPeriod] = useState<"quarterly" | "annual">("quarterly");
   const [finMetrics, setFinMetrics] = useState<Record<string, boolean>>({
     revenue: true, net_income: true, free_cash_flow: true,
     eps_diluted: false, gross_profit: false, operating_income: false,
@@ -31,12 +61,23 @@ export default function Research() {
     enabled: !!symbol,
   });
   const finQ = useQuery({
-    queryKey: ["fin", symbol, period],
-    queryFn: () => api.financials(symbol, period),
+    queryKey: ["fin", symbol, finPeriod],
+    queryFn: () => api.financials(symbol, finPeriod),
     enabled: !!symbol,
   });
 
-  const rows = pricesQ.data?.rows ?? [];
+  const allRows = pricesQ.data?.rows ?? [];
+  // Period cutoff
+  const cutoff = useMemo(() => {
+    if (period === "max" || allRows.length === 0) return null;
+    const d = new Date(); d.setDate(d.getDate() - daysFor(period));
+    return d.toISOString().slice(0, 10);
+  }, [period, allRows.length]);
+  const rows = useMemo(() => {
+    if (!cutoff) return allRows;
+    return allRows.filter((r: any) => r.trade_date >= cutoff);
+  }, [allRows, cutoff]);
+
   const ma = (n: number) => rows.map((_: any, i: number) => {
     if (i < n - 1) return null;
     let s = 0;
@@ -44,78 +85,131 @@ export default function Research() {
     return s / n;
   });
 
-  const buyTrades = (tradesQ.data?.rows ?? []).filter((t: any) => t.txn_type.startsWith("buy") || t.txn_type === "option_buy_to_open");
-  const sellTrades = (tradesQ.data?.rows ?? []).filter((t: any) => t.txn_type.startsWith("sell") || t.txn_type === "option_sell_to_open");
+  const allTrades = tradesQ.data?.rows ?? [];
+  const trades = useMemo(() => {
+    if (!cutoff) return allTrades;
+    return allTrades.filter((t: any) => t.trade_date >= cutoff);
+  }, [allTrades, cutoff]);
+
+  function isBuy(t: any): boolean {
+    return t.txn_type.startsWith("buy") || t.txn_type === "option_buy_to_open" || t.txn_type === "option_buy_to_close";
+  }
+  function isSell(t: any): boolean {
+    return t.txn_type.startsWith("sell") || t.txn_type === "option_sell_to_open" || t.txn_type === "option_sell_to_close";
+  }
+  function isOption(t: any): boolean { return OPTION_TYPES.has(t.txn_type); }
+
+  const buyStock = trades.filter((t) => isBuy(t) && !isOption(t));
+  const sellStock = trades.filter((t) => isSell(t) && !isOption(t));
+  const buyOpt = trades.filter((t) => isBuy(t) && isOption(t));
+  const sellOpt = trades.filter((t) => isSell(t) && isOption(t));
+
+  const theme = plotlyTheme();
+
+  function go() {
+    if (input.trim()) nav(`/research/${input.trim().toUpperCase()}`);
+  }
 
   return (
     <>
-      <h2>Stock research {symbol && <>— {symbol}</>}</h2>
+      <h2>{t("nav.research")} {symbol && <>— {symbol}</>}</h2>
       <div className="filters">
-        <input value={input} onChange={(e) => setInput(e.target.value.toUpperCase())}
-               placeholder="Symbol (e.g. AAPL)"
-               onKeyDown={(e) => { if (e.key === "Enter") nav(`/research/${input}`); }} />
-        <button onClick={() => nav(`/research/${input}`)}>Go</button>
+        <input value={input}
+               onChange={(e) => setInput(e.target.value.toUpperCase())}
+               placeholder={t("f.symbol") + " (e.g. AAPL)"}
+               onKeyDown={(e) => { if (e.key === "Enter") go(); }}
+               onBlur={() => { if (input && input !== symbol) go(); }}
+               style={{ minWidth: 140 }} />
+        {PERIODS.map((p) => (
+          <button key={p} className={p === period ? "active" : ""}
+                  onClick={() => setPeriod(p)}>{t(`period.${p}`)}</button>
+        ))}
+        <span className="muted">|</span>
         {(["D", "W", "M"] as Freq[]).map((f) =>
           <button key={f} className={f === freq ? "active" : ""} onClick={() => setFreq(f)}>{f}</button>
         )}
-        <label><input type="checkbox" checked={showMA50} onChange={(e) => setShowMA50(e.target.checked)} /> MA50</label>
-        <label><input type="checkbox" checked={showMA200} onChange={(e) => setShowMA200(e.target.checked)} /> MA200</label>
+        <label><input type="checkbox" checked={showMA50}
+                      onChange={(e) => setShowMA50(e.target.checked)} /> MA50</label>
+        <label><input type="checkbox" checked={showMA200}
+                      onChange={(e) => setShowMA200(e.target.checked)} /> MA200</label>
       </div>
 
-      {!symbol && <p style={{ color: "var(--fg-dim)" }}>Enter a symbol to load prices, trades, and financials.</p>}
+      {!symbol && (
+        <p className="muted">Enter a symbol and press Enter to load prices, trades, and financials.</p>
+      )}
 
       {symbol && (
         <div className="card">
           <Plot
             data={[
               {
-                type: "candlestick",
+                type: "candlestick", name: symbol, yaxis: "y",
                 x: rows.map((r: any) => r.trade_date),
                 open: rows.map((r: any) => r.open),
                 high: rows.map((r: any) => r.high),
                 low: rows.map((r: any) => r.low),
                 close: rows.map((r: any) => r.close),
-                name: symbol, yaxis: "y",
-                increasing: { line: { color: "#2bbf73" } },
-                decreasing: { line: { color: "#e35d6a" } },
+                increasing: { line: { color: theme.pos } },
+                decreasing: { line: { color: theme.neg } },
               },
               ...(showMA50 ? [{
-                type: "scatter", mode: "lines", name: "MA50",
-                x: rows.map((r: any) => r.trade_date), y: ma(50), yaxis: "y",
+                type: "scatter" as const, mode: "lines" as const, name: "MA50", yaxis: "y",
+                x: rows.map((r: any) => r.trade_date), y: ma(50),
                 line: { color: "#f0a020", width: 1 },
               }] : []),
               ...(showMA200 ? [{
-                type: "scatter", mode: "lines", name: "MA200",
-                x: rows.map((r: any) => r.trade_date), y: ma(200), yaxis: "y",
+                type: "scatter" as const, mode: "lines" as const, name: "MA200", yaxis: "y",
+                x: rows.map((r: any) => r.trade_date), y: ma(200),
                 line: { color: "#9966ff", width: 1 },
               }] : []),
+              // Stock buys/sells: solid triangles
               {
-                type: "scatter", mode: "markers", name: "Buys",
-                x: buyTrades.map((t: any) => t.trade_date),
-                y: buyTrades.map((t: any) => t.price),
-                marker: { color: "#2bbf73", symbol: "triangle-up", size: 10 }, yaxis: "y",
+                type: "scatter", mode: "markers", name: "Buy (stock)", yaxis: "y",
+                x: buyStock.map((t: any) => t.trade_date),
+                y: buyStock.map((t: any) => t.price),
+                marker: { color: theme.pos, symbol: "triangle-up", size: 12 },
               },
               {
-                type: "scatter", mode: "markers", name: "Sells",
-                x: sellTrades.map((t: any) => t.trade_date),
-                y: sellTrades.map((t: any) => t.price),
-                marker: { color: "#e35d6a", symbol: "triangle-down", size: 10 }, yaxis: "y",
+                type: "scatter", mode: "markers", name: "Sell (stock)", yaxis: "y",
+                x: sellStock.map((t: any) => t.trade_date),
+                y: sellStock.map((t: any) => t.price),
+                marker: { color: theme.neg, symbol: "triangle-down", size: 12 },
+              },
+              // Option buys/sells: hollow triangles to distinguish
+              {
+                type: "scatter", mode: "markers", name: "Buy (option)", yaxis: "y",
+                x: buyOpt.map((t: any) => t.trade_date),
+                y: buyOpt.map((t: any) => t.price),
+                marker: {
+                  symbol: "triangle-up-open", size: 14,
+                  line: { color: theme.pos, width: 2 }, color: theme.pos,
+                },
               },
               {
-                type: "bar", name: "Volume",
+                type: "scatter", mode: "markers", name: "Sell (option)", yaxis: "y",
+                x: sellOpt.map((t: any) => t.trade_date),
+                y: sellOpt.map((t: any) => t.price),
+                marker: {
+                  symbol: "triangle-down-open", size: 14,
+                  line: { color: theme.neg, width: 2 }, color: theme.neg,
+                },
+              },
+              {
+                type: "bar", name: "Volume", yaxis: "y2",
                 x: rows.map((r: any) => r.trade_date),
                 y: rows.map((r: any) => r.volume),
-                marker: { color: "#3a3f4a" }, yaxis: "y2",
+                marker: { color: theme.xaxis_gridcolor },
               },
             ]}
             layout={{
-              paper_bgcolor: "#161a22", plot_bgcolor: "#161a22",
-              font: { color: "#d6d8dc" }, height: 520,
+              paper_bgcolor: theme.paper_bgcolor, plot_bgcolor: theme.plot_bgcolor,
+              font: theme.font, height: 540,
               margin: { t: 10, r: 10, b: 40, l: 60 },
-              xaxis: { gridcolor: "#2a2f3a", rangeslider: { visible: false } },
-              yaxis: { domain: [0.25, 1], gridcolor: "#2a2f3a", title: "Price" },
-              yaxis2: { domain: [0, 0.2], gridcolor: "#2a2f3a", title: "Volume" },
-              showlegend: true, legend: { orientation: "h" },
+              xaxis: { gridcolor: theme.xaxis_gridcolor, rangeslider: { visible: false } },
+              yaxis: { domain: [0.25, 1], gridcolor: theme.yaxis_gridcolor, title: "Price" },
+              yaxis2: { domain: [0, 0.2], gridcolor: theme.yaxis_gridcolor, title: "Volume" },
+              showlegend: true,
+              legend: { orientation: "h", y: -0.15 },
             }}
             style={{ width: "100%" }} useResizeHandler
           />
@@ -126,8 +220,10 @@ export default function Research() {
         <div className="card">
           <div className="filters">
             <h3 style={{ marginRight: 12 }}>Financials</h3>
-            <button className={period === "quarterly" ? "active" : ""} onClick={() => setPeriod("quarterly")}>Quarterly</button>
-            <button className={period === "annual" ? "active" : ""} onClick={() => setPeriod("annual")}>Annual</button>
+            <button className={finPeriod === "quarterly" ? "active" : ""}
+                    onClick={() => setFinPeriod("quarterly")}>Quarterly</button>
+            <button className={finPeriod === "annual" ? "active" : ""}
+                    onClick={() => setFinPeriod("annual")}>Annual</button>
           </div>
           <div className="checkbox-row">
             {Object.keys(finMetrics).map((k) =>
@@ -145,13 +241,49 @@ export default function Research() {
               y: (finQ.data?.rows ?? []).map((r: any) => r[k]),
             }))}
             layout={{
-              paper_bgcolor: "#161a22", plot_bgcolor: "#161a22",
-              font: { color: "#d6d8dc" }, height: 320, barmode: "group",
+              paper_bgcolor: theme.paper_bgcolor, plot_bgcolor: theme.plot_bgcolor,
+              font: theme.font, height: 320, barmode: "group",
               margin: { t: 10, r: 10, b: 40, l: 60 },
-              xaxis: { gridcolor: "#2a2f3a" }, yaxis: { gridcolor: "#2a2f3a" },
+              xaxis: { gridcolor: theme.xaxis_gridcolor },
+              yaxis: { gridcolor: theme.yaxis_gridcolor },
             }}
             style={{ width: "100%" }} useResizeHandler
           />
+        </div>
+      )}
+
+      {symbol && (
+        <div className="card">
+          <h3>Trade history for {symbol}</h3>
+          <div style={{ overflow: "auto", maxHeight: 320 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th><th>Type</th>
+                  <th className="num">Qty</th><th className="num">Price</th>
+                  <th className="num">Amount</th><th>Ccy</th>
+                  <th>Account</th><th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allTrades.map((t: any, i: number) => (
+                  <tr key={i}>
+                    <td>{t.trade_date}</td>
+                    <td>{t.txn_type}</td>
+                    <td className="num">{fmtNum(t.quantity, 0)}</td>
+                    <td className="num">{fmtNum(t.price)}</td>
+                    <td className={"num " + ((t.net_amount ?? 0) < 0 ? "neg" : "pos")}>{fmtNum(t.net_amount)}</td>
+                    <td>{t.currency}</td>
+                    <td>{t.institution_code} • {t.account_number}</td>
+                    <td style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis" }}>{t.description}</td>
+                  </tr>
+                ))}
+                {allTrades.length === 0 && (
+                  <tr><td colSpan={8} className="muted">No trades recorded for this symbol.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </>

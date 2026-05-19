@@ -1,8 +1,9 @@
 """DuckDB schema for market and fundamentals data."""
 from __future__ import annotations
 
-import duckdb
 from pathlib import Path
+
+import duckdb
 
 from ..config import DUCKDB_PATH
 

@@ -23,14 +23,20 @@ from dataclasses import dataclass
 
 from ..pdf_text import PdfText
 from .helpers import (
-    _option_mon, _third_friday, parse_date, parse_money, parse_option_expiry,
+    _option_mon,
+    parse_money,
 )
 from .registry import register
 from .types import (
-    ParseResult, ParsedAccount, ParsedCashBalance, ParsedInstrument,
-    ParsedPosition, ParsedStatement, ParsedTxn, TxnType,
+    ParsedAccount,
+    ParsedCashBalance,
+    ParsedInstrument,
+    ParsedPosition,
+    ParsedStatement,
+    ParsedTxn,
+    ParseResult,
+    TxnType,
 )
-
 
 # ------------------------------------------------------------------- Regexes
 RE_ACCOUNT_NUM   = re.compile(r"[Aa]ccount\s*#\s*(\d{3}[-–]\d{5})")
@@ -244,6 +250,35 @@ def _make_option_instrument(root: str, expiry: str, strike: float,
 
 def _instr_from_desc(desc: str, currency: str) -> ParsedInstrument:
     """Best-effort instrument extraction from a free-form description."""
+    # Option-expiration / assignment rows that lack the OPT() ticker form
+    # but spell it out:  "CALL SOXS JAN 16 2026 55.00" or
+    # "PUT .TLT JAN 16 2026 75.00".
+    om = re.match(
+        r"^\s*(CALL|PUT)\s+\.?([A-Z][A-Z0-9.\-]{0,6})\s+"
+        r"(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+"
+        r"(\d{1,2})\s+(\d{4})\s+([\d.,]+)",
+        desc.strip(), re.IGNORECASE,
+    )
+    if om:
+        cp_word, root, mon, dd, yr, strike_s = om.groups()
+        cp = "C" if cp_word.upper() == "CALL" else "P"
+        _MON = {"JAN":1,"FEB":2,"MAR":3,"APR":4,"MAY":5,"JUN":6,
+                "JUL":7,"AUG":8,"SEP":9,"OCT":10,"NOV":11,"DEC":12}
+        try:
+            from datetime import date as _date
+            expiry = _date(int(yr), _MON[mon.upper()], int(dd)).isoformat()
+        except (KeyError, ValueError):
+            expiry = None
+        try:
+            strike = float(strike_s.replace(",", ""))
+        except ValueError:
+            strike = 0.0
+        return ParsedInstrument(
+            asset_type="option", symbol=root.upper(), currency=currency,
+            option_root=root.upper(), option_expiry=expiry,
+            option_strike=strike, option_type=cp, option_multiplier=100,
+            name=desc.strip()[:120],
+        )
     m = RE_PARENS_TICKER.search(desc)
     if m:
         sym, exch = m.group(1), m.group(2)

@@ -1,19 +1,35 @@
 """`ledger` CLI."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import click
 
 from . import config
-from .db import duckdb_store, sqlite as sqlite_db
+from .db import duckdb_store
+from .db import sqlite as sqlite_db
 from .logging_setup import get_logger
 from .pdf_text import extract_pdf
 
 
 @click.group()
-def main() -> None:
+@click.option("--profile", type=click.Choice(["real", "example"]),
+              default=None,
+              help="Workspace profile: 'real' (default, uses Statements/ + data/) "
+                   "or 'example' (uses example_data/). "
+                   "Equivalent to LEDGER_PROFILE env var; must be set before "
+                   "Python loads ledger.config to take effect.")
+def main(profile: str | None) -> None:
     """Ledger — multi-broker trading history & analytics."""
+    if profile and os.environ.get("LEDGER_PROFILE") != profile:
+        click.echo(
+            f"WARNING: --profile={profile} requested after config was loaded "
+            f"(active profile is '{config.PROFILE}'). Set the env var first:\n"
+            f"  $env:LEDGER_PROFILE = '{profile}'   (PowerShell)\n"
+            f"  export LEDGER_PROFILE={profile}     (bash)",
+            err=True,
+        )
 
 
 # --------------------------------------------------------------------------- db
@@ -123,6 +139,18 @@ def ingest_run(institution: str | None, limit: int | None) -> None:
     run_ingest(institution=institution, limit=limit)
 
 
+@ingest.command("infer-initials")
+def ingest_infer_initials() -> None:
+    """Infer initial_positions / initial_cash from snapshots minus transactions.
+
+    Run after ``ingest run`` so positions before the earliest statement are
+    represented. Idempotent — safe to re-run.
+    """
+    from .ingest.initials import infer_initials
+    out = infer_initials()
+    click.echo(f"Inferred {out['positions']} initial positions, {out['cash']} cash rows.")
+
+
 # ----------------------------------------------------------------------- market
 @main.group()
 def market() -> None:
@@ -184,10 +212,14 @@ def market_refresh_benchmarks(symbols: tuple[str, ...], lookback_years: int) -> 
 @click.option("--lookback-years", type=int, default=15)
 def market_refresh_all(lookback_years: int) -> None:
     """Run prices + dividends + splits + financials + earnings + FX."""
+    from .market.extras import (
+        refresh_dividends,
+        refresh_earnings,
+        refresh_financials,
+        refresh_fx,
+        refresh_splits,
+    )
     from .market.scrape import refresh_market_data
-    from .market.extras import (refresh_dividends, refresh_splits,
-                                refresh_financials, refresh_earnings,
-                                refresh_fx)
     refresh_market_data(lookback_years=lookback_years)
     refresh_dividends()
     refresh_splits()

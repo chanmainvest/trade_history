@@ -8,7 +8,8 @@ Each parser exposes:
 """
 from __future__ import annotations
 
-from typing import Callable, Iterable, Protocol
+from collections.abc import Iterable
+from typing import Protocol
 
 from ..pdf_text import PdfText
 from .types import ParseResult

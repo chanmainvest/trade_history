@@ -3,14 +3,13 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from pathlib import Path
 
 from .. import config
 from ..db import sqlite as sqlite_db
 from ..logging_setup import get_logger, jsonl_path
 from ..parsers import registry  # noqa: F401  (ensures parsers register)
 from ..parsers.registry import select_parser
-from ..parsers.types import ParseResult, ParsedStatement
+from ..parsers.types import ParsedStatement, ParseResult
 from ..pdf_text import PdfText, extract_pdf
 
 log = get_logger("ingest")

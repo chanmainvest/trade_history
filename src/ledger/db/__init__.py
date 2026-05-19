@@ -1,2 +1,2 @@
 """Database package."""
-from . import sqlite, duckdb_store  # noqa: F401
+from . import duckdb_store, sqlite  # noqa: F401

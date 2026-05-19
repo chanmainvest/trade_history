@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-
 # Canonical transaction-type vocabulary. See schema.sql for definitions.
 TxnType = Literal[
     "buy", "sell", "short_sell", "buy_to_cover",

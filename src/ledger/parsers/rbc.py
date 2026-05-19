@@ -366,11 +366,28 @@ def _parse_activity(body: str, currency: str, year: int,
                 r"\s+\(?-?\$?[\d,]+(?:\.\d+)?", full, maxsplit=1,
             )[0].strip()
             if desc_only:
-                token = desc_only.split()[0][:12]
-                instrument = ParsedInstrument(
-                    asset_type="equity", symbol=token,
-                    currency=currency, name=desc_only,
+                # Strip leading verbs (BOUGHT/SOLD/DIVIDEND/...) so the first
+                # token isn't mistaken for a ticker. Then try a known-name map
+                # before falling back to a synthetic symbol.
+                from .name_resolver import (
+                    resolve_ticker,
+                    strip_leading_verbs,
+                    synthetic_symbol,
                 )
+                cleaned = strip_leading_verbs(desc_only)
+                known = resolve_ticker(cleaned)
+                if known is not None:
+                    tkr, atype = known
+                    instrument = ParsedInstrument(
+                        asset_type=atype, symbol=tkr,
+                        currency=currency, name=cleaned[:120],
+                    )
+                else:
+                    sym = synthetic_symbol(cleaned) if cleaned else "UNKNOWN"
+                    instrument = ParsedInstrument(
+                        asset_type="equity", symbol=sym,
+                        currency=currency, name=cleaned[:120],
+                    )
 
         stmt.transactions.append(ParsedTxn(
             trade_date=trade_date, settle_date=None, txn_type=txn_type,

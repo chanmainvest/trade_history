@@ -1,85 +1,129 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, TxnRow } from "../api";
+import { SmartSelect } from "../SmartSelect";
+import { usePortfolio } from "../portfolio";
+import { useI18n } from "../i18n";
 
-function fmtNum(n: number | null, dec = 2) {
+function fmtNum(n: number | null | undefined, dec = 2) {
   if (n === null || n === undefined) return "";
   return n.toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 
+const MONEY_THRESHOLDS = [
+  { value: 0, label: "Any amount" },
+  { value: 100, label: "≥ $100" },
+  { value: 1_000, label: "≥ $1k" },
+  { value: 10_000, label: "≥ $10k" },
+  { value: 100_000, label: "≥ $100k" },
+  { value: 1_000_000, label: "≥ $1M" },
+];
+
 export default function Transactions() {
+  const { activeAccountIds, accounts } = usePortfolio();
+  const { t } = useI18n();
+
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
-  const [institution, setInstitution] = useState("");
-  const [accountId, setAccountId] = useState("");
-  const [symbol, setSymbol] = useState("");
-  const [txnType, setTxnType] = useState("");
+  const [institutions, setInstitutions] = useState<string[]>([]);
+  const [accountIds, setAccountIds] = useState<string[]>([]);
+  const [symbols, setSymbols] = useState<string[]>([]);
+  const [types, setTypes] = useState<string[]>([]);
+  const [minAbs, setMinAbs] = useState(0);
 
   const accountsQ = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
   const symbolsQ = useQuery({ queryKey: ["symbols"], queryFn: api.symbols });
+  const typesQ = useQuery({ queryKey: ["txn-types"], queryFn: api.txnTypes });
+
+  // If a portfolio is set AND the user hasn't manually picked accounts,
+  // restrict the query to the portfolio's accounts.
+  const effectiveAcctIds = accountIds.length > 0
+    ? accountIds
+    : activeAccountIds.length > 0
+      ? activeAccountIds.map(String)
+      : [];
 
   const txnsQ = useQuery({
-    queryKey: ["txns", start, end, institution, accountId, symbol, txnType],
+    queryKey: ["txns", start, end, institutions, effectiveAcctIds, symbols, types, minAbs],
     queryFn: () =>
       api.transactions({
-        start, end, institution,
-        account_id: accountId || undefined,
-        symbol, txn_type: txnType, limit: 5000,
+        start, end,
+        institution: institutions,
+        account_id: effectiveAcctIds,
+        symbol: symbols,
+        txn_type: types,
+        min_abs_amount: minAbs > 0 ? minAbs : undefined,
+        limit: 10_000,
       }),
   });
 
-  const TXN_TYPES = [
-    "buy", "sell", "dividend", "distribution", "interest_income",
-    "tax_withholding", "deposit", "withdrawal", "transfer_in", "transfer_out",
-    "journal", "fee", "commission",
-    "option_buy_to_open", "option_sell_to_open",
-    "option_buy_to_close", "option_sell_to_close",
-    "option_assignment", "option_exercise", "option_expiration",
-    "return_of_capital", "split", "adjustment",
-  ];
+  const instOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const a of accountsQ.data?.rows ?? []) set.add(a.institution_code);
+    return Array.from(set).sort().map((c) => ({ value: c, label: c }));
+  }, [accountsQ.data]);
+
+  const acctOptions = useMemo(() => {
+    return (accountsQ.data?.rows ?? []).map((a) => ({
+      value: String(a.account_id),
+      label: `${a.institution_code} • ${a.account_number}`,
+      hint: a.base_currency + (a.nickname ? ` · ${a.nickname}` : ""),
+    }));
+  }, [accountsQ.data]);
+
+  const symOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { value: string; label: string; hint?: string }[] = [];
+    for (const r of symbolsQ.data?.rows ?? []) {
+      if (seen.has(r.symbol)) continue;
+      seen.add(r.symbol);
+      out.push({ value: r.symbol, label: r.symbol, hint: `${r.asset_type} · ${r.currency}` });
+    }
+    return out.sort((a, b) => a.label.localeCompare(b.label));
+  }, [symbolsQ.data]);
+
+  const typeOptions = useMemo(() =>
+    (typesQ.data?.rows ?? []).map((t) => ({ value: t, label: t })),
+    [typesQ.data]);
+
+  const acctById = useMemo(() => {
+    const m: Record<number, string> = {};
+    for (const a of accounts) m[a.account_id] = a.account_number;
+    return m;
+  }, [accounts]);
 
   return (
     <>
-      <h2>Transactions</h2>
+      <h2>{t("nav.transactions")}</h2>
       <div className="filters">
-        <input type="date" value={start} onChange={(e) => setStart(e.target.value)} placeholder="Start" />
-        <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} placeholder="End" />
-        <select value={institution} onChange={(e) => setInstitution(e.target.value)}>
-          <option value="">All institutions</option>
-          {[...new Set(accountsQ.data?.rows.map((a) => a.institution_code))].map((c) =>
-            <option key={c} value={c}>{c}</option>
-          )}
-        </select>
-        <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-          <option value="">All accounts</option>
-          {accountsQ.data?.rows.map((a) =>
-            <option key={a.account_id} value={a.account_id}>
-              {a.institution_code} • {a.account_number} ({a.base_currency})
-            </option>
-          )}
-        </select>
-        <input list="symbols" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} placeholder="Symbol" />
-        <datalist id="symbols">
-          {symbolsQ.data?.rows.map((s) => <option key={s.symbol + s.currency} value={s.symbol} />)}
-        </datalist>
-        <select value={txnType} onChange={(e) => setTxnType(e.target.value)}>
-          <option value="">All types</option>
-          {TXN_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <span style={{ alignSelf: "center", color: "var(--fg-dim)" }}>
-          {txnsQ.data?.count ?? 0} rows
-        </span>
+        <input type="date" value={start} onChange={(e) => setStart(e.target.value)} title={t("f.start")} />
+        <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} title={t("f.end")} />
+        <SmartSelect label={t("f.institution")} options={instOptions} value={institutions} onChange={setInstitutions} />
+        <SmartSelect label={t("f.account")} options={acctOptions} value={accountIds} onChange={setAccountIds} />
+        <SmartSelect label={t("f.symbol")} options={symOptions} value={symbols} onChange={setSymbols} />
+        <SmartSelect label={t("f.type")} options={typeOptions} value={types} onChange={setTypes} />
+        <label>{t("f.min_abs_amount")}:&nbsp;
+          <select value={minAbs} onChange={(e) => setMinAbs(parseFloat(e.target.value))}>
+            {MONEY_THRESHOLDS.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+        </label>
+        <span className="muted">{txnsQ.data?.count ?? 0} rows</span>
+        {activeAccountIds.length > 0 && accountIds.length === 0 && (
+          <span className="tag accent">portfolio filter on</span>
+        )}
       </div>
 
       <div className="card" style={{ overflow: "auto", maxHeight: "calc(100vh - 220px)" }}>
         <table>
           <thead>
             <tr>
-              <th>Date</th><th>Institution</th><th>Account</th><th>Type</th>
-              <th>Symbol</th><th>Option</th>
-              <th className="num">Qty</th><th className="num">Price</th>
-              <th className="num">Net</th><th>Ccy</th><th>Description</th>
+              <th>{t("th.date")}</th><th>{t("f.institution")}</th><th>{t("th.account")}</th><th>{t("th.type")}</th>
+              <th>{t("th.symbol")}</th><th>Option</th>
+              <th className="num">{t("th.quantity")}</th><th className="num">{t("th.price")}</th>
+              <th className="num">{t("th.amount")}</th><th>{t("th.currency")}</th><th>{t("th.description")}</th>
             </tr>
           </thead>
           <tbody>
@@ -87,7 +131,7 @@ export default function Transactions() {
               <tr key={t.transaction_id}>
                 <td>{t.trade_date}</td>
                 <td>{t.institution_code}</td>
-                <td>{t.account_number}</td>
+                <td>{acctById[t.account_id] || t.account_number}</td>
                 <td>{t.txn_type}</td>
                 <td>{t.symbol ? <Link to={`/research/${t.symbol}`}>{t.symbol}</Link> : ""}</td>
                 <td>{t.option_type ? `${t.option_type} ${fmtNum(t.option_strike, 2)} ${t.option_expiry || ""}` : ""}</td>

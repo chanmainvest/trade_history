@@ -1,179 +1,181 @@
-# Ledger (`trade_history_opus47`) — Agent Notes
+# AGENTS.md — AI coding-agent instructions
 
-This is a **fresh** rebuild. Do **not** copy code from `trade_history/` or
-`trade_history_opus46/`; they are abandoned attempts. Reference them only as
-documentation of what *not* to do.
+This file is the operating manual for AI coding agents working on
+**ledger** (`trade_history_opus47`). It is intentionally short.
+
+> **Structural detail** — schemas, ingestion design, market-data pipeline,
+> per-institution parsing quirks — lives in
+> [schema/ARCHITECTURE.md](schema/ARCHITECTURE.md). **Read it before
+> changing anything in `src/ledger/db/`, `src/ledger/parsers/`, or
+> `src/ledger/market/`.**
+>
+> Human-facing usage — install, run, tabs walkthrough, file uploads —
+> lives in [doc/user-guide.md](doc/user-guide.md).
 
 ---
 
-## Tech Stack
+## 0. Cardinal rules
 
-- **Backend**: Python 3.12+, FastAPI, click CLI.
-- **DBs**:
-  - SQLite (private) → transactions, positions, statements, cash.
-  - DuckDB (public market data) → prices, dividends, splits, financials, FX.
-- **PDF extraction**: `pdfplumber` (primary) → `pypdf` (fallback). No OCR.
-- **Frontend**: React + Vite + TypeScript + Plotly.js. State via React Query.
-- **Tooling**: `uv` for all Python; `npm` for the frontend.
+1. This is a **fresh** rebuild. Do **not** copy code from `trade_history/`
+   or `trade_history_opus46/`; they are abandoned attempts.
+2. Statements PDFs are **read-only inputs**. Never move, rename, or delete
+   them.
+3. **Quarantine, never fabricate.** If a row can't be confidently parsed,
+   it goes to `quarantine_transactions` with `raw_line` + reason. No
+   invented numbers, ever.
+4. **Native currency only at ingest.** FX conversion is presentation-only.
+   See [schema/ARCHITECTURE.md §1.1](schema/ARCHITECTURE.md).
+5. **Snapshots are ground truth.** Transactions are the audit trail.
+   Holdings on a historical date come from the most recent
+   `position_snapshots` for `(account, instrument)` on or before that
+   date. See [schema/ARCHITECTURE.md §1.4](schema/ARCHITECTURE.md).
 
-## Tooling Rules
+## 1. Tech stack
 
-- ALWAYS use `uv run …` for Python commands. Never bare `python` or `pip`.
-- Frontend must build via `npm run build` before any commit that touches `frontend/src/`.
+- **Backend** — Python 3.12+, FastAPI, click CLI.
+- **Private DB** — SQLite (`<DATA_DIR>/ledger.sqlite`).
+- **Market DB** — DuckDB (`<DATA_DIR>/market.duckdb`).
+- **PDF text** — `pdfplumber` (primary) → `pypdf` (fallback). No OCR.
+- **Frontend** — React 18 + Vite + TypeScript + Plotly.js + React Query +
+  react-router-dom.
+- **Tooling** — `uv` for all Python; `npm` for the frontend.
+
+## 2. Tooling rules
+
+- **ALWAYS** use `uv run …` for Python. Never bare `python` or `pip`.
+- Frontend changes must pass `npm run build` before commit.
 - All scripts log to `logs/<name>.log`. Structured logs use `<name>.jsonl`.
-- Statements PDFs are read-only inputs. Never move, rename, or delete them.
+- Use the custom `grep_search`/`file_search`/`read_file` over terminal
+  `grep`/`find`/`cat`.
 
-## Repository Layout
+## 3. Workspace profiles
+
+Set **before** Python loads `ledger.config`:
+
+```powershell
+$env:LEDGER_PROFILE = "example"   # synthetic data in example_data/
+$env:LEDGER_PROFILE = "real"      # default — real Statements/ + data/
+```
+
+Override individual paths with `LEDGER_DATA_DIR` and
+`LEDGER_STATEMENTS_DIR`. Full table in
+[schema/ARCHITECTURE.md §6](schema/ARCHITECTURE.md#6-workspace-profiles).
+
+## 4. Repository layout
 
 ```
 src/ledger/
-  config.py            paths + institution map
-  logging_setup.py     get_logger(name) → file + stdout handlers
-  pdf_text.py          pdfplumber→pypdf, returns PdfText(pages, sha256, …)
-  cli.py               `ledger` entry point (db, pdf, ingest, market, serve)
-  db/
-    schema.sql         SQLite DDL (single source of truth)
-    sqlite.py          connect/init + upsert helpers
-    duckdb_store.py    DuckDB DDL + connect helpers
-  parsers/
-    types.py           ParsedStatement / ParsedTxn / ParsedPosition / …
-    helpers.py         parse_money, parse_date, parse_option_expiry
-    registry.py        register() / select_parser()
-    cibc.py            CIBC IS / Investor's Edge / TFSA (single parser, claims all CIBC folders)
-    hsbc.py            HSBC Direct Invest (multi-account split per PDF; CAD + USD)
-    rbc.py             RBC Direct Investing (CAD + USD currency blocks per PDF; annual reports)
-    td.py              TD WebBroker / TD Direct Investing (CDN + US sub-statements per PDF; legacy 2016-2017)
-    generic.py         catch-all fallback
-  ingest/
-    pipeline.py        walk Statements/, run parser, write to SQLite
-  market/
-    scrape.py          yfinance + HTTP scrape into DuckDB (rate limited)
+  config.py            paths + profile + institution map
+  cli.py               `ledger` entry point
+  pdf_text.py          PdfText(pages, sha256, …)
+  logging_setup.py
+  db/                  schema.sql, sqlite.py, duckdb_store.py
+  parsers/             one module per institution + types/registry/helpers
+  ingest/pipeline.py   walk Statements/, run parser, write SQLite
+  market/scrape.py     yfinance → DuckDB
   analytics/           positions/PnL/RRG/correlation/treemap
-  api/
-    app.py             FastAPI factory
-    routes/            /transactions /monthly /performance /research /viz
+  api/app.py           FastAPI factory + routes/
+
+frontend/src/          React tabs + i18n + portfolio context + SmartSelect
+schema/ARCHITECTURE.md DB + ingestion + market doc
+doc/user-guide.md      human-facing user guide
+scripts/               one-off CLI helpers (e.g. build_example_data.py)
+example_data/          synthetic dataset (LEDGER_PROFILE=example)
+tests/                 pytest suite (parsers + analytics)
 ```
 
-## SQLite Schema (Source of Truth)
+## 5. Required validation after every change
 
-See [src/ledger/db/schema.sql](src/ledger/db/schema.sql). Key principles:
-
-1. **Multi-currency native.** Every monetary column is paired with a
-   `currency` column. Cash is tracked per `(account, currency)`.
-2. **Options first-class.** `instruments.asset_type` distinguishes
-   `equity / etf / option / mutual_fund / bond / cash / other`. Option rows
-   carry `option_root / option_expiry / option_strike / option_type /
-   option_multiplier`. The unique key includes the option fields so the same
-   underlying with different strikes/expiries is not collapsed.
-3. **Transactions vocabulary** is fixed and documented in
-   `parsers/types.py` (`TxnType`). Every parser must emit one of those literals.
-4. **Statements ↔ source files**: `source_files` is per-PDF;
-   `statements(source_file_id, account_id, period_end)` is the per-account
-   period snapshot. A multi-account or multi-period PDF yields multiple
-   `statements` rows referencing one `source_files` row.
-5. **Position snapshots** (`position_snapshots`, `cash_balances`) come from
-   the holdings table at the end of each statement. They are the
-   ground-truth checkpoint; transactions are reconciled *to* them.
-6. **Initial positions** (`initial_positions`, `initial_cash`) cover periods
-   where transactions exist but no statement does (older trades before the
-   first available statement).
-7. **In-kind transfers between MY accounts** are linked via `account_links`
-   (date-level) and pairwise via `transactions.counterpart_account_id` /
-   `counterpart_txn_id` (event-level). This is what enables tracking a
-   holding as it moves between accounts (e.g. CIBC ID → CIBC TFSA).
-8. **Quarantine, never fabricate.** Any unparseable line goes to
-   `quarantine_transactions` with `raw_line` + reason. Confidence < 1.0 is
-   allowed in `transactions.parser_confidence` but the row must still be
-   defensible against the PDF.
-
-## DuckDB Schema
-
-See [src/ledger/db/duckdb_store.py](src/ledger/db/duckdb_store.py). Tables:
-`daily_prices`, `dividends`, `splits`, `option_implied_vol`, `fx_rates`,
-`financials_quarterly`, `financials_annual`, `earnings_events`,
-`scrape_log`. Each has a `PRIMARY KEY` natural key so re-scrapes are
-idempotent.
-
-## Parser Contract
-
-```python
-class Parser(Protocol):
-    NAME: str
-    VERSION: str
-    def can_handle(self, folder_name: str, first_page_text: str) -> bool: ...
-    def parse(self, pdf: PdfText) -> ParseResult: ...
+```powershell
+uv run pytest -q
+uv run ruff check src tests
+cd frontend; npm run build
 ```
 
-- `select_parser` first checks the folder name, then sniffs first-page text.
-- Parsers must be **deterministic** and **side-effect free**. They emit
-  dataclasses defined in `parsers/types.py`. The ingest pipeline owns all
-  DB writes.
-- A parser MUST handle multi-account and multi-period PDFs; it returns
-  `list[ParsedStatement]` inside `ParseResult`.
+For any parser change, also spot-check the output against the cited PDF;
+every reported transaction must be defensible against the source.
 
-### Per-institution format notes
+## 6. When adding a new parser
 
-| Institution | Folder | Format quirks |
-|---|---|---|
-| CIBC Imperial Service | `CIBC Imperial Service/` | Monthly. `ð` PDF artifact replaced with em-dash; "(continued)" headers ignored when splitting sections. |
-| CIBC Investor's Edge | `CIBC Invest Direct/` | Monthly. Tax-Document_*.pdf intentionally skipped. Option expiry `MM/DD/YY`. |
-| CIBC TFSA | `CIBC TSFA/` | Same engine as CIBC IE; account-type heuristic detects TFSA. |
-| HSBC Direct Invest | `HSBC direct invest/` | pdfplumber drops spaces; `_normalize()` re-inserts space after `MmmDD` prefix. Compact options `PUT-100TLT'2616JA@75`. Multi-account split per PDF. Fee-summary PDFs emit annual statement. |
-| RBC Direct Investing | `RBC Invest Direct/` | One PDF holds BOTH "Cdn. Dollar Statement" + "U.S. Dollar Statement" → split into 2 ParsedStatements. Full month names (`JUNE`, `JULY`). Trailing-hyphen negatives. Page-repeated currency headers grouped by *change* in currency. Annual reports detected and emitted as empty annual statement. |
-| TD WebBroker | `TD Webbroker/` | Two sub-accounts per PDF (`<acct>-CDN` / `<acct>-USD`). Option positions span 2 lines (numbers on first, `[DD]MM@strike` on second). Legacy 2016-2017 quarterly format also handled (no `Account type:` literal — falls back to standalone `Direct Trading - CDN`/`US` markers; mid_year_summary PDFs emit annual). Filename patterns: modern `Statement_<acct>_YYYY-MM.pdf`, legacy `Statement_<acct>_YYYY_MM-MM.pdf`, summary `*_summary.pdf` / `*_mid_year_summary.pdf`. |
+See [schema/ARCHITECTURE.md §3](schema/ARCHITECTURE.md#3-ingestion-pipeline).
+Briefly:
 
-### Validation results (current)
+1. Add the institution code + folder name to `config.INSTITUTIONS`.
+2. Create `src/ledger/parsers/<name>.py` implementing the Parser
+   protocol — `NAME`, `VERSION`, `can_handle`, `parse`.
+3. Register it in `parsers/registry.py`.
+4. Return `list[ParsedStatement]` to handle multi-account / multi-period
+   PDFs.
+5. Add `tests/test_<name>.py` with at least one fixture covering a
+   buy, sell, dividend, option event, and a cash-balance row.
+6. Re-ingest with `uv run ledger ingest run` and confirm
+   quarantine count doesn't spike unreasonably.
 
-After running `uv run ledger ingest run` against `Statements/`:
+When a new statement type appears that no parser handles, an LLM-assisted
+draft parser can be generated via the prompt skill in
+[prompts/new-parser.md](prompts/new-parser.md) (deferred — see §8).
 
-- **324 PDFs** scanned. **323 ok**, **1 intentionally skipped** (`CIBC Tax-Document_58MRB0.pdf`).
-- **398 statements**, **2,776 transactions**, **5,519 position snapshots**, **404 cash balances**.
-- **6 institution accounts** mapped (CIBC IS, CIBC ID, CIBC TFSA, HSBC IDI, RBC DI, TD WB).
-- 13/13 parser unit tests pass (`tests/test_cibc.py`, `test_hsbc.py`, `test_rbc.py`, `test_td.py`).
-- TD 2025-12 USD statement reconciles to portfolio total $1,915,163.16 within $1.
+## 7. Frontend conventions
 
-### Known limitations
+- Component state via React Query for server data, local `useState` for
+  UI only.
+- All user preferences flow through `usePortfolio()` (which wraps
+  `/config`). Don't store preferences in `localStorage`.
+- New user-visible strings should get a key in
+  [frontend/src/i18n.tsx](frontend/src/i18n.tsx) and use `t("…")` rather
+  than hard-coded English.
+- Theme/light-dark uses CSS variables under `:root[data-theme=…]` in
+  [frontend/src/styles.css](frontend/src/styles.css). Plotly traces read
+  colors from `plotlyTheme()` in
+  [frontend/src/theme.ts](frontend/src/theme.ts).
 
-- TD legacy quarterly PDFs (2016-2017) currently emit one statement per file (the first month); the bundled later months are not separately split. Listed positions for the first month are captured.
-- RBC annual investment performance reports are recorded as empty annual statements; the cumulative IRR is not parsed into the schema (it lives in DuckDB price history instead).
-- Quarantine count is non-zero (~4,400 lines) — these are mostly continuation lines, holding rows lacking a parens-symbol, and footer noise; *no transaction values are fabricated*.
-- CIBC has many activity rows where the position description has no parens-ticker; the parser falls back to a synthetic `WORD_WORD_WORD` symbol. These are *not real tickers* — `market.scrape._held_symbols` filters them out via `^[A-Z][A-Z0-9-]{0,8}(\.[A-Z]{1,3})?$` plus a small blocklist (`BOUGHT`, `CASH`, `CAD`, …) so yfinance is never asked for nonsense. ~104 of ~407 instruments are canonical and scraped; the remainder still appear correctly in the transactions/snapshot tabs but are skipped from market-data joins.
+## 8. Deferred items (do not silently fabricate; document if you tackle)
 
-## Currency & FX
+These are explicit known gaps. If you implement one, update this list
+and the corresponding section in `ARCHITECTURE.md` / `user-guide.md`.
 
-- Every monetary amount carries `currency`. Cash balances per `(account, currency)`.
-- FX conversions are presentation-only; ingest never converts.
-- Daily FX rates are cached in DuckDB (`fx_rates`) and used by the
-  performance tab when the user picks a display currency.
+- **Initial holdings inference** — implemented via
+  `uv run ledger ingest infer-initials`. For each (account, instrument)
+  it sets `initial_positions.quantity = first_snapshot_qty − Σ pre-snapshot transactions`
+  and dates the row one day before the earliest snapshot. Same logic for
+  `initial_cash`. Idempotent. Inferred rows carry `notes LIKE 'inferred:%'`
+  so user-curated rows are preserved on re-run.
+- **True transaction-based monthly snapshots.** Current implementation
+  forward-fills the snapshot table; brokers occasionally apply lot
+  adjustments that only appear on snapshots, so transaction replay is
+  not exact. See [schema/ARCHITECTURE.md §1.4](schema/ARCHITECTURE.md).
+- **Long-history fundamentals.** yfinance only goes back ~5 years.
+  Candidate sources documented in
+  [schema/ARCHITECTURE.md §4.4](schema/ARCHITECTURE.md).
+- **PDF upload + new-statement-type extraction via LLM.** API endpoint
+  `POST /statements/upload` exists as a stub; LLM-driven parser creation
+  is not implemented. The Config tab has placeholder slots for
+  OpenAI / Anthropic / Google API keys.
+- **Per-statement extraction explainer UI** (overlay of PDF → text dump →
+  parsed transactions). Backend route `/statements/explain/{id}` is
+  stubbed.
+- **Sector data for RRG / treemap.** Sector lookups are not in DuckDB;
+  RRG uses per-symbol palette colors as a placeholder.
+- **TD legacy quarterly PDFs (2016-2017)** emit one statement per file
+  (the first month); the bundled later months are not split.
+- **RBC annual performance reports** are recorded as empty annual
+  statements; the cumulative IRR is not parsed into the schema.
+- **Screenshots** for the README/user guide — needs a live browser
+  session; deferred until the example_data run-through can be captured.
+- **Lint cleanup.** ~45 `E702` (semicolon-joined statements) pre-existing
+  warnings in `ruff check src tests`. Functional impact: none. Cosmetic
+  cleanup deferred.
 
-## Logs
+## 9. Ingestion summary (real profile, current state)
 
-- `logs/ingest.log` — main ingest run.
-- `logs/parser_<institution>.log` — per-parser detail.
-- `logs/skipped_pdfs.log` — image-only PDFs we skip.
-- `logs/quarantine.jsonl` — same content as `quarantine_transactions`.
-- `logs/market_scrape.log` + `logs/market_scrape.jsonl` — HTTP fetches,
-  rate-limit hits, retries.
+After `uv run ledger ingest run` against `Statements/`:
 
-## Frontend Tabs
+- 324 PDFs scanned, 323 parsed, 1 intentionally skipped
+  (`CIBC Tax-Document_58MRB0.pdf`).
+- 398 statements, 2,776 transactions, 5,519 position snapshots,
+  404 cash balances.
+- 13/13 parser unit tests pass.
+- TD 2025-12 USD statement reconciles to portfolio total within $1.
 
-1. **Transactions** — virtualised table; filters by date range, account,
-   institution, ticker, txn-type. Symbol cells link to tab 4.
-2. **Monthly snapshot** — month-end picker; consolidated holdings + diff
-   between any two months.
-3. **Performance** — total asset value over time, with the same filter set
-   as tab 1. Realized vs unrealized P&L.
-4. **Stock research** — candlestick (default) with 50/200 MA toggles,
-   volume sub-chart, my trade markers; daily/weekly/monthly resampling;
-   below it, multi-line financials chart with per-metric show/hide.
-5. **Visualisations** — drop-down: RRG, treemap by sector, correlation
-   matrix (collapsible to sector). All animated by a date scrubber + play
-   button.
-
-## Required Validation After Changes
-
-- `uv run pytest -q`
-- `uv run ruff check src tests`
-- `cd frontend && npm run build`
-- Spot-check parser output against the corresponding PDF; every reported
-  transaction must be defensible against the source.
+For full per-institution quirks see
+[schema/ARCHITECTURE.md §3.4](schema/ARCHITECTURE.md).

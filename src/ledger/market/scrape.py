@@ -15,7 +15,8 @@ import pandas as pd
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..config import DUCKDB_PATH
-from ..db import duckdb_store, sqlite as sqlite_db
+from ..db import duckdb_store
+from ..db import sqlite as sqlite_db
 from ..logging_setup import get_logger, jsonl_path
 
 log = get_logger("market_scrape")

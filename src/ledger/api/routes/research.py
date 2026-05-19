@@ -57,8 +57,10 @@ def trades(symbol: str = Query(...)) -> dict:
     """Return MY transactions for a symbol — to overlay as markers."""
     with sqlite_db.session() as conn:
         rows = [dict(r) for r in conn.execute(
-            """SELECT t.trade_date, t.txn_type, t.quantity, t.price, t.currency,
-                      a.account_number, ins.code AS institution_code
+            """SELECT t.trade_date, t.txn_type, t.quantity, t.price,
+                      t.net_amount, t.currency, t.description,
+                      a.account_number, ins.code AS institution_code,
+                      inst.option_type, inst.option_strike, inst.option_expiry
                  FROM transactions t
                  JOIN instruments inst ON inst.instrument_id = t.instrument_id
                  JOIN accounts a ON a.account_id = t.account_id
