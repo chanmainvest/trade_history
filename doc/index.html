@@ -1,7 +1,91 @@
-# Architecture
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ledger — Documentation</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'neutral' });</script>
+  <style>
+    :root {
+      --bg: #ffffff; --fg: #1a1a1a; --accent: #0969da;
+      --code-bg: #f6f8fa; --border: #d0d7de; --nav-bg: #f6f8fa;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117; --fg: #e6edf3; --accent: #58a6ff;
+        --code-bg: #161b22; --border: #30363d; --nav-bg: #161b22;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 16px; line-height: 1.6;
+      background: var(--bg); color: var(--fg);
+      margin: 0; padding: 0;
+    }
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: var(--nav-bg); border-bottom: 1px solid var(--border);
+      padding: 0.5rem 2rem; display: flex; gap: 1.5rem; align-items: center;
+      font-size: 0.9rem;
+    }
+    nav a { color: var(--accent); text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    main { max-width: 960px; margin: 0 auto; padding: 2rem; }
+    h1, h2, h3, h4 { color: var(--fg); margin-top: 2rem; }
+    h1 { font-size: 2rem; border-bottom: 2px solid var(--border); padding-bottom: 0.4rem; }
+    h2 { font-size: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+    a { color: var(--accent); }
+    code {
+      background: var(--code-bg); border: 1px solid var(--border);
+      border-radius: 4px; padding: 0.1em 0.4em; font-size: 0.9em;
+    }
+    pre {
+      background: var(--code-bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 1rem; overflow-x: auto;
+    }
+    pre code { background: none; border: none; padding: 0; font-size: 0.85em; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th, td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; }
+    th { background: var(--code-bg); font-weight: 600; }
+    blockquote {
+      border-left: 4px solid var(--accent); margin: 0;
+      padding: 0.5rem 1rem; background: var(--code-bg);
+    }
+    .mermaid { overflow-x: auto; }
+    hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+    .doc-section { margin-bottom: 4rem; }
+    .section-title {
+      background: var(--code-bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 0.5rem 1rem; margin: 3rem 0 1.5rem;
+      font-size: 0.8rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--accent);
+    }
+    footer {
+      text-align: center; font-size: 0.8rem; color: #888;
+      padding: 2rem; border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <strong>Ledger docs</strong>
+    <a href="#architecture">Architecture</a>
+    <a href="#user-guide">User Guide</a>
+    <a href="#extraction-corner-cases">Parser Notes</a>
+    
+  </nav>
+  <main>
+    <h1>Ledger — Documentation</h1>
+    <p>Generated 2026-05-18 from <code>spec/*.md</code>.
+       Source: <a href="https://github.com/chanmainvest/trade_history">chanmainvest/trade_history</a>.</p>
+<div class="doc-section" id="architecture">
+  <div class="section-title">Architecture Reference</div>
+  <pre># Architecture
 
 This document is the authoritative description of how data flows through
-the **ledger** app. [AGENTS.md](AGENTS.md) intentionally stays short
+the **ledger** app. [AGENTS.md](../AGENTS.md) intentionally stays short
 (AI-ops rules only) and points here for any structural detail.
 
 The app has three core data planes:
@@ -12,22 +96,22 @@ The app has three core data planes:
 
 ```mermaid
 flowchart LR
-    PDF[PDF statements] --> INGEST[parsers + ingest]
-    INGEST --> SQLITE[(SQLite\nprivate)]
+    PDF[PDF statements] --&gt; INGEST[parsers + ingest]
+    INGEST --&gt; SQLITE[(SQLite\nprivate)]
 
-    FEED[yfinance / stooq] --> SCRAPE[market.scrape]
-    SCRAPE --> DUCKDB[(DuckDB\npublic)]
+    FEED[yfinance / stooq] --&gt; SCRAPE[market.scrape]
+    SCRAPE --&gt; DUCKDB[(DuckDB\npublic)]
 
-    SQLITE --> API[FastAPI]
-    DUCKDB --> API
-    API --> UI[React UI]
+    SQLITE --&gt; API[FastAPI]
+    DUCKDB --&gt; API
+    API --&gt; UI[React UI]
 ```
 
 ---
 
 ## 1. SQLite schema (private)
 
-The canonical DDL lives in [src/ledger/db/schema.sql](src/ledger/db/schema.sql).
+The canonical DDL lives in [src/ledger/db/schema.sql](../src/ledger/db/schema.sql).
 This section explains *why* it's shaped the way it is and documents every
 table and its columns.
 
@@ -72,7 +156,7 @@ One PDF can legitimately produce multiple `statements` rows because:
 
 - **RBC** statements pack CAD-currency and USD-currency sections into a
   single PDF; each is its own statement.
-- **TD WebBroker** prints `<acct>-CDN` and `<acct>-USD` sub-statements in
+- **TD WebBroker** prints `&lt;acct&gt;-CDN` and `&lt;acct&gt;-USD` sub-statements in
   one PDF.
 - **HSBC** fee-summary PDFs cover multiple periods at once.
 
@@ -124,7 +208,7 @@ Any unparseable line goes to `quarantine_transactions` with
 score below 1.0 is allowed in `transactions.parser_confidence`, but
 every recorded row must be defensible against the source PDF.
 
-The mirror file [logs/quarantine.jsonl](logs/quarantine.jsonl) is
+The mirror file [logs/quarantine.jsonl](../logs/quarantine.jsonl) is
 the same content for grep-friendly investigation.
 
 ---
@@ -181,6 +265,19 @@ erDiagram
         INTEGER instrument_id FK
         TEXT alias
         INTEGER institution_id FK
+    }
+
+    instrument_identifier_lookups {
+      INTEGER lookup_id PK
+      TEXT identifier_type "fund_code"
+      TEXT asset_type "mutual_fund"
+      TEXT institution_code
+      TEXT normalized_name
+      TEXT display_name
+      TEXT currency
+      TEXT status "pending resolved ambiguous"
+      TEXT resolved_symbol
+      TEXT evidence_url
     }
 
     source_files {
@@ -355,7 +452,7 @@ that switch on it (Monthly, Performance, Research).
 
 ## 3. DuckDB schema (public)
 
-DDL: [src/ledger/db/duckdb_store.py](src/ledger/db/duckdb_store.py).
+DDL: [src/ledger/db/duckdb_store.py](../src/ledger/db/duckdb_store.py).
 
 ```mermaid
 erDiagram
@@ -466,25 +563,25 @@ opportunistically without contaminating the private store.
 
 ```mermaid
 flowchart TD
-    A[Statements/institution/*.pdf] --> B[pdf_text.extract_pdf]
-    B -->|pdfplumber primary| C{text extracted?}
-    C -->|yes| D[PdfText\npages, sha256, page_count]
-    C -->|no / image-only| E[pypdf fallback]
-    E -->|still no text| F[skip — log to\nskipped_pdfs.log]
-    E -->|text| D
-    D --> G[registry.select_parser\nfolder_name + first-page sniff]
-    G -->|matched| H[Parser.parse pdf]
-    G -->|no match| I[GenericParser stub\nno-op — skip]
-    H -->|success| J[ParseResult\nlist of ParsedStatement]
-    H -->|partial / error| K[quarantine_transactions\n+ partial commit]
-    J --> L[ingest_one\nSQLite upserts]
-    L --> M[(source_files\nstatements)]
-    L --> N[(transactions\ninstruments)]
-    L --> O[(position_snapshots\ncash_balances)]
-    L --> P[(quarantine_transactions)]
+    A[Statements/institution/*.pdf] --&gt; B[pdf_text.extract_pdf]
+    B --&gt;|pdfplumber primary| C{text extracted?}
+    C --&gt;|yes| D[PdfText\npages, sha256, page_count]
+    C --&gt;|no / image-only| E[pypdf fallback]
+    E --&gt;|still no text| F[skip — log to\nskipped_pdfs.log]
+    E --&gt;|text| D
+    D --&gt; G[registry.select_parser\nfolder_name + first-page sniff]
+    G --&gt;|matched| H[Parser.parse pdf]
+    G --&gt;|no match| I[GenericParser stub\nno-op — skip]
+    H --&gt;|success| J[ParseResult\nlist of ParsedStatement]
+    H --&gt;|partial / error| K[quarantine_transactions\n+ partial commit]
+    J --&gt; L[ingest_one\nSQLite upserts]
+    L --&gt; M[(source_files\nstatements)]
+    L --&gt; N[(transactions\ninstruments)]
+    L --&gt; O[(position_snapshots\ncash_balances)]
+    L --&gt; P[(quarantine_transactions)]
 ```
 
-Entry point: `ledger ingest run` (see [src/ledger/ingest/pipeline.py](src/ledger/ingest/pipeline.py)).
+Entry point: `ledger ingest run` (see [src/ledger/ingest/pipeline.py](../src/ledger/ingest/pipeline.py)).
 
 ### 4.2 Idempotency
 
@@ -502,8 +599,8 @@ Re-running ingest on the same PDF is safe because:
 class Parser(Protocol):
     NAME: str
     VERSION: str
-    def can_handle(self, folder_name: str, first_page_text: str) -> bool: ...
-    def parse(self, pdf: PdfText) -> ParseResult: ...
+    def can_handle(self, folder_name: str, first_page_text: str) -&gt; bool: ...
+    def parse(self, pdf: PdfText) -&gt; ParseResult: ...
 ```
 
 Contracts:
@@ -511,7 +608,7 @@ Contracts:
 - **Deterministic.** Two runs on the same PDF produce byte-identical
   output (so re-ingest doesn't churn rows).
 - **Side-effect free.** Parsers emit dataclasses from
-  [parsers/types.py](src/ledger/parsers/types.py); the ingest
+  [parsers/types.py](../src/ledger/parsers/types.py); the ingest
   pipeline owns *all* DB writes.
 - **Multi-statement aware.** Every parser returns
   `list[ParsedStatement]` inside `ParseResult` to handle multi-account
@@ -530,15 +627,15 @@ Contracts:
 
 ```mermaid
 flowchart LR
-    A[folder_name\nfirst_page_text] --> B{CIBCParser\ncan_handle?}
-    B -->|yes| C[CIBCParser]
-    B -->|no| D{HSBCParser\ncan_handle?}
-    D -->|yes| E[HSBCParser]
-    D -->|no| F{RBCParser\ncan_handle?}
-    F -->|yes| G[RBCParser]
-    F -->|no| H{TDParser\ncan_handle?}
-    H -->|yes| I[TDParser]
-    H -->|no| J[None — skip]
+    A[folder_name\nfirst_page_text] --&gt; B{CIBCParser\ncan_handle?}
+    B --&gt;|yes| C[CIBCParser]
+    B --&gt;|no| D{HSBCParser\ncan_handle?}
+    D --&gt;|yes| E[HSBCParser]
+    D --&gt;|no| F{RBCParser\ncan_handle?}
+    F --&gt;|yes| G[RBCParser]
+    F --&gt;|no| H{TDParser\ncan_handle?}
+    H --&gt;|yes| I[TDParser]
+    H --&gt;|no| J[None — skip]
 ```
 
 ### 4.5 What `ingest_one` writes
@@ -548,15 +645,15 @@ dependency order:
 
 ```mermaid
 flowchart TD
-    PS[ParsedStatement] --> SF[source_files\nupsert by relpath]
-    SF --> INS[institutions\nupsert by code]
-    INS --> ACC[accounts\nupsert by institution+account_number]
-    ACC --> STM[statements\nupsert by source_file+account+period_end]
-    STM --> INST[instruments\nupsert per UNIQUE key]
-    INST --> TXN[transactions\nbulk insert]
-    INST --> SNAP[position_snapshots\nbulk upsert]
-    INST --> CASH[cash_balances\nbulk upsert]
-    TXN --> QUAR[quarantine_transactions\nfor unconfident rows]
+    PS[ParsedStatement] --&gt; SF[source_files\nupsert by relpath]
+    SF --&gt; INS[institutions\nupsert by code]
+    INS --&gt; ACC[accounts\nupsert by institution+account_number]
+    ACC --&gt; STM[statements\nupsert by source_file+account+period_end]
+    STM --&gt; INST[instruments\nupsert per UNIQUE key]
+    INST --&gt; TXN[transactions\nbulk insert]
+    INST --&gt; SNAP[position_snapshots\nbulk upsert]
+    INST --&gt; CASH[cash_balances\nbulk upsert]
+    TXN --&gt; QUAR[quarantine_transactions\nfor unconfident rows]
 ```
 
 ### 4.6 Per-institution format notes
@@ -568,7 +665,7 @@ flowchart TD
 | CIBC TFSA | `CIBC TSFA/` | Same engine as CIBC IE; account-type heuristic detects TFSA. |
 | HSBC Direct Invest | `HSBC direct invest/` | pdfplumber drops spaces; `_normalize()` re-inserts space after `MmmDD`. Compact options `PUT-100TLT'2616JA@75`. Multi-account per PDF. |
 | RBC Direct Investing | `RBC Invest Direct/` | One PDF holds CAD + USD statements → 2 `ParsedStatement` rows. Full month names. Trailing-hyphen negatives. |
-| TD WebBroker | `TD Webbroker/` | Two sub-accounts per PDF (`<acct>-CDN` / `<acct>-USD`). Option positions span two lines. Legacy 2016-2017 quarterly format. |
+| TD WebBroker | `TD Webbroker/` | Two sub-accounts per PDF (`&lt;acct&gt;-CDN` / `&lt;acct&gt;-USD`). Option positions span two lines. Legacy 2016-2017 quarterly format. |
 
 ### 4.7 Symbol resolution (and synthetic symbols)
 
@@ -579,14 +676,18 @@ parens-ticker. The app's strategy, in order:
 2. **Inline option spec** — if `CALL SOXS JAN 16 2026 55.00` appears,
    build an option instrument directly.
 3. **Known-name map** — see
-   [parsers/name_resolver.py](src/ledger/parsers/name_resolver.py).
+   [parsers/name_resolver.py](../src/ledger/parsers/name_resolver.py).
    E.g. `ISHARES 20 PLUS YEAR TREASURY → TLT`.
 4. **Statement holding correlation** — `ledger ingest repair-symbols`
   rewrites stale transaction instruments by matching the transaction
   description/quantity/date to the same statement's `position_snapshots`.
   Tax-withholding rows inherit the nearest same-day dividend instrument.
   `ingest run` performs this repair automatically after parsing.
-5. **Synthetic symbol** — strip leading verbs (`BOUGHT`/`SOLD`/...) and
+5. **Reviewed identifier lookups** — mutual-fund names that need an
+  initial fund-code lookup are recorded in `instrument_identifier_lookups`.
+  Repair only rewrites them after a reviewed row is marked `resolved`; it
+  does not hardcode CIBC fund codes.
+6. **Synthetic symbol** — strip leading verbs (`BOUGHT`/`SOLD`/...) and
    join the first 4 words with underscores. These synthetic symbols are
    filtered out of `market.scrape._held_symbols` by a strict regex so
    yfinance is never asked for `BOUGHT_ISHARES_20_PLUS`.
@@ -594,10 +695,14 @@ parens-ticker. The app's strategy, in order:
 This keeps the audit trail honest: the description always matches the
 PDF, even if the canonical ticker can't be inferred.
 
+See [doc/extraction-corner-cases.md](doc/extraction-corner-cases.md) for
+parser gotchas such as generic `DISTRIB.` labels, CIBC fund-code lookup
+requests, and DLR/DLR.U currency-transfer direction.
+
 ### 4.8 Logs
 
 - `logs/ingest.log` — main run.
-- `logs/parser_<institution>.log` — per-parser detail.
+- `logs/parser_&lt;institution&gt;.log` — per-parser detail.
 - `logs/skipped_pdfs.log` — image-only PDFs we skip (no OCR).
 - `logs/quarantine.jsonl` — same content as `quarantine_transactions`.
 
@@ -614,8 +719,8 @@ silently skipped. To add support for a new bank you implement the
 
 ```mermaid
 flowchart LR
-    A[New bank\nstatement PDF] -->|select_parser returns None| B[Skipped today]
-    A -->|after you follow steps below| C[Parsed ✓]
+    A[New bank\nstatement PDF] --&gt;|select_parser returns None| B[Skipped today]
+    A --&gt;|after you follow steps below| C[Parsed ✓]
 
     subgraph Steps
         S1[1. Add institution\nto config.INSTITUTIONS]
@@ -623,7 +728,7 @@ flowchart LR
         S3[3. Register with @register]
         S4[4. Write tests]
         S5[5. Re-ingest]
-        S1 --> S2 --> S3 --> S4 --> S5
+        S1 --&gt; S2 --&gt; S3 --&gt; S4 --&gt; S5
     end
 ```
 
@@ -631,7 +736,7 @@ flowchart LR
 
 **Step 1 — Register the institution folder**
 
-In [src/ledger/config.py](src/ledger/config.py), add the institution code
+In [src/ledger/config.py](../src/ledger/config.py), add the institution code
 and its `Statements/` subfolder name to `INSTITUTIONS`:
 
 ```python
@@ -660,10 +765,10 @@ class NewBankParser:
     NAME = "newbank"
     VERSION = "1"
 
-    def can_handle(self, folder_name: str, first_page_text: str) -> bool:
+    def can_handle(self, folder_name: str, first_page_text: str) -&gt; bool:
         return folder_name == FOLDER or "New Bank Direct Investing" in first_page_text
 
-    def parse(self, pdf: PdfText) -> ParseResult:
+    def parse(self, pdf: PdfText) -&gt; ParseResult:
         statements: list[ParsedStatement] = []
         # ... parse logic ...
         return ParseResult(statements=statements)
@@ -678,12 +783,12 @@ Key rules for the parser body:
   `description`.
 - Rows you can't confidently parse go into `ParsedStatement.quarantine`
   with `raw_line` and a human-readable `reason` — **never fabricate**.
-- Set `parser_confidence < 1.0` on rows you parsed but are uncertain
+- Set `parser_confidence &lt; 1.0` on rows you parsed but are uncertain
   about; keep them in `transactions`, not quarantine.
 
 **Step 3 — Register at import time**
 
-Import the new module in [src/ledger/parsers/\_\_init\_\_.py](src/ledger/parsers/__init__.py)
+Import the new module in [src/ledger/parsers/\_\_init\_\_.py](../src/ledger/parsers/__init__.py)
 so the `@register` decorator fires before `select_parser` is called:
 
 ```python
@@ -720,9 +825,9 @@ uv run pytest -q
 ### 5.3 LLM-assisted draft parser
 
 For PDFs with an unfamiliar layout, the prompt skill in
-[prompts/new-parser.md](prompts/new-parser.md) walks an LLM through
+[prompts/new-parser.md](../prompts/new-parser.md) walks an LLM through
 producing a draft parser from a text dump of the PDF. Use
-`uv run python scripts/dump_sample.py <pdf_path>` to generate the text
+`uv run python scripts/dump_sample.py &lt;pdf_path&gt;` to generate the text
 dump, then feed it to the prompt.
 
 ### 5.4 Multi-account PDFs
@@ -734,10 +839,10 @@ period. The pipeline handles the fan-out automatically; it calls
 
 ```mermaid
 flowchart LR
-    PDF[One PDF] -->|parse| PS1[ParsedStatement\nAccount A – CAD]
-    PDF -->|parse| PS2[ParsedStatement\nAccount A – USD]
-    PS1 --> DB1[(SQLite\nstatements row 1)]
-    PS2 --> DB2[(SQLite\nstatements row 2)]
+    PDF[One PDF] --&gt;|parse| PS1[ParsedStatement\nAccount A – CAD]
+    PDF --&gt;|parse| PS2[ParsedStatement\nAccount A – USD]
+    PS1 --&gt; DB1[(SQLite\nstatements row 1)]
+    PS2 --&gt; DB2[(SQLite\nstatements row 2)]
 ```
 
 ---
@@ -746,21 +851,21 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    SYM1[held symbols\nfrom SQLite] --> SCRAPE[market.scrape]
-    SYM2[manual extras\nfrom config] --> SCRAPE
-    SYM3[benchmark symbols\nSPY XIU.TO VTI] --> SCRAPE
-    SCRAPE -->|yfinance| PRICE[(daily_prices)]
-    SCRAPE -->|yfinance| DIV[(dividends)]
-    SCRAPE -->|yfinance| SPL[(splits)]
-    SCRAPE -->|yfinance| FIN[(financials_quarterly\nfinancials_annual)]
-    SCRAPE -->|yfinance| EARN[(earnings_events)]
-    SCRAPE -->|stooq / yfinance| FX[(fx_rates)]
-    SCRAPE -->|SEC EDGAR| FIN2[(financials\nlong history US)]
-    SCRAPE --> LOG[(scrape_log)]
+    SYM1[held symbols\nfrom SQLite] --&gt; SCRAPE[market.scrape]
+    SYM2[manual extras\nfrom config] --&gt; SCRAPE
+    SYM3[benchmark symbols\nSPY XIU.TO VTI] --&gt; SCRAPE
+    SCRAPE --&gt;|yfinance| PRICE[(daily_prices)]
+    SCRAPE --&gt;|yfinance| DIV[(dividends)]
+    SCRAPE --&gt;|yfinance| SPL[(splits)]
+    SCRAPE --&gt;|yfinance| FIN[(financials_quarterly\nfinancials_annual)]
+    SCRAPE --&gt;|yfinance| EARN[(earnings_events)]
+    SCRAPE --&gt;|stooq / yfinance| FX[(fx_rates)]
+    SCRAPE --&gt;|SEC EDGAR| FIN2[(financials\nlong history US)]
+    SCRAPE --&gt; LOG[(scrape_log)]
 ```
 
 Entry point: `ledger market scrape` (see
-[src/ledger/market/scrape.py](src/ledger/market/scrape.py)).
+[src/ledger/market/scrape.py](../src/ledger/market/scrape.py)).
 
 ### 6.1 What gets scraped
 
@@ -803,7 +908,7 @@ fallback colors.
 ### 6.4 Why yfinance and not a paid feed?
 
 - Free. The app is personal.
-- Covers >99% of symbols a Canadian retail investor would hold.
+- Covers &gt;99% of symbols a Canadian retail investor would hold.
 - Returns split- and dividend-adjusted close, which is the right
   signal for the Performance tab.
 
@@ -825,7 +930,7 @@ Candidates for additional backup feeds if yfinance breaks:
 
 ## 7. Config / portfolios
 
-Stored as `<DATA_DIR>/config.json`. Schema:
+Stored as `&lt;DATA_DIR&gt;/config.json`. Schema:
 
 ```jsonc
 {
@@ -850,7 +955,7 @@ A portfolio with empty `account_ids` is implicitly "all accounts".
 ## 8. Workspace profiles
 
 Configured by env var, read on module load by
-[config.py](src/ledger/config.py):
+[config.py](../src/ledger/config.py):
 
 | `LEDGER_PROFILE` | `STATEMENTS_DIR`     | `DATA_DIR`            | Purpose |
 |---|---|---|---|
@@ -879,3 +984,363 @@ cd frontend; npm run build
 
 Spot-check parser output against the corresponding PDF; every reported
 transaction must be defensible against the source.
+</pre>
+</div>
+
+<div class="doc-section" id="user-guide">
+  <div class="section-title">User Guide</div>
+  <pre># Ledger — User Guide
+
+A personal investment ledger for Canadian retail brokers. Imports your
+monthly PDF statements from CIBC, HSBC, RBC, and TD, joins them against
+free market data, and gives you a single dashboard for your whole
+family's accounts.
+
+This guide is written for **humans**. The companion AI-operation rules
+live in [AGENTS.md](../AGENTS.md), and the deep technical reference is
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
+
+## 1. Install
+
+```powershell
+# clone, then from the repo root:
+uv sync
+cd frontend ; npm install ; cd ..
+```
+
+Requirements:
+
+- Python 3.12 or later.
+- Node.js 20 or later.
+- Windows or macOS; Linux works but is not the target.
+
+## 2. Start the app
+
+Two terminals.
+
+**Terminal 1 — backend** (default profile uses your real statements):
+
+```powershell
+uv run ledger serve
+```
+
+The API binds to `http://127.0.0.1:8000`. Auto-reloads on file change.
+
+**Terminal 2 — frontend**:
+
+```powershell
+cd frontend
+npm run dev
+```
+
+Open &lt;http://localhost:5173&gt;. The Vite dev server proxies `/api` to
+port 8000.
+
+### 2.1 Docker start
+
+If you have Docker Desktop installed, one command starts both containers:
+
+```powershell
+docker compose up --build
+```
+
+Open &lt;http://localhost:5173&gt;. The frontend is a production Vite build served by
+nginx; `/api/*` is proxied to the FastAPI backend container. Your local
+`data/`, `logs/`, and `Statements/` folders are mounted into the backend, so the
+same database and PDFs are used.
+
+### 2.2 Try the example dataset first
+
+If you don't have your own statements handy:
+
+```powershell
+$env:LEDGER_PROFILE = "example"
+uv run python scripts/build_example_data.py
+uv run ledger serve
+# in another terminal:
+$env:LEDGER_PROFILE = "example"   # so the API picks up the example DB
+cd frontend ; npm run dev
+```
+
+The example dataset has two accounts (TD Direct Investing and Interactive
+Brokers) with a current holdings snapshot mirroring the
+`portfolio_dashboard/sample_portfolio.xlsx` reference, plus ~37
+invented buy/sell/option events spread over 2021-2026.
+
+Reset back to your real data with `$env:LEDGER_PROFILE = "real"` or
+just close the terminal.
+
+## 3. Load your statements
+
+1. Drop your PDFs into `Statements/&lt;institution&gt;/` following the
+   convention in `config.INSTITUTIONS`. Folders that don't exist are
+   skipped, so you can start with just one broker.
+2. Ingest:
+
+   ```powershell
+   uv run ledger ingest run
+   ```
+
+3. Pull market data for everything you hold:
+
+   ```powershell
+  uv run ledger market refresh
+   ```
+
+  This calls yfinance and, for US-listed fundamentals, the free SEC
+  EDGAR Company Facts API. Be patient and don't run it on a flaky link.
+  Re-running is safe; it's an upsert.
+
+  To fetch sector/profile metadata used by Visualization colors, run:
+
+  ```powershell
+  uv run ledger market refresh-profiles
+  ```
+
+  `uv run ledger market refresh-all` includes profiles, prices,
+  dividends, splits, financials, earnings, and FX in one pass.
+
+4. *(Optional but recommended)* Back-fill positions that pre-date your
+   earliest statement:
+
+   ```powershell
+   uv run ledger ingest infer-initials
+   ```
+
+   This populates `initial_positions` and `initial_cash` so the
+   Monthly / Performance views know what you were already holding when
+   our records start. Idempotent.
+
+5. *(Optional after parser upgrades)* Repair already-ingested legacy
+  symbols without deleting PDFs or re-ingesting everything. The repair
+  uses known ticker mappings first, then matches transactions to holdings
+  from the same statement where the PDF only printed a security name:
+
+  ```powershell
+  uv run ledger ingest repair-symbols
+  ```
+
+6. Reload the browser. The Transactions tab should now have data.
+
+## 4. The tabs
+
+### 4.1 Transactions
+
+Every event the parser produced, filterable by:
+
+- **Institution** (multi-select with search).
+- **Account** (multi-select with search; respects the active portfolio).
+- **Symbol** (multi-select with search; scrolls inside max 2/3 screen
+  width).
+- **Type** (buy / sell / dividend / option_… etc., multi-select).
+- **Min |amount|** — 100 / 1k / 10k / 100k / 1M presets.
+- **Date range**.
+
+Click a symbol cell to jump to the Research tab.
+
+### 4.2 Monthly snapshot
+
+Default view: holdings as of the most recent statement date in the
+database, across all accounts in the active portfolio.
+
+- **As of** date — pick any day; the app starts from the latest complete
+  account statement checkpoint and replays transactions after it. Before
+  the first statement, it uses inferred/manual initial holdings.
+- **Compare to** — picking a second date adds a `Δ` column. Rows where
+  the position grew are tinted green, rows that shrank are tinted red,
+  in git-diff style. Positions that disappeared between the two dates
+  appear at the bottom.
+- Columns sortable; institution / account / profile are visible, and the
+  filters can narrow the table to specific institutions or accounts.
+
+### 4.3 Performance
+
+Total portfolio market value over time.
+
+- **Period** buttons: 1m / 3m / 6m / 1y / 3y / 5y / 10y / max / custom.
+- **Currency**: CAD / USD / Both.
+- **Show as %** — rebases all series to 100 at the start of the window;
+  forced on if "Hide $ values" is set in Settings.
+- **Portfolio / institution / account** filters (multi-select).
+- Cash chart toggles off automatically when "Hide $ values" is on.
+
+The chart no longer zig-zags between accounts whose statement dates
+don't line up — see
+[ARCHITECTURE.md §1.4](ARCHITECTURE.md#14-transactions-snapshots-and-the-reconciliation-gap) for the
+forward-fill rationale.
+
+### 4.4 Research
+
+Per-symbol deep dive.
+
+- Type a ticker, press **Enter** (no Go button — it was useless).
+- **Period** buttons + daily/weekly/monthly resample.
+- Candlestick with **MA50 / MA200** toggles, volume sub-chart.
+- Your buy/sell marks overlay the chart. **Solid triangles** =
+  equity / ETF trades, **hollow triangles** = option trades, so you
+  can tell them apart at a glance.
+- **Financials** chart underneath — quarterly or annual, per-metric
+  show/hide. yfinance data is extended with SEC EDGAR Company Facts for
+  US-listed symbols when available.
+- **Trade history** table at the bottom lists every transaction the
+  app has for this symbol, including account / description.
+
+### 4.5 Visualisations
+
+Three views, all filtered by the active portfolio, with institution and
+account filters inside the tab:
+
+- **RRG (Relative Rotation Graph)** — animated, with adjustable trail.
+  Symbols in the same sector use related colors when profile metadata is
+  available. Use the checkbox row below the chart to hide individual
+  symbols.
+- **Treemap** — holdings grouped by asset type, sized by market value.
+  With sector metadata, holdings group by sector; otherwise they fall
+  back to asset type. Defaults to the latest snapshot date (so it's never
+  blank unless you actually have no holdings).
+- **Correlation matrix** — square heatmap using the same color scale as
+  `portfolio_dashboard`. **Sort-by** dropdown or clicking a ticker in the
+  chart reorders both axes by correlation against that symbol; checkboxes
+  hide/show individual symbols and use sector-colored accents.
+
+### 4.6 Settings
+
+- **Theme** — light / dark.
+- **Language** — English / 繁體 (HK) / 繁體 (TW) / 简体 (CN). Flag picker
+  in the top right.
+- **Display currency** — CAD or USD.
+- **Hide $ values** — show percentages only (useful for screenshots).
+- **Portfolios** — add named groups of accounts. Example:
+  - *Dad's TFSA* → CIBC TFSA only.
+  - *Kids' RESPs* → TD WB only.
+  - *Household* → all accounts (the default `all` portfolio).
+
+  The dropdown in the top right activates a portfolio across **every**
+  tab.
+
+## 5. PDF upload (beta)
+
+A `POST /statements/upload` endpoint exists for in-browser PDF upload.
+Today it accepts the file, fingerprints it, and runs the existing
+parsers if the institution can be recognized. If no parser claims the
+file, the response is `unrecognized` and (when an LLM API key is
+configured) the app will prompt to draft a new extraction routine.
+
+LLM-driven parser drafting is **not implemented yet**; the API-key
+slots in Settings are placeholders. See `AGENTS.md` deferred items.
+
+## 6. MCP server for AI agents
+
+Run the Ledger MCP server over stdio:
+
+```powershell
+uv run ledger mcp serve
+```
+
+Use that command in any MCP-capable AI client. A typical server entry looks like
+this, with the working directory set to the repo root:
+
+```json
+{
+  "servers": {
+    "ledger": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "ledger", "mcp", "serve"],
+      "env": { "LEDGER_PROFILE": "real" }
+    }
+  }
+}
+```
+
+The server provides tools for frontend routes/config, allowlisted API GET
+requests, and bounded CLI actions such as ingest, symbol repair,
+initial-position inference, and market-data refresh. It intentionally does not
+offer arbitrary shell access.
+
+## 7. Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Vite crashes with `Failed to resolve` on Windows | Vite realpath'd the workspace onto another drive | Already fixed via `resolve.preserveSymlinks: true` in `frontend/vite.config.ts` |
+| Treemap is blank | Picked a date with no snapshot | Pick a date ≥ your earliest statement; the API falls back to the latest available |
+| Performance chart goes flat to zero | One account's data gap | Forward-fill is on by default; if you really want raw, pass `forward_fill=false` to `/api/performance/total` |
+| `BOUGHT` appears as a symbol in RBC rows | Pre-fix bug | Run `uv run ledger ingest repair-symbols` or re-ingest after pulling. The parser now strips leading verbs and applies a small name-to-ticker map (e.g. iShares 20+ → TLT) |
+| Empty option symbol on a CIBC `option_expiration` row | Pre-fix bug | Run `uv run ledger ingest repair-symbols` or re-ingest. The parser now recognizes `CALL ROOT MON DD YYYY STRIKE` shapes |
+
+## 8. Data privacy
+
+- The SQLite DB and the source PDFs **never leave your machine**.
+- The DuckDB market DB contains only public market data and is safe to
+  share or commit.
+- The browser app talks only to `127.0.0.1` by default.
+- No telemetry. No analytics. No third-party fonts loaded from the CDN.
+
+## 9. Where to learn more
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — schemas,
+  ingestion design, market-data pipeline, parser quirks.
+- [AGENTS.md](../AGENTS.md) — rules for AI agents editing this repo.
+- [example_data/README.md](../example_data/README.md) — what's in the
+  synthetic dataset and how to rebuild it.
+</pre>
+</div>
+
+<div class="doc-section" id="extraction-corner-cases">
+  <div class="section-title">Parser Notes & Corner Cases</div>
+  <pre># Extraction Corner Cases
+
+This note records parser and repair cases that are easy to get wrong when statement text omits a clean ticker or prints signs in broker-specific ways.
+
+## Symbol Resolution
+
+- Prefer explicit statement symbols and option contract fields when printed.
+- Use `parsers/name_resolver.py` only for conservative security-name aliases that are defensible from statement text and public ticker conventions.
+- When a transaction has a synthetic or missing symbol, `ledger ingest repair-symbols` first tries the known-name resolver, then matches the row to same-statement holdings by description words, quantity hints, currency, and canonical holding symbols.
+- Generic activity labels such as `DIVIDEND`, `DISTRIBUTION`, and `DISTRIB.` are placeholders, not instruments. Repair should resolve them from the underlying description or holding row.
+- Tax withholding rows often print only `NON-RES TAX WITHHELD`; they should inherit the nearest same-day dividend/distribution/return-of-capital instrument for the same account, statement, and currency.
+
+## Mutual Fund Codes
+
+CIBC mutual fund activity and holding rows often print fund names and class labels, but not fund codes. Do not hardcode those codes in parser mappings.
+
+Use `ingest.fund_lookup.lookup_fund_code()` / `lookup_fund_instrument_id()` instead:
+
+- The first unresolved fund name is recorded in `instrument_identifier_lookups` with `status = 'pending'`.
+- A reviewed lookup can be marked `resolved` with `resolved_symbol`, optional `resolved_exchange`, `resolved_name`, `evidence_url`, and notes.
+- After a row is resolved, `ledger ingest repair-symbols` rewrites matching mutual-fund transactions and snapshots to the reviewed code.
+- Until reviewed, keep the printed fund-name instrument so the row stays auditable and no fabricated fund code enters the ledger.
+
+## Transfers And Journals
+
+- CIBC same-account currency transfers may print quantity signs but no amount, for example `GLOBAL X US DLR CURRENCY -11,850 -- --`. The negative quantity is the outbound leg.
+- RBC transfer rows may use a trailing negative such as `5,000-` or text like `TRANSFER TO C$`; both indicate `transfer_out`.
+- `TRANSFER FROM ...` with a positive amount is inbound and should remain `transfer_in`.
+- For DLR/DLR.U currency journaling, the CAD ticker (`DLR`) can transfer out while the USD ticker (`DLR.U`) transfers in; the later sale of `DLR.U` is the actual USD-side exit.
+
+## Options
+
+- Option transactions must keep option instruments, not be repaired to the underlying equity just because the description also contains the underlying company name.
+- Display layers can show the underlying via `COALESCE(option_root, symbol)`, but the database row should retain expiry, strike, type, multiplier, and option root.
+
+## Footer Contamination
+
+Statement page footers and continuation text can append unrelated holdings to an activity description. Resolver matches should prefer the leading transaction description and direct known-name matches before using broad same-statement holding correlation.
+
+## Current Verified Examples
+
+- `AIRBNB INC CL-A` resolves to `ABNB`.
+- `PDD HOLDINGS INC ADR` resolves to `PDD`.
+- `DISTRIB. TEXAS PACIFIC LAND CORPORATION` resolves to `TPL`.
+- `OSISKO GOLD ROYALTIES LTD` resolves to `OR`.
+- `SANDSTORM GOLD LTD` resolves to `SAND` in USD and `SSL` in CAD.
+- CIBC fund names remain pending fund-code lookups unless reviewed in `instrument_identifier_lookups`.
+</pre>
+</div>
+
+  </main>
+  <footer>Built by <code>scripts/build_docs.py</code> &mdash; 2026-05-18</footer>
+</body>
+</html>

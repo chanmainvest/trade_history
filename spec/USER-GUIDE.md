@@ -7,7 +7,7 @@ family's accounts.
 
 This guide is written for **humans**. The companion AI-operation rules
 live in [AGENTS.md](../AGENTS.md), and the deep technical reference is
-[ARCHITECTURE.md](../ARCHITECTURE.md).
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
@@ -47,7 +47,20 @@ npm run dev
 Open <http://localhost:5173>. The Vite dev server proxies `/api` to
 port 8000.
 
-### 2.1 Try the example dataset first
+### 2.1 Docker start
+
+If you have Docker Desktop installed, one command starts both containers:
+
+```powershell
+docker compose up --build
+```
+
+Open <http://localhost:5173>. The frontend is a production Vite build served by
+nginx; `/api/*` is proxied to the FastAPI backend container. Your local
+`data/`, `logs/`, and `Statements/` folders are mounted into the backend, so the
+same database and PDFs are used.
+
+### 2.2 Try the example dataset first
 
 If you don't have your own statements handy:
 
@@ -82,7 +95,7 @@ just close the terminal.
 3. Pull market data for everything you hold:
 
    ```powershell
-   uv run ledger market scrape
+  uv run ledger market refresh
    ```
 
   This calls yfinance and, for US-listed fundamentals, the free SEC
@@ -164,7 +177,7 @@ Total portfolio market value over time.
 
 The chart no longer zig-zags between accounts whose statement dates
 don't line up — see
-[ARCHITECTURE.md §1.4](../ARCHITECTURE.md#14-transactions-snapshots-and-the-reconciliation-gap) for the
+[ARCHITECTURE.md §1.4](ARCHITECTURE.md#14-transactions-snapshots-and-the-reconciliation-gap) for the
 forward-fill rationale.
 
 ### 4.4 Research
@@ -227,7 +240,36 @@ configured) the app will prompt to draft a new extraction routine.
 LLM-driven parser drafting is **not implemented yet**; the API-key
 slots in Settings are placeholders. See `AGENTS.md` deferred items.
 
-## 6. Troubleshooting
+## 6. MCP server for AI agents
+
+Run the Ledger MCP server over stdio:
+
+```powershell
+uv run ledger mcp serve
+```
+
+Use that command in any MCP-capable AI client. A typical server entry looks like
+this, with the working directory set to the repo root:
+
+```json
+{
+  "servers": {
+    "ledger": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "ledger", "mcp", "serve"],
+      "env": { "LEDGER_PROFILE": "real" }
+    }
+  }
+}
+```
+
+The server provides tools for frontend routes/config, allowlisted API GET
+requests, and bounded CLI actions such as ingest, symbol repair,
+initial-position inference, and market-data refresh. It intentionally does not
+offer arbitrary shell access.
+
+## 7. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -237,7 +279,7 @@ slots in Settings are placeholders. See `AGENTS.md` deferred items.
 | `BOUGHT` appears as a symbol in RBC rows | Pre-fix bug | Run `uv run ledger ingest repair-symbols` or re-ingest after pulling. The parser now strips leading verbs and applies a small name-to-ticker map (e.g. iShares 20+ → TLT) |
 | Empty option symbol on a CIBC `option_expiration` row | Pre-fix bug | Run `uv run ledger ingest repair-symbols` or re-ingest. The parser now recognizes `CALL ROOT MON DD YYYY STRIKE` shapes |
 
-## 7. Data privacy
+## 8. Data privacy
 
 - The SQLite DB and the source PDFs **never leave your machine**.
 - The DuckDB market DB contains only public market data and is safe to
@@ -245,9 +287,9 @@ slots in Settings are placeholders. See `AGENTS.md` deferred items.
 - The browser app talks only to `127.0.0.1` by default.
 - No telemetry. No analytics. No third-party fonts loaded from the CDN.
 
-## 8. Where to learn more
+## 9. Where to learn more
 
-- [ARCHITECTURE.md](../ARCHITECTURE.md) — schemas,
+- [ARCHITECTURE.md](ARCHITECTURE.md) — schemas,
   ingestion design, market-data pipeline, parser quirks.
 - [AGENTS.md](../AGENTS.md) — rules for AI agents editing this repo.
 - [example_data/README.md](../example_data/README.md) — what's in the

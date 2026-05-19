@@ -24,6 +24,7 @@ dependencies = [
     "tenacity>=9.0",
     "python-dotenv>=1.0",
     "lxml>=6.1.0",
+    "mcp>=1.9",
 ]
 
 [project.scripts]
@@ -33,6 +34,8 @@ ledger = "ledger.cli:main"
 dev-dependencies = [
     "pytest>=8.3",
     "ruff>=0.8",
+    "markdown>=3.7",
+    "pymdown-extensions>=10.0",
 ]
 
 [tool.hatch.build.targets.wheel]

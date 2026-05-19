@@ -5,15 +5,15 @@ This file is the operating manual for AI coding agents working on
 
 > **Structural detail** — schemas, ingestion design, market-data pipeline,
 > per-institution parsing quirks — lives in
-> [ARCHITECTURE.md](ARCHITECTURE.md). **Read it before
+> [spec/ARCHITECTURE.md](spec/ARCHITECTURE.md). **Read it before
 > changing anything in `src/ledger/db/`, `src/ledger/parsers/`, or
 > `src/ledger/market/`.**
 >
 > Human-facing usage — install, run, tabs walkthrough, file uploads —
-> lives in [doc/user-guide.md](doc/user-guide.md).
+> lives in [spec/USER-GUIDE.md](spec/USER-GUIDE.md).
 >
 > Parser gotchas and symbol-repair lessons live in
-> [doc/extraction-corner-cases.md](doc/extraction-corner-cases.md).
+> [spec/EXTRACTION-CORNER-CASES.md](spec/EXTRACTION-CORNER-CASES.md).
 
 ---
 
@@ -27,11 +27,11 @@ This file is the operating manual for AI coding agents working on
    it goes to `quarantine_transactions` with `raw_line` + reason. No
    invented numbers, ever.
 4. **Native currency only at ingest.** FX conversion is presentation-only.
-   See [ARCHITECTURE.md §1.1](ARCHITECTURE.md#11-why-multi-currency-everywhere).
+   See [spec/ARCHITECTURE.md §1.1](spec/ARCHITECTURE.md#11-why-multi-currency-everywhere).
 5. **Snapshots are ground truth.** Transactions are the audit trail.
    Holdings on a historical date come from the most recent
    `position_snapshots` for `(account, instrument)` on or before that
-   date. See [ARCHITECTURE.md §1.4](ARCHITECTURE.md#14-transactions-snapshots-and-the-reconciliation-gap).
+   date. See [spec/ARCHITECTURE.md §1.4](spec/ARCHITECTURE.md#14-transactions-snapshots-and-the-reconciliation-gap).
 6. **Documentation is part of the code.** Every code change that affects
    behaviour, schema, APIs, CLI commands, data flow, or configuration
    **MUST** be accompanied by matching updates to ALL of the following
@@ -39,11 +39,11 @@ This file is the operating manual for AI coding agents working on
 
    | File | Update when… |
    |---|---|
-   | [ARCHITECTURE.md](ARCHITECTURE.md) | Any change to DB schema, ingestion pipeline, parser protocol, market-data flow, API routes, or workspace-profile logic |
-   | [src/ledger/db/schema.sql](src/ledger/db/schema.sql) | Canonical DDL changes (then reflect in ARCHITECTURE.md §2) |
+   | [spec/ARCHITECTURE.md](spec/ARCHITECTURE.md) | Any change to DB schema, ingestion pipeline, parser protocol, market-data flow, API routes, or workspace-profile logic |
+   | [src/ledger/db/schema.sql](src/ledger/db/schema.sql) | Canonical DDL changes (then reflect in spec/ARCHITECTURE.md §2) |
    | [README.md](README.md) | Architecture overview, quick-start steps, tab descriptions, or folder layout changes |
-   | [doc/user-guide.md](doc/user-guide.md) | Any user-visible behaviour: CLI commands, UI tabs, settings, troubleshooting |
-   | [doc/extraction-corner-cases.md](doc/extraction-corner-cases.md) | New parser quirks, symbol-repair edge cases, or PDF format discoveries |
+   | [spec/USER-GUIDE.md](spec/USER-GUIDE.md) | Any user-visible behaviour: CLI commands, UI tabs, settings, troubleshooting |
+   | [spec/EXTRACTION-CORNER-CASES.md](spec/EXTRACTION-CORNER-CASES.md) | New parser quirks, symbol-repair edge cases, or PDF format discoveries |
 
    **Enforcement:** Before marking any task complete, re-read every doc
    file listed above and confirm it still accurately describes the code.
@@ -79,7 +79,7 @@ $env:LEDGER_PROFILE = "real"      # default — real Statements/ + data/
 
 Override individual paths with `LEDGER_DATA_DIR` and
 `LEDGER_STATEMENTS_DIR`. Full table in
-[ARCHITECTURE.md §8](ARCHITECTURE.md#8-workspace-profiles).
+[spec/ARCHITECTURE.md §8](spec/ARCHITECTURE.md#8-workspace-profiles).
 
 ## 4. Repository layout
 
@@ -97,10 +97,11 @@ src/ledger/
   api/app.py           FastAPI factory + routes/
 
 frontend/src/          React tabs + i18n + portfolio context + SmartSelect
-ARCHITECTURE.md        DB + ingestion + market doc (Mermaid diagrams)
-doc/user-guide.md      human-facing user guide
-doc/extraction-corner-cases.md parser/symbol repair gotchas
-scripts/               one-off CLI helpers (e.g. build_example_data.py)
+spec/ARCHITECTURE.md   DB + ingestion + market doc (Mermaid diagrams)
+spec/USER-GUIDE.md     human-facing user guide
+spec/EXTRACTION-CORNER-CASES.md  parser/symbol repair gotchas
+doc/index.html         generated docs site (built by scripts/build_docs.py)
+scripts/               one-off CLI helpers + build_docs.py
 example_data/          synthetic dataset (LEDGER_PROFILE=example)
 tests/                 pytest suite (parsers + analytics)
 ```
@@ -116,9 +117,31 @@ cd frontend; npm run build
 For any parser change, also spot-check the output against the cited PDF;
 every reported transaction must be defensible against the source.
 
+## 5a. Releasing a new version
+
+On every tagged release the following MUST be done (also automated by
+`.github/workflows/release.yml`):
+
+1. **Regenerate `doc/index.html`** from `spec/*.md`:
+
+   ```powershell
+   uv run python scripts/build_docs.py --version <tag>
+   git add doc/index.html
+   git commit -m "docs: regenerate doc/index.html for <tag>"
+   ```
+
+2. **Tag and push** — the GitHub Actions workflow then builds and pushes the
+   Docker image to `ghcr.io/chanmainvest/trade_history:<tag>` and
+   `ghcr.io/chanmainvest/trade_history:latest`.
+
+   ```powershell
+   git tag v1.2.3
+   git push origin v1.2.3
+   ```
+
 ## 6. When adding a new parser
 
-See [ARCHITECTURE.md §5](ARCHITECTURE.md#5-adding-a-parser-for-a-new-bank).
+See [spec/ARCHITECTURE.md §5](spec/ARCHITECTURE.md#5-adding-a-parser-for-a-new-bank).
 Briefly:
 
 1. Add the institution code + folder name to `config.INSTITUTIONS`.
@@ -153,7 +176,7 @@ draft parser can be generated via the prompt skill in
 ## 8. Deferred items (do not silently fabricate; document if you tackle)
 
 These are explicit known gaps. If you implement one, update this list
-and the corresponding section in [ARCHITECTURE.md](ARCHITECTURE.md) / [doc/user-guide.md](doc/user-guide.md).
+and the corresponding section in [spec/ARCHITECTURE.md](spec/ARCHITECTURE.md) / [spec/USER-GUIDE.md](spec/USER-GUIDE.md).
 
 - **Initial holdings inference** — implemented via
   `uv run ledger ingest infer-initials`. For each (account, instrument)
@@ -202,4 +225,4 @@ After `uv run ledger ingest run` against `Statements/`:
 - TD 2025-12 USD statement reconciles to portfolio total within $1.
 
 For full per-institution quirks see
-[ARCHITECTURE.md §4.6](ARCHITECTURE.md#46-per-institution-format-notes).
+[spec/ARCHITECTURE.md §4.6](spec/ARCHITECTURE.md#46-per-institution-format-notes).
