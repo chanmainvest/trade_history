@@ -23,7 +23,7 @@ import { createContext, useContext, useMemo } from "react";
 export type Lang = "en" | "zh-HK" | "zh-TW" | "zh-CN";
 
 export const LANGS: { code: Lang; label: string; flag: string }[] = [
-  { code: "en",    label: "English",   flag: "🇬🇧" },
+  { code: "en",    label: "English",   flag: "🇺🇸" },
   { code: "zh-HK", label: "繁體 (HK)", flag: "🇭🇰" },
   { code: "zh-TW", label: "繁體 (TW)", flag: "🇹🇼" },
   { code: "zh-CN", label: "简体 (CN)", flag: "🇨🇳" },
@@ -66,6 +66,7 @@ const en: Dict = {
   "f.pause":            "Pause",
 
   // Period
+  "period.1d": "1D", "period.1w": "1W",
   "period.1m": "1M", "period.3m": "3M", "period.6m": "6M",
   "period.1y": "1Y", "period.3y": "3Y", "period.5y": "5Y",
   "period.10y": "10Y", "period.max": "Max", "period.custom": "Custom",
@@ -136,6 +137,7 @@ const zhHK: Dict = {
   "f.play":             "播放",
   "f.pause":            "暫停",
 
+  "period.1d": "1日", "period.1w": "1週",
   "period.1m": "1月", "period.3m": "3月", "period.6m": "6月",
   "period.1y": "1年", "period.3y": "3年", "period.5y": "5年",
   "period.10y": "10年", "period.max": "全部", "period.custom": "自訂",
@@ -203,6 +205,7 @@ const zhTW: Dict = {
   "f.play":             "播放",
   "f.pause":            "暫停",
 
+  "period.1d": "1日", "period.1w": "1週",
   "period.1m": "1月", "period.3m": "3月", "period.6m": "6月",
   "period.1y": "1年", "period.3y": "3年", "period.5y": "5年",
   "period.10y": "10年", "period.max": "全部", "period.custom": "自訂",
@@ -270,6 +273,7 @@ const zhCN: Dict = {
   "f.play":             "播放",
   "f.pause":            "暂停",
 
+  "period.1d": "1日", "period.1w": "1周",
   "period.1m": "1月", "period.3m": "3月", "period.6m": "6月",
   "period.1y": "1年", "period.3y": "3年", "period.5y": "5年",
   "period.10y": "10年", "period.max": "全部", "period.custom": "自定义",

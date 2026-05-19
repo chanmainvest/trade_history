@@ -17,28 +17,9 @@ import logging
 from datetime import date, timedelta
 
 from ..db import sqlite as sqlite_db
+from ..quantity import quantity_delta
 
 log = logging.getLogger(__name__)
-
-
-_BUY_TYPES = (
-    "buy", "buy_to_cover", "transfer_in", "reinvest_dividend",
-    "stock_split_credit", "option_buy_to_open", "option_buy_to_close",
-    "option_exercise",
-)
-_SELL_TYPES = (
-    "sell", "sell_short", "transfer_out", "option_sell_to_open",
-    "option_sell_to_close", "option_assignment", "option_expiration",
-    "stock_split_debit",
-)
-
-
-def _qty_sign(txn_type: str) -> int:
-    if txn_type in _BUY_TYPES:
-        return 1
-    if txn_type in _SELL_TYPES:
-        return -1
-    return 0
 
 
 def _day_before(iso: str) -> str:
@@ -91,7 +72,7 @@ def infer_initials() -> dict:
             ).fetchall()
             txn_qty = 0.0
             for t in txns:
-                txn_qty += _qty_sign(t["txn_type"]) * float(t["quantity"] or 0.0)
+                txn_qty += quantity_delta(t["txn_type"], t["quantity"])
 
             implied_initial = snap_qty - txn_qty
             if abs(implied_initial) < 1e-9:

@@ -216,4 +216,8 @@ def run_ingest(*, institution: str | None = None, limit: int | None = None) -> N
                         }) + "\n")
                 for err in result.errors:
                     log.warning("%s: %s", pdf.relpath, err)
+    from .repair_symbols import repair_symbols
+
+    repair_summary = repair_symbols()
+    log.info("Symbol repair after ingest: %s", repair_summary)
     log.info("Ingest finished. %d PDFs scanned.", seen)

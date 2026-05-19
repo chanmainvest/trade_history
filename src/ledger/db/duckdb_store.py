@@ -54,6 +54,15 @@ CREATE TABLE IF NOT EXISTS fx_rates (
     PRIMARY KEY (base, quote, rate_date)
 );
 
+CREATE TABLE IF NOT EXISTS symbol_profiles (
+    symbol      VARCHAR PRIMARY KEY,
+    short_name  VARCHAR,
+    sector      VARCHAR,
+    industry    VARCHAR,
+    quote_type  VARCHAR,
+    fetched_at  TIMESTAMP NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS financials_quarterly (
     symbol         VARCHAR NOT NULL,
     period_end     DATE NOT NULL,

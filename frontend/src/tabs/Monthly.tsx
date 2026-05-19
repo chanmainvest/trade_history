@@ -11,7 +11,7 @@ function fmtNum(n: number | null | undefined, dec = 2) {
 }
 
 type Col =
-  | "institution_code" | "account_number" | "symbol" | "asset_type"
+  | "institution_code" | "account_number" | "profile" | "symbol" | "asset_type"
   | "quantity" | "market_price" | "market_value" | "unrealized_pnl" | "currency";
 
 export default function Monthly() {
@@ -75,8 +75,8 @@ export default function Monthly() {
     }
     if (hideZero) rows = rows.filter((r) => Math.abs(r.quantity) > 1e-9);
     rows.sort((x, y) => {
-      const xv = (x as any)[sortCol];
-      const yv = (y as any)[sortCol];
+      const xv = sortCol === "profile" ? activePortfolio?.name : (x as any)[sortCol];
+      const yv = sortCol === "profile" ? activePortfolio?.name : (y as any)[sortCol];
       if (xv == null && yv == null) return 0;
       if (xv == null) return 1;
       if (yv == null) return -1;
@@ -88,7 +88,7 @@ export default function Monthly() {
         : String(yv).localeCompare(String(xv));
     });
     return rows;
-  }, [allRows, instFilter, acctFilter, hideZero, sortCol, sortDir]);
+  }, [allRows, instFilter, acctFilter, hideZero, sortCol, sortDir, activePortfolio?.name]);
 
   const totalsByCurrency: Record<string, number> = {};
   for (const r of filtered) {
@@ -147,6 +147,7 @@ export default function Monthly() {
             <tr>
               <th onClick={() => toggleSort("institution_code")}>{t("f.institution")}{arrow("institution_code")}</th>
               <th onClick={() => toggleSort("account_number")}>{t("th.account")}{arrow("account_number")}</th>
+              <th onClick={() => toggleSort("profile")}>{t("nav.portfolio")}{arrow("profile")}</th>
               <th onClick={() => toggleSort("symbol")}>{t("th.symbol")}{arrow("symbol")}</th>
               <th onClick={() => toggleSort("asset_type")}>{t("th.type")}{arrow("asset_type")}</th>
               <th className="num" onClick={() => toggleSort("quantity")}>{t("th.quantity")}{arrow("quantity")}</th>
@@ -169,6 +170,7 @@ export default function Monthly() {
                 <tr key={i} className={rowClass}>
                   <td>{r.institution_code}</td>
                   <td>{r.account_number}</td>
+                  <td>{activePortfolio?.name || "All accounts"}</td>
                   <td>{r.symbol}</td>
                   <td>{r.asset_type}{r.option_type ? ` ${r.option_type} ${fmtNum(r.option_strike, 2)} ${r.option_expiry || ""}` : ""}</td>
                   <td className="num">{fmtNum(r.quantity, 0)}</td>
@@ -188,6 +190,7 @@ export default function Monthly() {
               <tr key={`gone-${i}`} className="diff-del">
                 <td>{d.institution_code}</td>
                 <td>{d.account_number}</td>
+                <td>{activePortfolio?.name || "All accounts"}</td>
                 <td>{d.symbol}</td>
                 <td>{d.asset_type}</td>
                 <td className="num">{fmtNum(d.qty_a, 0)}</td>

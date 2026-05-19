@@ -59,12 +59,12 @@ export const api = {
       "/research/financials", { symbol, period }),
 
   vizSector: (p: { month_end?: string; account_id?: number[] } = {}) =>
-    getJSON<{ as_of_date: string | null; rows: { symbol: string; asset_type: string; currency: string; market_value: number }[] }>(
+    getJSON<{ as_of_date: string | null; rows: { symbol: string; asset_type: string; currency: string; market_value: number; sector?: string | null; industry?: string | null }[] }>(
       "/viz/holdings_by_sector", p),
   vizCorrelation: (p: { start: string; end: string; account_id?: number[] }) =>
-    getJSON<{ symbols: string[]; matrix: number[][] }>("/viz/correlation", p),
+    getJSON<{ symbols: string[]; matrix: number[][]; profiles?: Record<string, { sector?: string | null; industry?: string | null }> }>("/viz/correlation", p),
   vizRRG: (p: { benchmark?: string; window_days?: number; start?: string; end?: string; account_id?: number[] } = {}) =>
-    getJSON<{ frames: { date: string; points: { symbol: string; x: number; y: number }[] }[] }>(
+    getJSON<{ frames: { date: string; points: { symbol: string; x: number; y: number; sector?: string | null }[] }[] }>(
       "/viz/rrg", p),
 
   config: () => getJSON<UserConfig>("/config"),

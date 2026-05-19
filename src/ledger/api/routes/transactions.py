@@ -38,7 +38,8 @@ def list_transactions(
         "       t.net_amount, t.currency, t.description,",
         "       a.account_id, a.account_number, a.account_type, a.nickname,",
         "       i.code AS institution_code, i.display_name AS institution_name,",
-        "       inst.symbol, inst.asset_type, inst.option_expiry, inst.option_strike, inst.option_type",
+        "       COALESCE(inst.option_root, inst.symbol) AS symbol,",
+        "       inst.asset_type, inst.option_expiry, inst.option_strike, inst.option_type",
         "  FROM transactions t",
         "  JOIN accounts a ON a.account_id = t.account_id",
         "  JOIN institutions i ON i.institution_id = a.institution_id",
@@ -62,7 +63,7 @@ def list_transactions(
         params.extend(accts)
     syms = [s.upper() for s in _csv_list(symbol)]
     if syms:
-        sql.append(f" AND inst.symbol IN ({','.join('?' * len(syms))})")
+        sql.append(f" AND COALESCE(inst.option_root, inst.symbol) IN ({','.join('?' * len(syms))})")
         params.extend(syms)
     types = _csv_list(txn_type)
     if types:
@@ -95,7 +96,7 @@ def accounts() -> dict:
 def symbols() -> dict:
     with sqlite_db.session() as conn:
         rows = [dict(r) for r in conn.execute(
-            "SELECT DISTINCT symbol, asset_type, currency FROM instruments "
+            "SELECT DISTINCT COALESCE(option_root, symbol) AS symbol, asset_type, currency FROM instruments "
             "WHERE asset_type IN ('equity','etf','option','mutual_fund','bond') "
             "ORDER BY symbol"
         ).fetchall()]

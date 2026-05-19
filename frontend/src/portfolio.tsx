@@ -2,6 +2,10 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, Account, Portfolio, UserConfig } from "./api";
 import { I18nProvider, Lang, LANGS } from "./i18n";
+import flagUS from "./assets/flags/us.svg";
+import flagHK from "./assets/flags/hk.svg";
+import flagTW from "./assets/flags/tw.svg";
+import flagCN from "./assets/flags/cn.svg";
 
 type Ctx = {
   config: UserConfig | null;
@@ -15,6 +19,13 @@ type Ctx = {
 };
 
 const PortfolioCtx = createContext<Ctx | null>(null);
+
+const FLAG_ASSET: Record<Lang, string> = {
+  en: flagUS,
+  "zh-HK": flagHK,
+  "zh-TW": flagTW,
+  "zh-CN": flagCN,
+};
 
 const DEFAULT_CFG: UserConfig = {
   portfolios: [{ id: "all", name: "All accounts", account_ids: [] }],
@@ -87,17 +98,20 @@ export function PortfolioPicker() {
   const { config, activePortfolio, setActivePortfolio } = usePortfolio();
   if (!config) return null;
   return (
-    <select
-      value={activePortfolio?.id || ""}
-      onChange={(e) => setActivePortfolio(e.target.value)}
-      title="Active portfolio"
-    >
-      {config.portfolios.map((p) => (
-        <option key={p.id} value={p.id}>
-          {p.name}{p.account_ids.length ? ` (${p.account_ids.length})` : ""}
-        </option>
-      ))}
-    </select>
+    <span className="portfolio-picker-wrap">
+      <select
+        className="portfolio-picker"
+        value={activePortfolio?.id || ""}
+        onChange={(e) => setActivePortfolio(e.target.value)}
+        title="Active portfolio"
+      >
+        {config.portfolios.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}{p.account_ids.length ? ` (${p.account_ids.length})` : ""}
+          </option>
+        ))}
+      </select>
+    </span>
   );
 }
 
@@ -105,15 +119,19 @@ export function LanguagePicker() {
   const { config, saveConfig } = usePortfolio();
   const current = (config?.language ?? "en") as Lang;
   return (
-    <select
-      value={current}
-      onChange={(e) => saveConfig({ language: e.target.value as Lang })}
-      title="Language / 語言 / 语言"
-      style={{ minWidth: 110 }}
-    >
+    <div className="language-segment" role="group" aria-label="Language / 語言 / 语言">
       {LANGS.map((l) => (
-        <option key={l.code} value={l.code}>{l.flag} {l.label}</option>
+        <button
+          key={l.code}
+          type="button"
+          className={l.code === current ? "active" : ""}
+          title={l.label}
+          aria-pressed={l.code === current}
+          onClick={() => saveConfig({ language: l.code })}
+        >
+          <img className="flag" src={FLAG_ASSET[l.code]} alt="" aria-hidden="true" />
+        </button>
       ))}
-    </select>
+    </div>
   );
 }

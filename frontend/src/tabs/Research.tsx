@@ -7,11 +7,13 @@ import { plotlyTheme } from "../theme";
 import { useI18n } from "../i18n";
 
 type Freq = "D" | "W" | "M";
-type Period = "1m" | "3m" | "6m" | "1y" | "3y" | "5y" | "10y" | "max";
-const PERIODS: Period[] = ["1m", "3m", "6m", "1y", "3y", "5y", "10y", "max"];
+type Period = "1d" | "1w" | "1m" | "3m" | "6m" | "1y" | "3y" | "5y" | "10y" | "max";
+const PERIODS: Period[] = ["1d", "1w", "1m", "3m", "6m", "1y", "3y", "5y", "10y", "max"];
 
 function daysFor(p: Period): number {
   switch (p) {
+    case "1d": return 1;
+    case "1w": return 7;
     case "1m": return 30;
     case "3m": return 90;
     case "6m": return 180;

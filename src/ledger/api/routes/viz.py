@@ -14,6 +14,23 @@ def _duck() -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(DUCKDB_PATH), read_only=True)
 
 
+def _symbol_profiles(symbols: list[str]) -> dict[str, dict[str, str | None]]:
+    if not symbols:
+        return {}
+    con = _duck()
+    try:
+        ph = ",".join(["?"] * len(symbols))
+        rows = con.execute(
+            f"SELECT symbol, sector, industry FROM symbol_profiles WHERE symbol IN ({ph})",
+            symbols,
+        ).fetchall()
+    except Exception:
+        return {}
+    finally:
+        con.close()
+    return {r[0]: {"sector": r[1], "industry": r[2]} for r in rows}
+
+
 def _csv_list(v: str | None) -> list[str]:
     if not v:
         return []
@@ -76,6 +93,11 @@ def holdings_by_sector(
     ])
     with sqlite_db.session() as conn:
         rows = [dict(r) for r in conn.execute("\n".join(sql), params).fetchall()]
+    profiles = _symbol_profiles([r["symbol"] for r in rows])
+    for r in rows:
+        profile = profiles.get(r["symbol"], {})
+        r["sector"] = profile.get("sector")
+        r["industry"] = profile.get("industry")
     return {"as_of_date": as_of, "rows": rows}
 
 
@@ -119,7 +141,9 @@ def correlation(
         return {"symbols": symbols, "matrix": []}
     p = df.pivot(index="trade_date", columns="symbol", values="adj_close").pct_change()
     corr = p.corr().fillna(0.0)
-    return {"symbols": list(corr.columns), "matrix": corr.values.tolist()}
+    corr_symbols = list(corr.columns)
+    return {"symbols": corr_symbols, "matrix": corr.values.tolist(),
+            "profiles": _symbol_profiles(corr_symbols)}
 
 
 @router.get("/rrg")
@@ -173,6 +197,7 @@ def rrg(
         con.close()
     if df.empty:
         return {"frames": []}
+    profiles = _symbol_profiles(symbols)
     df["trade_date"] = pd.to_datetime(df["trade_date"])
     p = df.pivot(index="trade_date", columns="symbol", values="adj_close").sort_index()
     if benchmark not in p.columns:
@@ -189,7 +214,8 @@ def rrg(
         for sym in symbols:
             if sym == benchmark or pd.isna(row.get(sym)) or pd.isna(mom.get(sym)):
                 continue
-            items.append({"symbol": sym, "x": float(row[sym]), "y": float(mom[sym])})
+            items.append({"symbol": sym, "x": float(row[sym]), "y": float(mom[sym]),
+                          "sector": profiles.get(sym, {}).get("sector")})
         if items:
             frames.append({"date": date_.date().isoformat(), "points": items})
     return {"benchmark": benchmark, "window_days": window_days, "frames": frames}

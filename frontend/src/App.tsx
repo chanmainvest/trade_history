@@ -12,11 +12,19 @@ function ThemeToggle() {
   const { config, saveConfig } = usePortfolio();
   const { t } = useI18n();
   const theme = config?.theme || "dark";
+  const nextTheme = theme === "dark" ? "light" : "dark";
   return (
-    <button className="theme-toggle"
-            title={`${t("cfg.theme")}: ${theme === "dark" ? t("nav.theme.light") : t("nav.theme.dark")}`}
-            onClick={() => saveConfig({ theme: theme === "dark" ? "light" : "dark" })}>
-      {theme === "dark" ? `☀ ${t("nav.theme.light")}` : `🌙 ${t("nav.theme.dark")}`}
+    <button
+      className={`theme-switch ${theme === "dark" ? "is-dark" : "is-light"}`}
+      title={`${t("cfg.theme")}: ${nextTheme === "dark" ? t("nav.theme.dark") : t("nav.theme.light")}`}
+      aria-label={`${t("cfg.theme")}: ${nextTheme === "dark" ? t("nav.theme.dark") : t("nav.theme.light")}`}
+      onClick={() => saveConfig({ theme: nextTheme })}
+    >
+      <span className="theme-switch-track" aria-hidden="true">
+        <span className="theme-switch-glyph theme-switch-sun">☀</span>
+        <span className="theme-switch-glyph theme-switch-moon">☾</span>
+        <span className="theme-switch-knob" />
+      </span>
     </button>
   );
 }
@@ -33,10 +41,10 @@ export default function App() {
         <NavLink to="/viz"          className={({ isActive }) => isActive ? "active" : ""}>{t("nav.viz")}</NavLink>
         <NavLink to="/config"       className={({ isActive }) => isActive ? "active" : ""}>{t("nav.config")}</NavLink>
         <span className="spacer" />
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 12px" }}>
-          <span className="muted">{t("nav.portfolio")}:</span><PortfolioPicker />
-          <ThemeToggle />
+        <span className="top-controls">
+          <span className="portfolio-control"><span className="muted">{t("nav.portfolio")}:</span><PortfolioPicker /></span>
           <LanguagePicker />
+          <ThemeToggle />
         </span>
       </nav>
       <main>

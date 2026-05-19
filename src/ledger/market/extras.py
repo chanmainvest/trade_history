@@ -6,8 +6,10 @@ JSONL audit row to logs/market_scrape.jsonl.
 from __future__ import annotations
 
 import json
+import os
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from functools import lru_cache
 
 import duckdb
 import pandas as pd
@@ -29,6 +31,42 @@ def _ticker(yfsym: str):
 
 def _audit(jsonl, **row) -> None:
     jsonl.write(json.dumps(row) + "\n")
+
+
+# --------------------------------------------------------------- profiles
+def refresh_profiles(*, sleep_s: float = 1.0) -> None:
+    duckdb_store.init_db()
+    con = duckdb.connect(str(DUCKDB_PATH))
+    jsonl = jsonl_path("market_scrape").open("a", encoding="utf-8")
+    try:
+        for sym, ccy in _held_symbols():
+            yfsym = _yf_symbol(sym, ccy)
+            log.info("Profile %s", yfsym)
+            try:
+                t = _ticker(yfsym)
+                info = t.get_info() if hasattr(t, "get_info") else t.info
+            except Exception as e:
+                _audit(jsonl, kind="profile", symbol=sym, status="fail", err=str(e))
+                time.sleep(sleep_s)
+                continue
+            row = {
+                "symbol": sym,
+                "short_name": info.get("shortName") or info.get("longName"),
+                "sector": info.get("sector"),
+                "industry": info.get("industry"),
+                "quote_type": info.get("quoteType"),
+                "fetched_at": datetime.utcnow(),
+            }
+            df = pd.DataFrame([row])
+            con.execute("DELETE FROM symbol_profiles WHERE symbol = ?", [sym])
+            con.register("d", df)
+            con.execute("INSERT INTO symbol_profiles SELECT * FROM d")
+            con.unregister("d")
+            _audit(jsonl, kind="profile", symbol=sym, status="ok",
+                   sector=row["sector"], industry=row["industry"])
+            time.sleep(sleep_s)
+    finally:
+        jsonl.close(); con.close()
 
 
 # --------------------------------------------------------------- dividends
@@ -143,6 +181,103 @@ def _financials_frame(t, freq: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+_SEC_FACTS = {
+    "Revenues": "revenue",
+    "RevenueFromContractWithCustomerExcludingAssessedTax": "revenue",
+    "GrossProfit": "gross_profit",
+    "OperatingIncomeLoss": "operating_income",
+    "NetIncomeLoss": "net_income",
+    "EarningsPerShareBasic": "eps_basic",
+    "EarningsPerShareDiluted": "eps_diluted",
+    "Assets": "total_assets",
+    "Liabilities": "total_liab",
+    "StockholdersEquity": "total_equity",
+    "CashAndCashEquivalentsAtCarryingValue": "cash_and_equiv",
+    "LongTermDebtNoncurrent": "long_term_debt",
+    "NetCashProvidedByUsedInOperatingActivities": "op_cash_flow",
+    "FreeCashFlow": "free_cash_flow",
+    "WeightedAverageNumberOfDilutedSharesOutstanding": "shares_diluted",
+}
+
+
+def _sec_headers() -> dict[str, str]:
+    ua = os.environ.get("LEDGER_SEC_USER_AGENT", "ledger-local-app/0.1 email@example.com")
+    return {"User-Agent": ua, "Accept-Encoding": "gzip, deflate"}
+
+
+@lru_cache(maxsize=1)
+def _sec_company_tickers() -> dict:
+    import httpx
+
+    r = httpx.get("https://www.sec.gov/files/company_tickers.json",
+                  headers=_sec_headers(), timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
+def _sec_cik(symbol: str) -> str | None:
+    if "." in symbol or "-" in symbol:
+        return None
+    for item in _sec_company_tickers().values():
+        if str(item.get("ticker", "")).upper() == symbol.upper():
+            return str(item["cik_str"]).zfill(10)
+    return None
+
+
+def _sec_companyfacts(symbol: str, freq: str) -> pd.DataFrame:
+    """Free long-history fundamentals from SEC Company Facts.
+
+    ``freq`` is ``q`` or ``a``. SEC facts are only available for US filers;
+    non-US tickers simply return an empty frame and fall back to yfinance.
+    """
+    import httpx
+
+    cik = _sec_cik(symbol)
+    if not cik:
+        return pd.DataFrame()
+    url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+    r = httpx.get(url, headers=_sec_headers(), timeout=30)
+    r.raise_for_status()
+    facts = r.json().get("facts", {}).get("us-gaap", {})
+    rows: dict[date, dict] = {}
+    forms = {"10-K", "10-K/A"} if freq == "a" else {"10-Q", "10-Q/A"}
+    fps = {"FY"} if freq == "a" else {"Q1", "Q2", "Q3", "Q4"}
+    for sec_tag, col in _SEC_FACTS.items():
+        units = facts.get(sec_tag, {}).get("units", {})
+        for unit_rows in units.values():
+            for u in unit_rows:
+                if u.get("form") not in forms or u.get("fp") not in fps:
+                    continue
+                end = u.get("end")
+                val = u.get("val")
+                if not end or val is None:
+                    continue
+                try:
+                    period_end = pd.to_datetime(end).date()
+                    value = float(val)
+                except (TypeError, ValueError):
+                    continue
+                row = rows.setdefault(period_end, {"period_end": period_end})
+                row[col] = value
+                row["fiscal_year"] = u.get("fy") or period_end.year
+                if freq == "q":
+                    fp = str(u.get("fp", ""))
+                    row["fiscal_q"] = int(fp[1]) if fp.startswith("Q") and fp[1:].isdigit() else None
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(sorted(rows.values(), key=lambda x: x["period_end"], reverse=True))
+
+
+def _merge_financial_frames(yf_df: pd.DataFrame, sec_df: pd.DataFrame) -> pd.DataFrame:
+    if sec_df.empty:
+        return yf_df
+    if yf_df.empty:
+        return sec_df
+    out = pd.concat([yf_df, sec_df], ignore_index=True)
+    out["period_end"] = pd.to_datetime(out["period_end"]).dt.date
+    return out.drop_duplicates(subset=["period_end"], keep="first")
+
+
 def refresh_financials(*, sleep_s: float = 2.0) -> None:
     duckdb_store.init_db()
     con = duckdb.connect(str(DUCKDB_PATH))
@@ -155,6 +290,8 @@ def refresh_financials(*, sleep_s: float = 2.0) -> None:
                 t = _ticker(yfsym)
                 qf = _financials_frame(t, "q")
                 af = _financials_frame(t, "a")
+                qf = _merge_financial_frames(qf, _sec_companyfacts(sym, "q"))
+                af = _merge_financial_frames(af, _sec_companyfacts(sym, "a"))
             except Exception as e:
                 _audit(jsonl, kind="financials", symbol=sym, status="fail", err=str(e))
                 continue

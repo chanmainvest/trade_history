@@ -5,7 +5,7 @@ This file is the operating manual for AI coding agents working on
 
 > **Structural detail** — schemas, ingestion design, market-data pipeline,
 > per-institution parsing quirks — lives in
-> [schema/ARCHITECTURE.md](schema/ARCHITECTURE.md). **Read it before
+> [ARCHITECTURE.md](ARCHITECTURE.md). **Read it before
 > changing anything in `src/ledger/db/`, `src/ledger/parsers/`, or
 > `src/ledger/market/`.**
 >
@@ -24,11 +24,11 @@ This file is the operating manual for AI coding agents working on
    it goes to `quarantine_transactions` with `raw_line` + reason. No
    invented numbers, ever.
 4. **Native currency only at ingest.** FX conversion is presentation-only.
-   See [schema/ARCHITECTURE.md §1.1](schema/ARCHITECTURE.md).
+   See [ARCHITECTURE.md §1.1](ARCHITECTURE.md#11-why-multi-currency-everywhere).
 5. **Snapshots are ground truth.** Transactions are the audit trail.
    Holdings on a historical date come from the most recent
    `position_snapshots` for `(account, instrument)` on or before that
-   date. See [schema/ARCHITECTURE.md §1.4](schema/ARCHITECTURE.md).
+   date. See [ARCHITECTURE.md §1.4](ARCHITECTURE.md#14-transactions-snapshots-and-the-reconciliation-gap).
 
 ## 1. Tech stack
 
@@ -59,7 +59,7 @@ $env:LEDGER_PROFILE = "real"      # default — real Statements/ + data/
 
 Override individual paths with `LEDGER_DATA_DIR` and
 `LEDGER_STATEMENTS_DIR`. Full table in
-[schema/ARCHITECTURE.md §6](schema/ARCHITECTURE.md#6-workspace-profiles).
+[ARCHITECTURE.md §8](ARCHITECTURE.md#8-workspace-profiles).
 
 ## 4. Repository layout
 
@@ -77,7 +77,7 @@ src/ledger/
   api/app.py           FastAPI factory + routes/
 
 frontend/src/          React tabs + i18n + portfolio context + SmartSelect
-schema/ARCHITECTURE.md DB + ingestion + market doc
+ARCHITECTURE.md        DB + ingestion + market doc (Mermaid diagrams)
 doc/user-guide.md      human-facing user guide
 scripts/               one-off CLI helpers (e.g. build_example_data.py)
 example_data/          synthetic dataset (LEDGER_PROFILE=example)
@@ -97,7 +97,7 @@ every reported transaction must be defensible against the source.
 
 ## 6. When adding a new parser
 
-See [schema/ARCHITECTURE.md §3](schema/ARCHITECTURE.md#3-ingestion-pipeline).
+See [ARCHITECTURE.md §5](ARCHITECTURE.md#5-adding-a-parser-for-a-new-bank).
 Briefly:
 
 1. Add the institution code + folder name to `config.INSTITUTIONS`.
@@ -132,7 +132,7 @@ draft parser can be generated via the prompt skill in
 ## 8. Deferred items (do not silently fabricate; document if you tackle)
 
 These are explicit known gaps. If you implement one, update this list
-and the corresponding section in `ARCHITECTURE.md` / `user-guide.md`.
+and the corresponding section in [ARCHITECTURE.md](ARCHITECTURE.md) / [doc/user-guide.md](doc/user-guide.md).
 
 - **Initial holdings inference** — implemented via
   `uv run ledger ingest infer-initials`. For each (account, instrument)
@@ -140,13 +140,14 @@ and the corresponding section in `ARCHITECTURE.md` / `user-guide.md`.
   and dates the row one day before the earliest snapshot. Same logic for
   `initial_cash`. Idempotent. Inferred rows carry `notes LIKE 'inferred:%'`
   so user-curated rows are preserved on re-run.
-- **True transaction-based monthly snapshots.** Current implementation
-  forward-fills the snapshot table; brokers occasionally apply lot
-  adjustments that only appear on snapshots, so transaction replay is
-  not exact. See [schema/ARCHITECTURE.md §1.4](schema/ARCHITECTURE.md).
-- **Long-history fundamentals.** yfinance only goes back ~5 years.
-  Candidate sources documented in
-  [schema/ARCHITECTURE.md §4.4](schema/ARCHITECTURE.md).
+- **Daily holding reconstruction** — implemented in `/monthly/snapshot`.
+  The API uses the latest complete statement per account as a checkpoint,
+  then replays signed transactions after that checkpoint up to the requested
+  day. Before the first statement, it uses `initial_positions` plus
+  transactions. Broker snapshots remain the audit ground truth.
+- **Long-history fundamentals** — implemented for US-listed symbols via
+  SEC EDGAR Company Facts fallback in `ledger market scrape`. Non-US
+  securities still depend on yfinance unless another free source is added.
 - **PDF upload + new-statement-type extraction via LLM.** API endpoint
   `POST /statements/upload` exists as a stub; LLM-driven parser creation
   is not implemented. The Config tab has placeholder slots for
@@ -154,8 +155,10 @@ and the corresponding section in `ARCHITECTURE.md` / `user-guide.md`.
 - **Per-statement extraction explainer UI** (overlay of PDF → text dump →
   parsed transactions). Backend route `/statements/explain/{id}` is
   stubbed.
-- **Sector data for RRG / treemap.** Sector lookups are not in DuckDB;
-  RRG uses per-symbol palette colors as a placeholder.
+- **Sector data for RRG / treemap / correlation** — implemented via
+  `symbol_profiles` in DuckDB and `uv run ledger market refresh-profiles`
+  (also included in `refresh-all`). Colors cluster by sector when profile
+  metadata is available; unknown symbols fall back to neutral colors.
 - **TD legacy quarterly PDFs (2016-2017)** emit one statement per file
   (the first month); the bundled later months are not split.
 - **RBC annual performance reports** are recorded as empty annual
@@ -178,4 +181,4 @@ After `uv run ledger ingest run` against `Statements/`:
 - TD 2025-12 USD statement reconciles to portfolio total within $1.
 
 For full per-institution quirks see
-[schema/ARCHITECTURE.md §3.4](schema/ARCHITECTURE.md).
+[ARCHITECTURE.md §4.6](ARCHITECTURE.md#46-per-institution-format-notes).

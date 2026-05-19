@@ -10,5 +10,10 @@
   "theme": "dark",
   "display_currency": "CAD",
   "hide_money": false,
-  "language": "zh-HK"
+  "language": "en",
+  "llm_keys": {
+    "openai": "",
+    "anthropic": "",
+    "google": ""
+  }
 }

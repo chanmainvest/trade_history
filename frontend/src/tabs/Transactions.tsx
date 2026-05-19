@@ -116,6 +116,19 @@ export default function Transactions() {
         )}
       </div>
 
+      {txnsQ.isLoading && <p className="muted">Loading transactions…</p>}
+      {txnsQ.isError && (
+        <div className="card status-error">
+          Transactions API is not responding. Start the backend with
+          <code> uv run ledger serve </code> and reload this page.
+        </div>
+      )}
+      {!txnsQ.isLoading && !txnsQ.isError && (txnsQ.data?.rows.length ?? 0) === 0 && (
+        <div className="card muted">
+          No transactions match the current filters.
+        </div>
+      )}
+
       <div className="card" style={{ overflow: "auto", maxHeight: "calc(100vh - 220px)" }}>
         <table>
           <thead>

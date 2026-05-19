@@ -151,6 +151,56 @@ def ingest_infer_initials() -> None:
     click.echo(f"Inferred {out['positions']} initial positions, {out['cash']} cash rows.")
 
 
+@ingest.command("repair-symbols")
+def ingest_repair_symbols() -> None:
+    """Repair stale synthetic instruments where resolvable."""
+    from .ingest.repair_symbols import repair_symbols
+
+    out = repair_symbols()
+    leading = out["leading_verbs"]
+    options = out["options"]
+    option_transactions = out["option_transactions"]
+    positions = out["positions"]
+    transactions = out["transactions"]
+    taxes = out["tax_withholding"]
+    click.echo(
+        f"Repaired {leading['repaired']} leading-verb symbols; "
+        f"skipped {leading['skipped']} unresolved rows."
+    )
+    for ex in leading["examples"]:
+        click.echo(f"  txn {ex['transaction_id']}: {ex['old_symbol']} -> {ex['new_symbol']}")
+    click.echo(
+        f"Backfilled {options['repaired']} option roots; "
+        f"skipped {options['skipped']} unresolved option instruments."
+    )
+    for ex in options["examples"]:
+        click.echo(f"  instrument {ex['instrument_id']}: {ex['old_symbol']} -> {ex['new_root']}")
+    click.echo(
+        f"Repaired {option_transactions['repaired']} option transaction instruments; "
+        f"skipped {option_transactions['skipped']} unresolved option transactions."
+    )
+    for ex in option_transactions["examples"]:
+        click.echo(f"  txn {ex['transaction_id']}: {ex['old_symbol']} -> {ex['new_symbol']}")
+    click.echo(
+        f"Repaired {positions['repaired']} holding snapshot symbols; "
+        f"skipped {positions['skipped']} unresolved snapshots."
+    )
+    for ex in positions["examples"]:
+        click.echo(f"  snapshot {ex['snapshot_id']}: {ex['old_symbol']} -> {ex['new_symbol']}")
+    click.echo(
+        f"Repaired {transactions['repaired']} transaction symbols from names/holdings; "
+        f"skipped {transactions['skipped']} unresolved rows."
+    )
+    for ex in transactions["examples"]:
+        click.echo(f"  txn {ex['transaction_id']}: {ex['old_symbol']} -> {ex['new_symbol']}")
+    click.echo(
+        f"Repaired {taxes['repaired']} tax-withholding symbols from nearby dividends; "
+        f"skipped {taxes['skipped']} unresolved tax rows."
+    )
+    for ex in taxes["examples"]:
+        click.echo(f"  txn {ex['transaction_id']}: {ex['old_symbol']} -> {ex['new_symbol']}")
+
+
 # ----------------------------------------------------------------------- market
 @main.group()
 def market() -> None:
@@ -176,6 +226,12 @@ def market_refresh_dividends() -> None:
 def market_refresh_splits() -> None:
     from .market.extras import refresh_splits
     refresh_splits()
+
+
+@market.command("refresh-profiles")
+def market_refresh_profiles() -> None:
+    from .market.extras import refresh_profiles
+    refresh_profiles()
 
 
 @market.command("refresh-financials")
@@ -217,10 +273,12 @@ def market_refresh_all(lookback_years: int) -> None:
         refresh_earnings,
         refresh_financials,
         refresh_fx,
+        refresh_profiles,
         refresh_splits,
     )
     from .market.scrape import refresh_market_data
     refresh_market_data(lookback_years=lookback_years)
+    refresh_profiles()
     refresh_dividends()
     refresh_splits()
     refresh_financials()

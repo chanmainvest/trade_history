@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Plot from "react-plotly.js";
 import { api } from "../api";
 import { usePortfolio } from "../portfolio";
+import { SmartSelect } from "../SmartSelect";
 import { plotlyTheme } from "../theme";
 import { useI18n } from "../i18n";
 
@@ -23,12 +24,48 @@ const CORR_COLORSCALE: [number, string][] = [
   [1.0,  "rgb(200,50,50)"],    // strong positive — red
 ];
 
+const SECTOR_COLORS: Record<string, string> = {
+  "Technology": "#3A7BD5",
+  "Healthcare": "#2BBF73",
+  "Financial Services": "#8B5CF6",
+  "Consumer Cyclical": "#F58518",
+  "Consumer Defensive": "#6AA84F",
+  "Communication Services": "#D65DB1",
+  "Industrials": "#00A6A6",
+  "Energy": "#C98C18",
+  "Utilities": "#4B9CD3",
+  "Real Estate": "#A97155",
+  "Basic Materials": "#7A9E3D",
+  "ETF": "#64748B",
+  "Unknown": "#64748B",
+};
+
+function shade(hex: string, amount: number) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.max(0, Math.min(255, (n >> 16) + amount));
+  const g = Math.max(0, Math.min(255, ((n >> 8) & 255) + amount));
+  const b = Math.max(0, Math.min(255, (n & 255) + amount));
+  return `#${[r, g, b].map((x) => x.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function sectorColor(symbol: string, sector: string | null | undefined, symbols: string[]) {
+  const group = sector || "Unknown";
+  const base = SECTOR_COLORS[group] || SECTOR_COLORS.Unknown;
+  const peers = symbols.filter((s) => s !== symbol).length;
+  const idx = symbols.indexOf(symbol);
+  if (idx < 0 || peers <= 0) return base;
+  const offset = -22 + (44 * idx) / Math.max(1, peers);
+  return shade(base, Math.round(offset));
+}
+
 export default function Viz() {
-  const { activeAccountIds, activePortfolio } = usePortfolio();
+  const { activeAccountIds, activePortfolio, accounts } = usePortfolio();
   const { t } = useI18n();
   const [view, setView] = useState<View>("rrg");
   const [benchmark, setBenchmark] = useState("SPY");
   const [windowDays, setWindowDays] = useState(60);
+  const [institutions, setInstitutions] = useState<string[]>([]);
+  const [accountIds, setAccountIds] = useState<string[]>([]);
 
   const latestQ = useQuery({ queryKey: ["latest-date"], queryFn: api.latestDate });
   const latest = latestQ.data?.latest || todayISO();
@@ -39,7 +76,27 @@ export default function Viz() {
   const [corrStart, setCorrStart] = useState(isoMinusYears(1));
   const [corrEnd, setCorrEnd] = useState(todayISO());
 
-  const acctFilter = activeAccountIds.length > 0 ? activeAccountIds : undefined;
+  const instOpts = useMemo(() => Array.from(new Set(accounts.map((a) => a.institution_code)))
+    .sort().map((c) => ({ value: c, label: c })), [accounts]);
+  const acctOpts = useMemo(() => accounts.map((a) => ({
+    value: String(a.account_id),
+    label: `${a.institution_code} • ${a.account_number}`,
+    hint: a.base_currency,
+  })), [accounts]);
+
+  const acctFilter = useMemo(() => {
+    if (accountIds.length > 0) return accountIds.map((x) => parseInt(x, 10));
+    let ids = activeAccountIds.length > 0
+      ? activeAccountIds
+      : accounts.map((a) => a.account_id);
+    if (institutions.length > 0) {
+      const allowed = new Set(institutions);
+      ids = ids.filter((id) => allowed.has(accounts.find((a) => a.account_id === id)?.institution_code || ""));
+    }
+    if (ids.length === 0) return undefined;
+    if (activeAccountIds.length === 0 && institutions.length === 0 && ids.length === accounts.length) return undefined;
+    return ids;
+  }, [accountIds, activeAccountIds, accounts, institutions]);
 
   const sectorQ = useQuery({
     queryKey: ["sector", effectiveMonthEnd, acctFilter],
@@ -64,6 +121,8 @@ export default function Viz() {
         {(["rrg", "treemap", "correlation"] as View[]).map((v) =>
           <button key={v} className={v === view ? "active" : ""} onClick={() => setView(v)}>{t(`viz.${v}`)}</button>
         )}
+        <SmartSelect label={t("f.institution")} options={instOpts} value={institutions} onChange={setInstitutions} />
+        <SmartSelect label={t("f.account")} options={acctOpts} value={accountIds} onChange={setAccountIds} />
       </div>
 
       {view === "rrg" && (
@@ -86,6 +145,7 @@ export default function Viz() {
           setStart={setCorrStart} setEnd={setCorrEnd}
           symbols={corrQ.data?.symbols ?? []}
           matrix={corrQ.data?.matrix ?? []}
+          profiles={corrQ.data?.profiles ?? {}}
         />
       )}
     </>
@@ -96,28 +156,34 @@ function Treemap({ monthEnd, setMonthEnd, actualDate, rows, loading }: {
   monthEnd: string;
   setMonthEnd: (s: string) => void;
   actualDate: string | null | undefined;
-  rows: { symbol: string; asset_type: string; market_value: number }[];
+  rows: { symbol: string; asset_type: string; market_value: number; sector?: string | null }[];
   loading: boolean;
 }) {
   const theme = plotlyTheme();
-  const { labels, parents, values } = useMemo(() => {
+  const { labels, parents, values, colors } = useMemo(() => {
     const labels: string[] = [];
     const parents: string[] = [];
     const values: number[] = [];
+    const colors: string[] = [];
     const groupTotals: Record<string, number> = {};
+    const symbolsByGroup: Record<string, string[]> = {};
     for (const r of rows) {
-      groupTotals[r.asset_type] =
-        (groupTotals[r.asset_type] || 0) + (r.market_value || 0);
+      const group = r.sector || r.asset_type;
+      groupTotals[group] = (groupTotals[group] || 0) + (r.market_value || 0);
+      symbolsByGroup[group] = [...(symbolsByGroup[group] || []), r.symbol].sort();
     }
     for (const g of Object.keys(groupTotals)) {
       labels.push(g); parents.push(""); values.push(groupTotals[g]);
+      colors.push(SECTOR_COLORS[g] || SECTOR_COLORS.Unknown);
     }
     for (const r of rows) {
+      const group = r.sector || r.asset_type;
       labels.push(r.symbol);
-      parents.push(r.asset_type);
+      parents.push(group);
       values.push(r.market_value || 0);
+      colors.push(sectorColor(r.symbol, group, symbolsByGroup[group] || [r.symbol]));
     }
-    return { labels, parents, values };
+    return { labels, parents, values, colors };
   }, [rows]);
 
   return (
@@ -145,7 +211,7 @@ function Treemap({ monthEnd, setMonthEnd, actualDate, rows, loading }: {
             branchvalues: "total",
             textinfo: "label+value+percent parent",
             marker: {
-              colors: values, colorscale: "Blues", showscale: false,
+              colors, showscale: false,
               line: { width: 1, color: theme.paper_bgcolor },
             },
             hovertemplate: "<b>%{label}</b><br>%{value:$,.0f}<br>%{percentParent:.1%} of %{parent}<extra></extra>",
@@ -161,23 +227,31 @@ function Treemap({ monthEnd, setMonthEnd, actualDate, rows, loading }: {
   );
 }
 
-function CorrelationView({ start, end, setStart, setEnd, symbols, matrix }: {
+function CorrelationView({ start, end, setStart, setEnd, symbols, matrix, profiles }: {
   start: string; end: string;
   setStart: (s: string) => void; setEnd: (s: string) => void;
   symbols: string[]; matrix: number[][];
+  profiles: Record<string, { sector?: string | null; industry?: string | null }>;
 }) {
   const theme = plotlyTheme();
   const [sortBy, setSortBy] = useState<string | null>(null);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+
+  function toggleSym(sym: string) {
+    const next = new Set(hidden);
+    if (next.has(sym)) next.delete(sym); else next.add(sym);
+    setHidden(next);
+  }
 
   const order = useMemo(() => {
-    if (!sortBy || !symbols.includes(sortBy)) return symbols.map((_, i) => i);
+    const visible = symbols.map((_, i) => i).filter((i) => !hidden.has(symbols[i]));
+    if (!sortBy || !symbols.includes(sortBy)) return visible;
     const idx = symbols.indexOf(sortBy);
-    if (idx < 0) return symbols.map((_, i) => i);
+    if (idx < 0) return visible;
     // Sort symbols by their correlation with the chosen one, descending
-    return symbols
-      .map((_, i) => i)
+    return visible
       .sort((a, b) => (matrix[b]?.[idx] ?? 0) - (matrix[a]?.[idx] ?? 0));
-  }, [sortBy, symbols, matrix]);
+  }, [sortBy, symbols, matrix, hidden]);
 
   const sortedSymbols = order.map((i) => symbols[i]);
   const sortedMatrix = order.map((i) => order.map((j) => matrix[i]?.[j] ?? 0));
@@ -196,8 +270,20 @@ function CorrelationView({ start, end, setStart, setEnd, symbols, matrix }: {
         </label>
         <span className="muted">{symbols.length} symbols</span>
       </div>
+      {symbols.length > 0 && (
+        <div className="checkbox-row">
+          {symbols.map((s) => (
+            <label key={s} style={{ borderBottom: `2px solid ${sectorColor(s, profiles[s]?.sector, symbols)}` }}>
+              <input type="checkbox" checked={!hidden.has(s)} onChange={() => toggleSym(s)} />
+              {s}
+            </label>
+          ))}
+        </div>
+      )}
       {symbols.length === 0 ? (
         <p className="muted">No correlation data for this range.</p>
+      ) : sortedSymbols.length === 0 ? (
+        <p className="muted">All symbols are hidden.</p>
       ) : (
         <Plot
           data={[{
@@ -219,6 +305,10 @@ function CorrelationView({ start, end, setStart, setEnd, symbols, matrix }: {
           }}
           config={{ responsive: false }}
           style={{ display: "block", margin: "0 auto" }}
+          onClick={(e) => {
+            const clicked = e?.points?.[0]?.x;
+            if (clicked) setSortBy(String(clicked));
+          }}
         />
       )}
     </div>
@@ -228,7 +318,7 @@ function CorrelationView({ start, end, setStart, setEnd, symbols, matrix }: {
 function RRG({ benchmark, setBenchmark, windowDays, setWindowDays, frames }: {
   benchmark: string; setBenchmark: (s: string) => void;
   windowDays: number; setWindowDays: (n: number) => void;
-  frames: { date: string; points: { symbol: string; x: number; y: number }[] }[];
+  frames: { date: string; points: { symbol: string; x: number; y: number; sector?: string | null }[] }[];
 }) {
   const theme = plotlyTheme();
   const [idx, setIdx] = useState(0);
@@ -256,16 +346,35 @@ function RRG({ benchmark, setBenchmark, windowDays, setWindowDays, frames }: {
     return Array.from(s).sort();
   }, [frames]);
 
+  const sectorBySymbol = useMemo(() => {
+    const out: Record<string, string | null> = {};
+    for (const fr of frames) {
+      for (const p of fr.points) {
+        if (p.sector && !out[p.symbol]) out[p.symbol] = p.sector;
+      }
+    }
+    return out;
+  }, [frames]);
+
+  const symbolsBySector = useMemo(() => {
+    const out: Record<string, string[]> = {};
+    for (const s of allSymbols) {
+      const sector = sectorBySymbol[s] || "Unknown";
+      out[sector] = [...(out[sector] || []), s].sort();
+    }
+    return out;
+  }, [allSymbols, sectorBySymbol]);
+
   function toggleSym(s: string) {
     const next = new Set(hidden);
     if (next.has(s)) next.delete(s); else next.add(s);
     setHidden(next);
   }
 
-  // Build a stable color per symbol (Plotly's default palette).
-  const PALETTE = ["#3A7BD5", "#2BBF73", "#D4A843", "#E35D6A", "#9966FF",
-                   "#7AAFFF", "#F58518", "#54A24B", "#B279A2", "#FF9DA6"];
-  const colorOf = (s: string) => PALETTE[allSymbols.indexOf(s) % PALETTE.length];
+  const colorOf = (s: string) => {
+    const sector = sectorBySymbol[s] || "Unknown";
+    return sectorColor(s, sector, symbolsBySector[sector] || allSymbols);
+  };
 
   // Build tail traces: one trace per visible symbol with last N points up to idx
   const tailTraces = useMemo(() => {

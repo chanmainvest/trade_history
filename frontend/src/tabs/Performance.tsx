@@ -7,8 +7,8 @@ import { SmartSelect } from "../SmartSelect";
 import { plotlyTheme } from "../theme";
 import { useI18n } from "../i18n";
 
-type Period = "1m" | "3m" | "6m" | "1y" | "3y" | "5y" | "10y" | "max" | "custom";
-const PERIODS: Period[] = ["1m", "3m", "6m", "1y", "3y", "5y", "10y", "max", "custom"];
+type Period = "1d" | "1w" | "1m" | "3m" | "6m" | "1y" | "3y" | "5y" | "10y" | "max" | "custom";
+const PERIODS: Period[] = ["1d", "1w", "1m", "3m", "6m", "1y", "3y", "5y", "10y", "max", "custom"];
 
 function isoDaysAgo(days: number) {
   const d = new Date(); d.setDate(d.getDate() - days);
@@ -16,6 +16,8 @@ function isoDaysAgo(days: number) {
 }
 function periodStart(p: Period): string {
   switch (p) {
+    case "1d": return isoDaysAgo(1);
+    case "1w": return isoDaysAgo(7);
     case "1m": return isoDaysAgo(30);
     case "3m": return isoDaysAgo(90);
     case "6m": return isoDaysAgo(180);
@@ -122,13 +124,14 @@ export default function Performance() {
         )}
         <SmartSelect label={t("f.institution")} options={instOpts} value={institutions} onChange={setInstitutions} />
         <SmartSelect label={t("f.account")} options={acctOpts} value={accountIds} onChange={setAccountIds} />
-        <label>{t("cfg.display_currency")}:&nbsp;
-          <select value={showCcy} onChange={(e) => setShowCcy(e.target.value as any)}>
-            <option value="both">Both</option>
-            <option value="CAD">CAD</option>
-            <option value="USD">USD</option>
-          </select>
-        </label>
+        <span className="segmented-control" role="group" aria-label={t("cfg.display_currency")}>
+          {(["both", "CAD", "USD"] as const).map((ccy) => (
+            <button key={ccy} className={showCcy === ccy ? "active" : ""}
+                    onClick={() => setShowCcy(ccy)}>
+              {ccy === "both" ? "Both" : ccy}
+            </button>
+          ))}
+        </span>
         <label>
           <input type="checkbox" checked={normalize || hideMoney}
                  disabled={hideMoney}

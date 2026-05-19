@@ -26,6 +26,7 @@ from .helpers import (
     _option_mon,
     parse_money,
 )
+from .name_resolver import resolve_ticker, synthetic_symbol
 from .registry import register
 from .types import (
     ParsedAccount,
@@ -261,7 +262,7 @@ def _instr_from_desc(desc: str, currency: str) -> ParsedInstrument:
     )
     if om:
         cp_word, root, mon, dd, yr, strike_s = om.groups()
-        cp = "C" if cp_word.upper() == "CALL" else "P"
+        cp = "CALL" if cp_word.upper() == "CALL" else "PUT"
         _MON = {"JAN":1,"FEB":2,"MAR":3,"APR":4,"MAY":5,"JUN":6,
                 "JUL":7,"AUG":8,"SEP":9,"OCT":10,"NOV":11,"DEC":12}
         try:
@@ -279,6 +280,42 @@ def _instr_from_desc(desc: str, currency: str) -> ParsedInstrument:
             option_strike=strike, option_type=cp, option_multiplier=100,
             name=desc.strip()[:120],
         )
+    om = re.match(
+        r"^\s*(CALL|PUT)\s+\.?([A-Z][A-Z0-9.\-]{0,8})\s+"
+        r"(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+"
+        r"(\d{1,2})\s+(\d{4})\s*\|\s*([\d.,]+)",
+        desc.strip(), re.IGNORECASE,
+    )
+    if om:
+        cp_word, root, mon, dd, yr, strike_s = om.groups()
+        cp = "CALL" if cp_word.upper() == "CALL" else "PUT"
+        _MON = {"JAN":1,"FEB":2,"MAR":3,"APR":4,"MAY":5,"JUN":6,
+                "JUL":7,"AUG":8,"SEP":9,"OCT":10,"NOV":11,"DEC":12}
+        try:
+            from datetime import date as _date
+            expiry = _date(int(yr), _MON[mon.upper()], int(dd)).isoformat()
+        except (KeyError, ValueError):
+            expiry = None
+        try:
+            strike = float(strike_s.replace(",", ""))
+        except ValueError:
+            strike = None
+        return ParsedInstrument(
+            asset_type="option", symbol=root.upper(), currency=currency,
+            option_root=root.upper(), option_expiry=expiry,
+            option_strike=strike, option_type=cp, option_multiplier=100,
+            name=desc.strip()[:120],
+        )
+    om = re.match(r"^\s*(CALL|PUT)\s+\.?([A-Z][A-Z0-9.\-]{0,8})\b", desc.strip(), re.IGNORECASE)
+    if om:
+        cp_word, root = om.groups()
+        cp = "CALL" if cp_word.upper() == "CALL" else "PUT"
+        clean_root = root.upper().rstrip("0123456789") if "ADJ" in desc.upper() else root.upper()
+        return ParsedInstrument(
+            asset_type="option", symbol=clean_root, currency=currency,
+            option_root=clean_root, option_type=cp, option_multiplier=100,
+            name=desc.strip()[:120],
+        )
     m = RE_PARENS_TICKER.search(desc)
     if m:
         sym, exch = m.group(1), m.group(2)
@@ -289,6 +326,13 @@ def _instr_from_desc(desc: str, currency: str) -> ParsedInstrument:
             asset_type=atype, symbol=sym, currency=currency,
             exchange=exch, name=desc.strip()[:120],
         )
+    known = resolve_ticker(desc, currency)
+    if known is not None:
+        ticker, asset_type = known
+        return ParsedInstrument(
+            asset_type=asset_type, symbol=ticker, currency=currency,
+            name=desc.strip()[:120],
+        )
     # mutual funds at CIBC often have no ticker; build a synthetic name-symbol.
     # Strip trailing quantity / arrow / percent fragments before underscoring,
     # so we don't end up with garbage like "ARM_HOLDINGS_PLC_-2,000_↑↑".
@@ -296,7 +340,7 @@ def _instr_from_desc(desc: str, currency: str) -> ParsedInstrument:
     cleaned = re.sub(r"[↑↓\u2191\u2193]+", "", cleaned)
     cleaned = re.sub(r"\s[-+]?\d[\d,]*\.?\d*\s*$", "", cleaned)  # trailing qty
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    sym = re.sub(r"\s+", "_", cleaned)[:40] or "UNKNOWN"
+    sym = synthetic_symbol(cleaned, max_len=40)
     atype = "mutual_fund" if "FUND" in desc.upper() else "equity"
     return ParsedInstrument(
         asset_type=atype, symbol=sym, currency=currency, name=desc.strip()[:120],
@@ -308,11 +352,6 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                           stmt: ParsedStatement) -> None:
     lines = body.splitlines()
     i = 0
-    pending_desc: list[str] = []
-    pending_date: str | None = None
-    pending_verb: str | None = None
-    pending_raw: str | None = None
-
     def flush():
         # Generic flush is handled inline; this is a placeholder for clarity.
         return
@@ -389,9 +428,6 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                     net_amount=parse_money(amt_s), currency=currency,
                     description=rest, raw_line=ln,
                 ))
-                pending_desc = []
-                pending_date = None
-                pending_verb = None
                 continue
 
             # Stock / dividend / fee / interest line: extract trailing numbers.

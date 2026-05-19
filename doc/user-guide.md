@@ -7,7 +7,7 @@ family's accounts.
 
 This guide is written for **humans**. The companion AI-operation rules
 live in [AGENTS.md](../AGENTS.md), and the deep technical reference is
-[schema/ARCHITECTURE.md](../schema/ARCHITECTURE.md).
+[ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ---
 
@@ -85,8 +85,18 @@ just close the terminal.
    uv run ledger market scrape
    ```
 
-   This calls yfinance — be patient and don't run it on a flaky link.
-   Re-running is safe; it's an upsert.
+  This calls yfinance and, for US-listed fundamentals, the free SEC
+  EDGAR Company Facts API. Be patient and don't run it on a flaky link.
+  Re-running is safe; it's an upsert.
+
+  To fetch sector/profile metadata used by Visualization colors, run:
+
+  ```powershell
+  uv run ledger market refresh-profiles
+  ```
+
+  `uv run ledger market refresh-all` includes profiles, prices,
+  dividends, splits, financials, earnings, and FX in one pass.
 
 4. *(Optional but recommended)* Back-fill positions that pre-date your
    earliest statement:
@@ -99,7 +109,16 @@ just close the terminal.
    Monthly / Performance views know what you were already holding when
    our records start. Idempotent.
 
-5. Reload the browser. The Transactions tab should now have data.
+5. *(Optional after parser upgrades)* Repair already-ingested legacy
+  symbols without deleting PDFs or re-ingesting everything. The repair
+  uses known ticker mappings first, then matches transactions to holdings
+  from the same statement where the PDF only printed a security name:
+
+  ```powershell
+  uv run ledger ingest repair-symbols
+  ```
+
+6. Reload the browser. The Transactions tab should now have data.
 
 ## 4. The tabs
 
@@ -122,13 +141,15 @@ Click a symbol cell to jump to the Research tab.
 Default view: holdings as of the most recent statement date in the
 database, across all accounts in the active portfolio.
 
-- **As of** date — pick any day; the app uses the most recent snapshot
-  on or before it.
+- **As of** date — pick any day; the app starts from the latest complete
+  account statement checkpoint and replays transactions after it. Before
+  the first statement, it uses inferred/manual initial holdings.
 - **Compare to** — picking a second date adds a `Δ` column. Rows where
   the position grew are tinted green, rows that shrank are tinted red,
   in git-diff style. Positions that disappeared between the two dates
   appear at the bottom.
-- Columns sortable; institution / account chips are clickable filters.
+- Columns sortable; institution / account / profile are visible, and the
+  filters can narrow the table to specific institutions or accounts.
 
 ### 4.3 Performance
 
@@ -143,7 +164,7 @@ Total portfolio market value over time.
 
 The chart no longer zig-zags between accounts whose statement dates
 don't line up — see
-[schema/ARCHITECTURE.md §1.4](../schema/ARCHITECTURE.md) for the
+[ARCHITECTURE.md §1.4](../ARCHITECTURE.md#14-transactions-snapshots-and-the-reconciliation-gap) for the
 forward-fill rationale.
 
 ### 4.4 Research
@@ -157,24 +178,28 @@ Per-symbol deep dive.
   equity / ETF trades, **hollow triangles** = option trades, so you
   can tell them apart at a glance.
 - **Financials** chart underneath — quarterly or annual, per-metric
-  show/hide. (Note: yfinance only gives ~5 years; see deferred items
-  in AGENTS.md for plans to extend.)
+  show/hide. yfinance data is extended with SEC EDGAR Company Facts for
+  US-listed symbols when available.
 - **Trade history** table at the bottom lists every transaction the
   app has for this symbol, including account / description.
 
 ### 4.5 Visualisations
 
-Three views, all filtered by the active portfolio:
+Three views, all filtered by the active portfolio, with institution and
+account filters inside the tab:
 
 - **RRG (Relative Rotation Graph)** — animated, with adjustable trail.
-  Each symbol gets a stable color. Use the checkbox row below the chart
-  to hide individual symbols.
+  Symbols in the same sector use related colors when profile metadata is
+  available. Use the checkbox row below the chart to hide individual
+  symbols.
 - **Treemap** — holdings grouped by asset type, sized by market value.
-  Defaults to the latest snapshot date (so it's never blank unless you
-  actually have no holdings).
+  With sector metadata, holdings group by sector; otherwise they fall
+  back to asset type. Defaults to the latest snapshot date (so it's never
+  blank unless you actually have no holdings).
 - **Correlation matrix** — square heatmap using the same color scale as
-  `portfolio_dashboard`. **Sort-by** dropdown reorders both axes by
-  correlation against the chosen symbol.
+  `portfolio_dashboard`. **Sort-by** dropdown or clicking a ticker in the
+  chart reorders both axes by correlation against that symbol; checkboxes
+  hide/show individual symbols and use sector-colored accents.
 
 ### 4.6 Settings
 
@@ -209,8 +234,8 @@ slots in Settings are placeholders. See `AGENTS.md` deferred items.
 | Vite crashes with `Failed to resolve` on Windows | Vite realpath'd the workspace onto another drive | Already fixed via `resolve.preserveSymlinks: true` in `frontend/vite.config.ts` |
 | Treemap is blank | Picked a date with no snapshot | Pick a date ≥ your earliest statement; the API falls back to the latest available |
 | Performance chart goes flat to zero | One account's data gap | Forward-fill is on by default; if you really want raw, pass `forward_fill=false` to `/api/performance/total` |
-| `BOUGHT` appears as a symbol in RBC rows | Pre-fix bug | Re-ingest after pulling. The parser now strips leading verbs and applies a small name-to-ticker map (e.g. iShares 20+ → TLT) |
-| Empty option symbol on a CIBC `option_expiration` row | Pre-fix bug | Re-ingest. The parser now recognizes `CALL ROOT MON DD YYYY STRIKE` shapes |
+| `BOUGHT` appears as a symbol in RBC rows | Pre-fix bug | Run `uv run ledger ingest repair-symbols` or re-ingest after pulling. The parser now strips leading verbs and applies a small name-to-ticker map (e.g. iShares 20+ → TLT) |
+| Empty option symbol on a CIBC `option_expiration` row | Pre-fix bug | Run `uv run ledger ingest repair-symbols` or re-ingest. The parser now recognizes `CALL ROOT MON DD YYYY STRIKE` shapes |
 
 ## 7. Data privacy
 
@@ -222,7 +247,7 @@ slots in Settings are placeholders. See `AGENTS.md` deferred items.
 
 ## 8. Where to learn more
 
-- [schema/ARCHITECTURE.md](../schema/ARCHITECTURE.md) — schemas,
+- [ARCHITECTURE.md](../ARCHITECTURE.md) — schemas,
   ingestion design, market-data pipeline, parser quirks.
 - [AGENTS.md](../AGENTS.md) — rules for AI agents editing this repo.
 - [example_data/README.md](../example_data/README.md) — what's in the

@@ -80,12 +80,121 @@ nav.tabs a {
 }
 nav.tabs a.active { color: var(--fg-strong); border-bottom-color: var(--accent); }
 nav.tabs .spacer { flex: 1; }
-nav.tabs .theme-toggle {
-  background: var(--panel-2); color: var(--warn);
-  border: 1px solid var(--border); border-radius: 4px;
-  padding: 4px 10px; cursor: pointer; margin: 6px 0;
+.top-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
 }
-nav.tabs .theme-toggle:hover { background: var(--accent); color: white; }
+.portfolio-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.portfolio-picker-wrap { position: relative; display: inline-flex; }
+.portfolio-picker {
+  appearance: none;
+  min-width: 170px;
+  height: 38px;
+  padding: 0 38px 0 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--fg-dim) 50%) right 18px top 17px / 7px 7px no-repeat,
+    linear-gradient(135deg, var(--fg-dim) 50%, transparent 50%) right 12px top 17px / 7px 7px no-repeat,
+    var(--bg-2);
+  color: var(--fg-strong);
+  font: inherit;
+  font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 1px 8px rgba(0,0,0,0.15);
+}
+.portfolio-picker:hover,
+.portfolio-picker:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.language-segment {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+.language-segment button {
+  width: 62px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid var(--accent);
+  border-radius: 0;
+  background: transparent;
+  display: grid;
+  place-items: center;
+}
+.language-segment button:last-child { border-right: 0; }
+.language-segment button:hover,
+.language-segment button.active {
+  background: var(--accent);
+  color: var(--fg-strong);
+}
+.language-segment .flag {
+  display: block;
+  width: 34px;
+  height: 22px;
+  object-fit: cover;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.35);
+}
+.theme-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.theme-switch:hover { background: transparent; color: var(--fg); }
+.theme-switch-track {
+  position: relative;
+  width: 84px;
+  height: 42px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+}
+.theme-switch-glyph {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  z-index: 3;
+  color: var(--fg-dim);
+  font-size: 18px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.theme-switch-sun { left: 4px; }
+.theme-switch-moon { right: 4px; }
+.theme-switch.is-light .theme-switch-sun,
+.theme-switch.is-dark .theme-switch-moon {
+  color: white;
+}
+.theme-switch-knob {
+  position: absolute;
+  z-index: 2;
+  top: 4px;
+  left: 4px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--warn);
+  transition: transform 160ms ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+}
+.theme-switch.is-dark .theme-switch-knob { transform: translateX(44px); }
 
 main { padding: 16px; }
 
@@ -112,6 +221,24 @@ tbody tr:hover td { background: var(--row-hover); }
   font: inherit;
 }
 .filters label { color: var(--fg-dim); display: inline-flex; align-items: center; gap: 4px; }
+.segmented-control {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-2);
+}
+.segmented-control button {
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+.segmented-control button:last-child { border-right: 0; }
+.segmented-control button.active {
+  background: var(--accent);
+  color: white;
+}
 
 button {
   background: var(--panel-2); color: var(--fg);
@@ -125,6 +252,11 @@ button.danger:hover { background: var(--neg); border-color: var(--neg); color: w
 .card {
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 6px; padding: 12px; margin-bottom: 12px;
+}
+.status-error {
+  color: var(--neg);
+  border-color: var(--neg);
+  background: var(--neg-bg);
 }
 h2 { margin: 0 0 12px 0; font-size: 18px; color: var(--fg-strong); }
 h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }

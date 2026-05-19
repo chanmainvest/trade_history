@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 7410 3900">
+  <rect width="7410" height="3900" fill="#b22234"/>
+  <g fill="#fff">
+    <rect y="300" width="7410" height="300"/>
+    <rect y="900" width="7410" height="300"/>
+    <rect y="1500" width="7410" height="300"/>
+    <rect y="2100" width="7410" height="300"/>
+    <rect y="2700" width="7410" height="300"/>
+    <rect y="3300" width="7410" height="300"/>
+  </g>
+  <rect width="2964" height="2100" fill="#3c3b6e"/>
+  <g fill="#fff">
+    <g id="s6">
+      <circle cx="247" cy="210" r="70"/><circle cx="741" cy="210" r="70"/><circle cx="1235" cy="210" r="70"/><circle cx="1729" cy="210" r="70"/><circle cx="2223" cy="210" r="70"/><circle cx="2717" cy="210" r="70"/>
+    </g>
+    <g id="s5">
+      <circle cx="494" cy="420" r="70"/><circle cx="988" cy="420" r="70"/><circle cx="1482" cy="420" r="70"/><circle cx="1976" cy="420" r="70"/><circle cx="2470" cy="420" r="70"/>
+    </g>
+    <use href="#s6" y="420"/><use href="#s5" y="420"/><use href="#s6" y="840"/><use href="#s5" y="840"/><use href="#s6" y="1260"/><use href="#s5" y="1260"/><use href="#s6" y="1680"/>
+  </g>
+</svg>

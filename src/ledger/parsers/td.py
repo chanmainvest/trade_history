@@ -421,7 +421,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
 
         # Pull instrument + numbers
         instrument: ParsedInstrument | None = None
-        qty = price = amount = cash_after = None
+        qty = price = amount = None
         nums = re.findall(r"-?[\d,]+(?:\.\d+)?", desc)
         # An option token in description?
         m_opt = RE_OPT_TOKEN.search(desc)
@@ -440,7 +440,6 @@ def _parse_activity(body: str, currency: str, year_end: int,
                 qty = parse_money(tnums[0])
                 price = parse_money(tnums[1])
                 amount = parse_money(tnums[2])
-                cash_after = parse_money(tnums[3])
                 # Map to canonical option_*_to_open/close: open if direction
                 # adds to a position, close if reduces. With TD we don't know
                 # prior position; leave generic and let downstream infer.
@@ -454,7 +453,6 @@ def _parse_activity(body: str, currency: str, year_end: int,
             qty = parse_money(nums[-4])
             price = parse_money(nums[-3])
             amount = parse_money(nums[-2])
-            cash_after = parse_money(nums[-1])
             # symbol: look for trailing "(SYM)" in desc
             sm = RE_TRAIL_SYM.search(desc)
             if sm:
@@ -467,7 +465,6 @@ def _parse_activity(body: str, currency: str, year_end: int,
             # Last number is running cash balance; second-last is amount.
             if len(nums) >= 2:
                 amount = parse_money(nums[-2])
-                cash_after = parse_money(nums[-1])
             else:
                 amount = parse_money(nums[-1])
             sm = RE_TRAIL_SYM.search(desc)
@@ -478,7 +475,6 @@ def _parse_activity(body: str, currency: str, year_end: int,
                 )
         elif nums:
             amount = parse_money(nums[-2]) if len(nums) >= 2 else parse_money(nums[-1])
-            cash_after = parse_money(nums[-1]) if len(nums) >= 2 else None
 
         cur = ParsedTxn(
             trade_date=trade_date, settle_date=None, txn_type=txn_type,
