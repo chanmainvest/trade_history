@@ -11,6 +11,9 @@ This file is the operating manual for AI coding agents working on
 >
 > Human-facing usage — install, run, tabs walkthrough, file uploads —
 > lives in [doc/user-guide.md](doc/user-guide.md).
+>
+> Parser gotchas and symbol-repair lessons live in
+> [doc/extraction-corner-cases.md](doc/extraction-corner-cases.md).
 
 ---
 
@@ -29,6 +32,23 @@ This file is the operating manual for AI coding agents working on
    Holdings on a historical date come from the most recent
    `position_snapshots` for `(account, instrument)` on or before that
    date. See [ARCHITECTURE.md §1.4](ARCHITECTURE.md#14-transactions-snapshots-and-the-reconciliation-gap).
+6. **Documentation is part of the code.** Every code change that affects
+   behaviour, schema, APIs, CLI commands, data flow, or configuration
+   **MUST** be accompanied by matching updates to ALL of the following
+   that are relevant — in the same commit, not as a follow-up:
+
+   | File | Update when… |
+   |---|---|
+   | [ARCHITECTURE.md](ARCHITECTURE.md) | Any change to DB schema, ingestion pipeline, parser protocol, market-data flow, API routes, or workspace-profile logic |
+   | [src/ledger/db/schema.sql](src/ledger/db/schema.sql) | Canonical DDL changes (then reflect in ARCHITECTURE.md §2) |
+   | [README.md](README.md) | Architecture overview, quick-start steps, tab descriptions, or folder layout changes |
+   | [doc/user-guide.md](doc/user-guide.md) | Any user-visible behaviour: CLI commands, UI tabs, settings, troubleshooting |
+   | [doc/extraction-corner-cases.md](doc/extraction-corner-cases.md) | New parser quirks, symbol-repair edge cases, or PDF format discoveries |
+
+   **Enforcement:** Before marking any task complete, re-read every doc
+   file listed above and confirm it still accurately describes the code.
+   If it does not, update it before finishing. Stale documentation is a
+   bug, not a cosmetic issue.
 
 ## 1. Tech stack
 
@@ -79,6 +99,7 @@ src/ledger/
 frontend/src/          React tabs + i18n + portfolio context + SmartSelect
 ARCHITECTURE.md        DB + ingestion + market doc (Mermaid diagrams)
 doc/user-guide.md      human-facing user guide
+doc/extraction-corner-cases.md parser/symbol repair gotchas
 scripts/               one-off CLI helpers (e.g. build_example_data.py)
 example_data/          synthetic dataset (LEDGER_PROFILE=example)
 tests/                 pytest suite (parsers + analytics)
