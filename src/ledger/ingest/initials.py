@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
+from pathlib import Path
 
 from ..db import sqlite as sqlite_db
 from ..quantity import quantity_delta
@@ -27,19 +28,19 @@ def _day_before(iso: str) -> str:
     return (date(y, m, d) - timedelta(days=1)).isoformat()
 
 
-def infer_initials() -> dict:
+def infer_initials(path: Path | str | None = None) -> dict:
     """Populate initial_positions and initial_cash.
 
     Returns a small summary dict for logging.
     """
+    db_path = path if path is not None else sqlite_db.SQLITE_PATH
     n_positions = 0
     n_cash = 0
-    with sqlite_db.session() as conn:
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
         # Wipe previously-inferred rows so we recompute idempotently.
         conn.execute("DELETE FROM initial_positions WHERE notes LIKE 'inferred:%'")
-        # initial_cash has no provenance column; treat the entire table as
-        # inferred output and rebuild it on every run.
-        conn.execute("DELETE FROM initial_cash")
+        conn.execute("DELETE FROM initial_cash WHERE notes LIKE 'inferred:%'")
         # Positions ------------------------------------------------------
         rows = conn.execute(
             "SELECT account_id, instrument_id, MIN(as_of_date) AS first_date "
@@ -78,11 +79,12 @@ def infer_initials() -> dict:
             if abs(implied_initial) < 1e-9:
                 continue
 
-            conn.execute(
-                "INSERT OR REPLACE INTO initial_positions "
+            cur = conn.execute(
+                "INSERT INTO initial_positions "
                 "  (account_id, as_of_date, instrument_id, quantity, "
                 "   avg_cost, currency, notes) "
-                "VALUES (?, ?, ?, ?, NULL, ?, ?)",
+                "VALUES (?, ?, ?, ?, NULL, ?, ?) "
+                "ON CONFLICT(account_id, as_of_date, instrument_id) DO NOTHING",
                 (
                     acct,
                     _day_before(first),
@@ -92,7 +94,8 @@ def infer_initials() -> dict:
                     f"inferred: snapshot {snap_qty} - txns {txn_qty}",
                 ),
             )
-            n_positions += 1
+            if cur.rowcount > 0:
+                n_positions += 1
 
         # Cash -----------------------------------------------------------
         # Walk each (account, currency) cash series.
@@ -124,13 +127,21 @@ def infer_initials() -> dict:
             implied = bal - net
             if abs(implied) < 1e-6:
                 continue
-            conn.execute(
-                "INSERT OR REPLACE INTO initial_cash "
-                "  (account_id, as_of_date, currency, balance) "
-                "VALUES (?, ?, ?, ?)",
-                (acct, _day_before(first), ccy, implied),
+            cur = conn.execute(
+                "INSERT INTO initial_cash "
+                "  (account_id, as_of_date, currency, balance, notes) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(account_id, as_of_date, currency) DO NOTHING",
+                (
+                    acct,
+                    _day_before(first),
+                    ccy,
+                    implied,
+                    f"inferred: closing {bal} - net txns {net}",
+                ),
             )
-            n_cash += 1
+            if cur.rowcount > 0:
+                n_cash += 1
 
         conn.commit()
     log.info("infer_initials: positions=%d cash=%d", n_positions, n_cash)

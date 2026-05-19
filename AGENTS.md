@@ -100,7 +100,7 @@ frontend/src/          React tabs + i18n + portfolio context + SmartSelect
 spec/ARCHITECTURE.md   DB + ingestion + market doc (Mermaid diagrams)
 spec/USER-GUIDE.md     human-facing user guide
 spec/EXTRACTION-CORNER-CASES.md  parser/symbol repair gotchas
-doc/index.html         generated docs site (built by scripts/build_docs.py)
+docs/index.html        generated docs site (built by scripts/build_docs.py)
 scripts/               one-off CLI helpers + build_docs.py
 example_data/          synthetic dataset (LEDGER_PROFILE=example)
 tests/                 pytest suite (parsers + analytics)
@@ -122,12 +122,12 @@ every reported transaction must be defensible against the source.
 On every tagged release the following MUST be done (also automated by
 `.github/workflows/release.yml`):
 
-1. **Regenerate `doc/index.html`** from `spec/*.md`:
+1. **Regenerate `docs/index.html`** from `spec/*.md`:
 
    ```powershell
    uv run python scripts/build_docs.py --version <tag>
-   git add doc/index.html
-   git commit -m "docs: regenerate doc/index.html for <tag>"
+   git add docs/index.html
+   git commit -m "docs: regenerate docs/index.html for <tag>"
    ```
 
 2. **Tag and push** — the GitHub Actions workflow then builds and pushes the

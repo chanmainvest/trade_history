@@ -60,13 +60,16 @@ uv run ledger pdf dump-samples
 # 4. ingest all statements
 uv run ledger ingest run
 
-# 5. scrape market data for every held ticker
+# 5. infer opening holdings before the first statement
+uv run ledger ingest infer-initials
+
+# 6. scrape market data for every held ticker
 uv run ledger market refresh
 
-# 6. start backend
+# 7. start backend
 uv run uvicorn ledger.api.app:app --reload
 
-# 7. start frontend
+# 8. start frontend
 cd frontend && npm install && npm run dev
 ```
 
@@ -125,8 +128,9 @@ trade_history_opus47/
 
 1. **Transactions** — every txn across every account; filterable by date,
    account, institution, ticker and type.
-2. **Monthly** — pick any month-end and view the consolidated holdings
-   snapshot; diff two months side-by-side.
+2. **Monthly** — pick any date and view consolidated holdings reconstructed
+   from the latest account snapshot plus subsequent transactions; diff two
+   dates side-by-side.
 3. **Performance** — total asset value over time; filter by account /
    institution / ticker / asset class.
 4. **Stock research** — clicking any symbol anywhere drills in here:

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build doc/index.html from all Markdown files in spec/.
+"""Build docs/index.html from all Markdown files in spec/.
 
 Usage:
     uv run python scripts/build_docs.py [--version TAG]
 
-Output: doc/index.html  (standalone — no external assets except Mermaid CDN)
+Output: docs/index.html  (standalone — no external assets except Mermaid CDN)
 
 Zero external dependencies: uses the built-in Markdown renderer below.
 If the optional 'markdown' + 'pymdownx' packages are installed they are
@@ -22,7 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC_DIR = ROOT / "spec"
-DOC_DIR = ROOT / "doc"
+DOC_DIR = ROOT / "docs"
 
 # ---------------------------------------------------------------------------
 # Ordered list of spec files → User Guide first (landing page), then arch
@@ -406,7 +406,7 @@ def build(version: str | None = None) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build doc/index.html from spec/*.md")
+    parser = argparse.ArgumentParser(description="Build docs/index.html from spec/*.md")
     parser.add_argument("--version", metavar="TAG", help="Release tag, e.g. v1.2.0")
     args = parser.parse_args()
     build(version=args.version)

@@ -253,6 +253,7 @@ CREATE TABLE IF NOT EXISTS initial_cash (
     as_of_date        TEXT NOT NULL,
     currency          TEXT NOT NULL,
     balance           REAL NOT NULL,
+    notes             TEXT,
     UNIQUE(account_id, as_of_date, currency)
 );
 
@@ -280,4 +281,4 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value            TEXT NOT NULL
 );
 
-INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '2');
+INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '3');

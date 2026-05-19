@@ -94,42 +94,44 @@ just close the terminal.
 
 3. Pull market data for everything you hold:
 
-   ```powershell
-  uv run ledger market refresh
-   ```
+    ```powershell
+    uv run ledger market refresh
+    ```
 
-  This calls yfinance and, for US-listed fundamentals, the free SEC
-  EDGAR Company Facts API. Be patient and don't run it on a flaky link.
-  Re-running is safe; it's an upsert.
+    This calls yfinance and, for US-listed fundamentals, the free SEC
+    EDGAR Company Facts API. Be patient and don't run it on a flaky link.
+    Re-running is safe; it's an upsert.
 
-  To fetch sector/profile metadata used by Visualization colors, run:
+    To fetch sector/profile metadata used by Visualization colors, run:
 
-  ```powershell
-  uv run ledger market refresh-profiles
-  ```
+    ```powershell
+    uv run ledger market refresh-profiles
+    ```
 
-  `uv run ledger market refresh-all` includes profiles, prices,
-  dividends, splits, financials, earnings, and FX in one pass.
+    `uv run ledger market refresh-all` includes profiles, prices,
+    dividends, splits, financials, earnings, and FX in one pass.
 
 4. *(Optional but recommended)* Back-fill positions that pre-date your
-   earliest statement:
+    earliest statement:
 
-   ```powershell
-   uv run ledger ingest infer-initials
-   ```
+    ```powershell
+    uv run ledger ingest infer-initials
+    ```
 
-   This populates `initial_positions` and `initial_cash` so the
-   Monthly / Performance views know what you were already holding when
-   our records start. Idempotent.
+    This populates `initial_positions` and `initial_cash` so the
+    Monthly / Performance views know what you were already holding when
+    our records start. Idempotent. Inferred rows are tagged with
+    `notes = 'inferred:...'`; any reviewed/manual rows with a different
+    note prefix are preserved on re-run.
 
 5. *(Optional after parser upgrades)* Repair already-ingested legacy
-  symbols without deleting PDFs or re-ingesting everything. The repair
-  uses known ticker mappings first, then matches transactions to holdings
-  from the same statement where the PDF only printed a security name:
+    symbols without deleting PDFs or re-ingesting everything. The repair
+    uses known ticker mappings first, then matches transactions to holdings
+    from the same statement where the PDF only printed a security name:
 
-  ```powershell
-  uv run ledger ingest repair-symbols
-  ```
+    ```powershell
+    uv run ledger ingest repair-symbols
+    ```
 
 6. Reload the browser. The Transactions tab should now have data.
 
@@ -154,9 +156,10 @@ Click a symbol cell to jump to the Research tab.
 Default view: holdings as of the most recent statement date in the
 database, across all accounts in the active portfolio.
 
-- **As of** date — pick any day; the app starts from the latest complete
-  account statement checkpoint and replays transactions after it. Before
-  the first statement, it uses inferred/manual initial holdings.
+- **As of** date — pick any day; the app starts from the latest account
+  holdings snapshot checkpoint and replays transactions after it. Empty
+  statement rows without holdings are ignored as checkpoints. Before the
+  first snapshot, it uses inferred/manual initial holdings.
 - **Compare to** — picking a second date adds a `Δ` column. Rows where
   the position grew are tinted green, rows that shrank are tinted red,
   in git-diff style. Positions that disappeared between the two dates

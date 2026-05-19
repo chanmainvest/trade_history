@@ -22,9 +22,19 @@ def init_db(path: Path | str = SQLITE_PATH) -> None:
     conn = connect(path)
     try:
         conn.executescript(_SCHEMA)
+        _migrate_existing_schema(conn)
         conn.commit()
     finally:
         conn.close()
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate_existing_schema(conn: sqlite3.Connection) -> None:
+    if "notes" not in _table_columns(conn, "initial_cash"):
+        conn.execute("ALTER TABLE initial_cash ADD COLUMN notes TEXT")
 
 
 @contextmanager

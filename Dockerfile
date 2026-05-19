@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 COPY pyproject.toml uv.lock README.md AGENTS.md ./
 COPY spec ./spec
-COPY doc ./doc
+COPY docs ./docs
 COPY src ./src
 
 RUN uv sync --locked --no-dev

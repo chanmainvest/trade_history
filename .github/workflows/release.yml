@@ -6,12 +6,12 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: write      # commit doc/index.html back to the tag
+  contents: write      # commit docs/index.html back to the tag
   packages: write      # push Docker image to GHCR
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1. Regenerate doc/index.html and commit it to the repository
+  # 1. Regenerate docs/index.html and commit it to the repository
   # ---------------------------------------------------------------------------
   build-docs:
     name: Build docs
@@ -36,17 +36,17 @@ jobs:
       - name: Install dev dependencies
         run: uv sync --dev
 
-      - name: Build doc/index.html
+      - name: Build docs/index.html
         run: uv run python scripts/build_docs.py --version "${{ steps.tag.outputs.tag }}"
 
       - name: Commit regenerated docs
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add doc/index.html
+          git add docs/index.html
           # Only commit if there are changes
           git diff --cached --quiet || \
-            git commit -m "docs: regenerate doc/index.html for ${{ steps.tag.outputs.tag }} [skip ci]"
+            git commit -m "docs: regenerate docs/index.html for ${{ steps.tag.outputs.tag }} [skip ci]"
           git push origin HEAD:main
 
   # ---------------------------------------------------------------------------

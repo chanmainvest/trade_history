@@ -89,12 +89,14 @@ angles:
 - `position_snapshots` — the *state at the end of each statement*.
 
 Holdings on statement dates come from `position_snapshots`. For an
-arbitrary historical date, the Monthly API uses the latest complete
-statement for each account as a checkpoint, then replays signed
-transactions after that checkpoint up to the selected day. Before the
-first available statement, it starts from `initial_positions` and replays
-transactions forward. The Performance route still forward-fills account
-snapshots to avoid zig-zag when account statement dates are staggered.
+arbitrary historical date, the Monthly API uses the latest
+`position_snapshots.as_of_date` for each account as the checkpoint, then
+replays signed transactions after that checkpoint up to the selected day.
+Empty statement rows, such as annual reports with no holdings table, are
+not checkpoints. Before the first available snapshot, it starts from
+`initial_positions` and replays transactions forward. The Performance
+route still forward-fills account snapshots to avoid zig-zag when account
+statement dates are staggered.
 
 **Why snapshots still matter:** brokers sometimes apply lot adjustments,
 splits, name changes, and book-cost roll-ups that *only* appear on the
@@ -103,7 +105,10 @@ robust to those adjustments while transactions remain the audit trail.
 
 `initial_positions` and `initial_cash` are for the period *before* the
 first available statement — they let you record or infer an opening
-balance for holdings that pre-date your earliest PDF.
+balance for holdings that pre-date your earliest PDF. `ledger ingest
+infer-initials` deletes and recomputes only rows whose `notes` begin with
+`inferred:`; reviewed/manual opening balances use a different note prefix
+and are preserved on re-run.
 
 ### 1.5 In-kind transfers between MY accounts
 
@@ -291,6 +296,7 @@ erDiagram
         TEXT as_of_date
         TEXT currency
         REAL balance
+        TEXT notes
     }
 
     position_transaction_links {
