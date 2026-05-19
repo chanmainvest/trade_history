@@ -472,8 +472,12 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                     stmt.quarantine.append((ln, f"unknown verb: {verb}"))
                     continue
 
-                # Direction sanity for Transfer
-                if txn_type == "transfer_in" and amount is not None and amount < 0:
+                # Direction sanity for transfers whose amount cell is blank but
+                # quantity/name carries the outbound sign.
+                if (txn_type == "transfer_in"
+                    and ((amount is not None and amount < 0)
+                         or (qty is not None and qty < 0)
+                         or re.search(r"\s-\d[\d,]*(?:\.\d+)?\b", desc_and_nums))):
                     txn_type = "transfer_out"
 
                 instr = _instr_from_desc(desc, currency) if desc else None

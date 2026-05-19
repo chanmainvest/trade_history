@@ -213,6 +213,52 @@ tbody tr:hover td { background: var(--row-hover); }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .pos { color: var(--pos); }
 .neg { color: var(--neg); }
+.table-scroll {
+  overflow: auto;
+}
+.card.transactions-table-wrap {
+  max-height: calc(100vh - 220px);
+  padding: 0;
+  scroll-padding-top: var(--transactions-header-height, 40px);
+  scroll-snap-type: y mandatory;
+  overscroll-behavior: contain;
+}
+.transactions-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  min-width: 1680px;
+}
+.transactions-table .txn-col-date { width: 116px; }
+.transactions-table .txn-col-institution { width: 116px; }
+.transactions-table .txn-col-account { width: 158px; }
+.transactions-table .txn-col-type { width: 168px; }
+.transactions-table .txn-col-symbol { width: 96px; }
+.transactions-table .txn-col-option { width: 250px; }
+.transactions-table .txn-col-qty { width: 96px; }
+.transactions-table .txn-col-price { width: 92px; }
+.transactions-table .txn-col-amount { width: 132px; }
+.transactions-table .txn-col-currency { width: 68px; }
+.transactions-table th,
+.transactions-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.transactions-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  box-shadow: 0 1px 0 var(--border);
+}
+.transactions-table tbody tr {
+  scroll-snap-align: start;
+  scroll-margin-top: var(--transactions-header-height, 40px);
+}
+.transactions-table .description-cell {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
 .filters input, .filters select {

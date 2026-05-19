@@ -1,0 +1,24 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      LEDGER_PROFILE: ${LEDGER_PROFILE:-real}
+      LEDGER_DATA_DIR: /app/data
+      LEDGER_STATEMENTS_DIR: /app/Statements
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./Statements:/app/Statements
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"

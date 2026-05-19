@@ -74,6 +74,34 @@ CREATE TABLE IF NOT EXISTS instrument_aliases (
     UNIQUE(alias, institution_id)
 );
 
+-- Statement names that need a first-time external identifier lookup.
+-- Example: CIBC mutual fund rows often print a fund name/class but no fund
+-- code. Parsers store the printed name; repair can resolve it only after a
+-- reviewed lookup row is marked resolved here.
+CREATE TABLE IF NOT EXISTS instrument_identifier_lookups (
+    lookup_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    identifier_type    TEXT NOT NULL DEFAULT 'fund_code',
+    asset_type         TEXT NOT NULL DEFAULT 'mutual_fund',
+    institution_code   TEXT NOT NULL DEFAULT '',
+    normalized_name    TEXT NOT NULL,
+    display_name       TEXT NOT NULL,
+    currency           TEXT NOT NULL,
+    status             TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending','resolved','not_found','ambiguous','ignored')),
+    resolved_symbol    TEXT,
+    resolved_exchange  TEXT,
+    resolved_name      TEXT,
+    evidence_url       TEXT,
+    sample_description TEXT,
+    first_seen_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    notes              TEXT,
+    UNIQUE(identifier_type, asset_type, institution_code, normalized_name, currency)
+);
+
+CREATE INDEX IF NOT EXISTS idx_identifier_lookups_status
+    ON instrument_identifier_lookups(status, identifier_type, asset_type);
+
 -- ---------------------------------------------------------------------------
 -- STATEMENTS: one row per ingested PDF (or per account inside a multi-account PDF)
 -- ---------------------------------------------------------------------------
@@ -252,4 +280,4 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value            TEXT NOT NULL
 );
 
-INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '1');
+INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '2');

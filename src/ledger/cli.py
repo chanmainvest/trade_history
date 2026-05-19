@@ -162,7 +162,10 @@ def ingest_repair_symbols() -> None:
     option_transactions = out["option_transactions"]
     positions = out["positions"]
     transactions = out["transactions"]
+    direct_names = out["direct_names"]
     taxes = out["tax_withholding"]
+    fund_lookups = out["fund_lookups"]
+    transfers = out["transfers"]
     click.echo(
         f"Repaired {leading['repaired']} leading-verb symbols; "
         f"skipped {leading['skipped']} unresolved rows."
@@ -194,11 +197,44 @@ def ingest_repair_symbols() -> None:
     for ex in transactions["examples"]:
         click.echo(f"  txn {ex['transaction_id']}: {ex['old_symbol']} -> {ex['new_symbol']}")
     click.echo(
+        f"Repaired {direct_names['repaired']} canonical transaction symbols from direct names; "
+        f"skipped {direct_names['skipped']} unchanged rows."
+    )
+    for ex in direct_names["examples"]:
+        click.echo(f"  txn {ex['transaction_id']}: {ex['old_symbol']} -> {ex['new_symbol']}")
+    click.echo(
         f"Repaired {taxes['repaired']} tax-withholding symbols from nearby dividends; "
         f"skipped {taxes['skipped']} unresolved tax rows."
     )
     for ex in taxes["examples"]:
         click.echo(f"  txn {ex['transaction_id']}: {ex['old_symbol']} -> {ex['new_symbol']}")
+    click.echo(
+        f"Resolved {fund_lookups['snapshot_repaired']} fund snapshots and "
+        f"{fund_lookups['transaction_repaired']} fund transactions from reviewed lookups; "
+        f"pending fund-code lookups: {fund_lookups['pending_after']} "
+        f"(was {fund_lookups['pending_before']})."
+    )
+    for ex in fund_lookups["examples"]:
+        click.echo(f"  {ex['kind']} {ex['id']}: {ex['old_symbol']} -> {ex['new_symbol']}")
+    click.echo(f"Repaired {transfers['repaired']} transfer directions.")
+    for ex in transfers["examples"]:
+        click.echo(f"  txn {ex['transaction_id']}: {ex['old_type']} -> {ex['new_type']}")
+
+
+# -------------------------------------------------------------------------- mcp
+@main.group("mcp")
+def mcp_group() -> None:
+    """Model Context Protocol server for AI-agent control."""
+
+
+@mcp_group.command("serve")
+def mcp_serve() -> None:
+    """Run the Ledger MCP server over stdio."""
+    try:
+        from .mcp_server import serve as serve_mcp
+        serve_mcp()
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 # ----------------------------------------------------------------------- market
@@ -294,3 +330,7 @@ def serve(host: str, port: int) -> None:
     """Run the FastAPI dev server."""
     import uvicorn
     uvicorn.run("ledger.api.app:app", host=host, port=port, reload=True)
+
+
+if __name__ == "__main__":
+    main()

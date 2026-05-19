@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, TxnRow } from "../api";
 import { SmartSelect } from "../SmartSelect";
@@ -23,6 +23,8 @@ const MONEY_THRESHOLDS = [
 export default function Transactions() {
   const { activeAccountIds, accounts } = usePortfolio();
   const { t } = useI18n();
+  const tableWrapRef = useRef<HTMLDivElement | null>(null);
+  const scrollSnapTimerRef = useRef<number | undefined>(undefined);
 
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
@@ -31,6 +33,16 @@ export default function Transactions() {
   const [symbols, setSymbols] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
   const [minAbs, setMinAbs] = useState(0);
+
+  const syncTransactionsHeaderHeight = () => {
+    const node = tableWrapRef.current;
+    if (!node) return;
+    const headerCell = node.querySelector<HTMLTableCellElement>("thead th");
+    const headerHeight = headerCell?.getBoundingClientRect().height ?? 0;
+    if (headerHeight > 0) {
+      node.style.setProperty("--transactions-header-height", `${Math.ceil(headerHeight)}px`);
+    }
+  };
 
   const accountsQ = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
   const symbolsQ = useQuery({ queryKey: ["symbols"], queryFn: api.symbols });
@@ -57,6 +69,46 @@ export default function Transactions() {
         limit: 10_000,
       }),
   });
+
+  const snapTransactionsToRow = () => {
+    const node = tableWrapRef.current;
+    if (!node) return;
+    const firstRow = node.querySelector<HTMLTableRowElement>("tbody tr");
+    const rowHeight = firstRow?.getBoundingClientRect().height ?? 0;
+    if (rowHeight <= 0) return;
+
+    syncTransactionsHeaderHeight();
+
+    const maxScrollTop = node.scrollHeight - node.clientHeight;
+    const target = Math.min(
+      Math.max(Math.round(node.scrollTop / rowHeight) * rowHeight, 0),
+      maxScrollTop,
+    );
+    if (Math.abs(node.scrollTop - target) < 0.5) return;
+    node.scrollTop = target;
+  };
+
+  const scheduleTransactionsSnap = () => {
+    window.clearTimeout(scrollSnapTimerRef.current);
+    scrollSnapTimerRef.current = window.setTimeout(snapTransactionsToRow, 90);
+  };
+
+  useEffect(() => {
+    const node = tableWrapRef.current;
+    const headerCell = node?.querySelector<HTMLTableCellElement>("thead th");
+    const resizeObserver = "ResizeObserver" in window
+      ? new ResizeObserver(syncTransactionsHeaderHeight)
+      : undefined;
+    syncTransactionsHeaderHeight();
+    if (headerCell) resizeObserver?.observe(headerCell);
+    window.addEventListener("resize", syncTransactionsHeaderHeight);
+    snapTransactionsToRow();
+    return () => {
+      window.clearTimeout(scrollSnapTimerRef.current);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", syncTransactionsHeaderHeight);
+    };
+  }, [txnsQ.data?.rows.length]);
 
   const instOptions = useMemo(() => {
     const set = new Set<string>();
@@ -129,8 +181,21 @@ export default function Transactions() {
         </div>
       )}
 
-      <div className="card" style={{ overflow: "auto", maxHeight: "calc(100vh - 220px)" }}>
-        <table>
+      <div className="card table-scroll transactions-table-wrap" ref={tableWrapRef} onScroll={scheduleTransactionsSnap}>
+        <table className="transactions-table">
+          <colgroup>
+            <col className="txn-col-date" />
+            <col className="txn-col-institution" />
+            <col className="txn-col-account" />
+            <col className="txn-col-type" />
+            <col className="txn-col-symbol" />
+            <col className="txn-col-option" />
+            <col className="txn-col-qty" />
+            <col className="txn-col-price" />
+            <col className="txn-col-amount" />
+            <col className="txn-col-currency" />
+            <col className="txn-col-description" />
+          </colgroup>
           <thead>
             <tr>
               <th>{t("th.date")}</th><th>{t("f.institution")}</th><th>{t("th.account")}</th><th>{t("th.type")}</th>
@@ -152,7 +217,7 @@ export default function Transactions() {
                 <td className="num">{fmtNum(t.price)}</td>
                 <td className={"num " + ((t.net_amount ?? 0) < 0 ? "neg" : "pos")}>{fmtNum(t.net_amount)}</td>
                 <td>{t.currency}</td>
-                <td style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis" }}>
+                <td className="description-cell">
                   {t.description}
                 </td>
               </tr>

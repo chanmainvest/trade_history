@@ -19,6 +19,7 @@ NAME_TO_TICKER: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"\bISHARES\b.*\b20\+?\s*(?:PLUS\s+)?YEAR\s+TREASURY\b"), "TLT", "etf"),
     (re.compile(r"\bISHARES\s*20\s*PLUS\s*YEAR\s*TREASURY\b"),             "TLT", "etf"),
     (re.compile(r"\bRBB\s+FD\s+INC\b.*\bUS\s+TREASURY\s+6\s+MONTH\s+BILL\s+ETF\b"), "XBIL", "etf"),
+    (re.compile(r"\bRBB\s+(?:FD|FUND)\s+INC\b.*\bUS\s+TREASURY\s+12\s+MONTH\s+BILL\s+ETF\b"), "OBIL", "etf"),
     (re.compile(r"\bRBB\s+FD\s+INC\b.*\bUS\s+TREASURY\s+2\s+YEAR\s+NOTE\s+ETF\b"), "UTWO", "etf"),
     (re.compile(r"\bHORIZONS\b.*\b0\s*-?\s*3\s+MONTH\s+U\s*S\s*T\b.*\bBILL\s+ETF\b"), "UBIL.U", "etf"),
     (re.compile(r"\bGLOBAL\s+X\b.*\b0\s*-?\s*3\s+MONTH\s+U\s*S\b.*\bT\s*BILL\s+ETF\b"), "UBIL.U", "etf"),
@@ -34,6 +35,8 @@ NAME_TO_TICKER: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"\bISHARES\s+TIPS\s+BOND\s+ETF\b"),                       "TIP", "etf"),
     (re.compile(r"\bISHARES\s+IBOXX\b.*\bINVESTMENT\b.*\bCORPORATE\s+BOND\s+ETF\b"), "LQD", "etf"),
     (re.compile(r"\bVANECK\b.*\bVIETNAM\s+ETF\b"),                         "VNM", "etf"),
+    (re.compile(r"\bINVESCO\s+DB\b.*\bAGRICULTURE\s+FUND\b"),              "DBA", "etf"),
+    (re.compile(r"\bU\s*S\s+GLOBAL\s+JETS\s+ETF\b"),                      "JETS", "etf"),
     (re.compile(r"\bTESLA\s+INC\b"),                                          "TSLA", "equity"),
     (re.compile(r"\bSUPER\s+MICRO\s+COMPUTER\s+INC\b"),                     "SMCI", "equity"),
     (re.compile(r"\bQUANTUM\s+COMPUTING\s+INC\b"),                          "QUBT", "equity"),
@@ -52,6 +55,8 @@ NAME_TO_TICKER: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"\bFARMLAND\s+PARTNERS\s+INC\b"),                          "FPI", "equity"),
     (re.compile(r"\bGLADSTONE\s+LAND\s+CORPORATION\b"),                    "LAND", "equity"),
     (re.compile(r"\bTEXAS\s+PACIFIC\s+LAND\s+CORPORATION\b"),              "TPL", "equity"),
+    (re.compile(r"\bAIRBNB\s+INC\s+(?:CL\s*-?\s*A|CLASS\s+A)\b"),          "ABNB", "equity"),
+    (re.compile(r"\bPDD\s+HOLDINGS\s+INC\s+ADR\b"),                         "PDD", "equity"),
     (re.compile(r"\bISHARES\b.*\b7\s*-?\s*10\s*YEAR\s+TREASURY\b"),       "IEF", "etf"),
     (re.compile(r"\bISHARES\b.*\b1\s*-?\s*3\s*YEAR\s+TREASURY\b"),        "SHY", "etf"),
     (re.compile(r"\bISHARES\b.*\bS&P\s*500\b"),                            "IVV", "etf"),
@@ -79,7 +84,10 @@ NAME_TO_TICKER: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"\bBMO\s+EURO(?:PE)?\s+HI(?:GH)?\s+DIV\s+COV\s+ETF\b"),   "ZWE", "etf"),
     (re.compile(r"\bNEWMONT\s+CORPORATION\b"),                              "NEM", "equity"),
     (re.compile(r"\bROYAL\s+GOLD\s+INC\b"),                                "RGLD", "equity"),
+    (re.compile(r"\bOSISKO\s+GOLD\s+ROYALTIES\s+LTD\b"),                  "OR", "equity"),
     (re.compile(r"\bOR\s+ROYALTIES\s+INC\b"),                              "OR", "equity"),
+    (re.compile(r"\bSANDSTORM\s+GOLD\s+LTD\b"),                            "SAND", "equity"),
+    (re.compile(r"\bNORTHLAND\s+POWER\s+INC\b"),                            "NPI", "equity"),
     (re.compile(r"\bVALE\s+S\s+A\b"),                                      "VALE", "equity"),
     (re.compile(r"\bBARRICK\s+(?:MNG|MINING)\s+CORP\b"),                   "ABX", "equity"),
     (re.compile(r"\bFRANCO-?NEVADA\s+CORPORATION\b"),                      "FNV", "equity"),
@@ -94,7 +102,7 @@ NAME_TO_TICKER: list[tuple[re.Pattern[str], str, str]] = [
 # Leading words that aren't part of the security name (verbs, qualifiers).
 _LEADING_NOISE = {
     "BOUGHT", "SOLD", "BUY", "SELL",
-    "DIVIDEND", "DISTRIBUTION", "INTEREST",
+    "DIVIDEND", "DISTRIBUTION", "DISTRIB", "INTEREST",
     "REINVEST", "REINVESTED",
     "TRANSFER", "JOURNAL", "DEPOSIT", "WITHDRAWAL", "WITHDRAW",
     "TAX", "FEE", "ADJUSTMENT",
@@ -105,7 +113,7 @@ _LEADING_NOISE = {
 def strip_leading_verbs(desc: str) -> str:
     """Drop one or more leading 'verb' words from a free-form description."""
     toks = desc.strip().split()
-    while toks and toks[0].upper().rstrip(":") in _LEADING_NOISE:
+    while toks and toks[0].upper().rstrip(".:") in _LEADING_NOISE:
         toks = toks[1:]
     return " ".join(toks)
 
@@ -115,15 +123,25 @@ def resolve_ticker(desc: str, currency: str | None = None) -> tuple[str, str] | 
     if not desc:
         return None
     u = re.sub(r"\s+", " ", desc.upper())
-    for pat, tkr, atype in NAME_TO_TICKER:
-        if pat.search(u):
-            if tkr == "DLR.U" and currency == "CAD":
-                return "DLR", atype
-            if tkr == "AG" and currency == "CAD":
-                return "FR", atype
-            if tkr == "UROY" and currency == "CAD":
-                return "URC", atype
-            return tkr, atype
+    best: tuple[int, int, str, str] | None = None
+    for idx, (pat, tkr, atype) in enumerate(NAME_TO_TICKER):
+        match = pat.search(u)
+        if not match:
+            continue
+        candidate = (match.start(), idx, tkr, atype)
+        if best is None or candidate[:2] < best[:2]:
+            best = candidate
+    if best is not None:
+        _, _idx, tkr, atype = best
+        if tkr == "DLR.U" and currency == "CAD":
+            return "DLR", atype
+        if tkr == "AG" and currency == "CAD":
+            return "FR", atype
+        if tkr == "UROY" and currency == "CAD":
+            return "URC", atype
+        if tkr == "SAND" and currency == "CAD":
+            return "SSL", atype
+        return tkr, atype
     return None
 
 

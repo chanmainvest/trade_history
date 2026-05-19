@@ -170,6 +170,9 @@ def _classify_activity(verb: str, desc: str = "") -> str | None:
             # Refine WIRE TFR direction by description
             if k == "WIRE TFR":
                 return "transfer_out" if "TO" in desc.upper() else "transfer_in"
+            if k == "TRANSFER":
+                desc_upper = desc.upper()
+                return "transfer_out" if "TRANSFER TO" in desc_upper or " TO " in desc_upper else "transfer_in"
             return t
     return None
 

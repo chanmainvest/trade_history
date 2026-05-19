@@ -32,6 +32,7 @@ from datetime import date
 
 from ..pdf_text import PdfText
 from .helpers import _OPT_MON, _third_friday, parse_money
+from .name_resolver import resolve_ticker
 from .registry import register
 from .types import (
     ParsedAccount,
@@ -237,6 +238,23 @@ def _classify(verb_phrase: str) -> str | None:
         if verb_phrase.startswith(k):
             return ACT_VERBS[k]
     return None
+
+
+def _instrument_from_description(desc: str, currency: str) -> ParsedInstrument | None:
+    sm = RE_TRAIL_SYM.search(desc)
+    if sm:
+        return ParsedInstrument(
+            asset_type="equity", symbol=sm.group(1),
+            currency=currency, name=desc[:sm.start()].strip()[:120],
+        )
+    known = resolve_ticker(desc, currency)
+    if known is None:
+        return None
+    symbol, asset_type = known
+    return ParsedInstrument(
+        asset_type=asset_type, symbol=symbol,
+        currency=currency, name=desc.strip()[:120],
+    )
 
 
 def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> None:
@@ -453,13 +471,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
             qty = parse_money(nums[-4])
             price = parse_money(nums[-3])
             amount = parse_money(nums[-2])
-            # symbol: look for trailing "(SYM)" in desc
-            sm = RE_TRAIL_SYM.search(desc)
-            if sm:
-                instrument = ParsedInstrument(
-                    asset_type="equity", symbol=sm.group(1),
-                    currency=currency, name=desc[:sm.start()].strip()[:120],
-                )
+            instrument = _instrument_from_description(desc, currency)
         elif txn_type in {"dividend", "distribution", "interest_income",
                           "tax_withholding", "return_of_capital"} and nums:
             # Last number is running cash balance; second-last is amount.
@@ -467,12 +479,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
                 amount = parse_money(nums[-2])
             else:
                 amount = parse_money(nums[-1])
-            sm = RE_TRAIL_SYM.search(desc)
-            if sm:
-                instrument = ParsedInstrument(
-                    asset_type="equity", symbol=sm.group(1),
-                    currency=currency, name=desc[:sm.start()].strip()[:120],
-                )
+            instrument = _instrument_from_description(desc, currency)
         elif nums:
             amount = parse_money(nums[-2]) if len(nums) >= 2 else parse_money(nums[-1])
 
