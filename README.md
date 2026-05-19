@@ -10,32 +10,17 @@ visualize positions, P&L, performance and per-ticker research.
 
 ## High-level architecture
 
-```
-Statements/<Institution>/*.pdf
-        │
-        ▼
-[ pdf_text.py ]  pdfplumber → pypdf fallback. Image-only PDFs are skipped.
-        │
-        ▼
-[ parsers/<institution>/*.py ]   per-broker parser; emits ParsedStatement
-        │
-        ▼
-[ ingest/pipeline.py ]   normalises + writes to SQLite
-        │
-        ▼
-   data/ledger.sqlite       data/market.duckdb
-   (transactions,           (daily_prices, dividends,
-    positions,               splits, financials,
-    statements,              earnings, fx_rates)
-    cash, …)                       ▲
-        │                          │
-        ▼                          │
-[ FastAPI backend ]  ───────[ market/scrape.py ]
-        │                  yfinance + rate-limited HTTP
-        ▼
-[ React + Vite + TS frontend (5 tabs) ]
-   1. Transactions  2. Monthly snapshot/diff  3. Performance
-   4. Stock research (per-ticker, w/ overlay)  5. Visualisations (RRG, treemap, correlation)
+```mermaid
+flowchart TD
+    PDF["Statements/&lt;Institution&gt;/*.pdf"] --> PDFT["pdf_text.py\npdfplumber → pypdf fallback\nimage-only PDFs skipped"]
+    PDFT --> PARSE["parsers/&lt;institution&gt;.py\nper-broker parser\nemits ParsedStatement"]
+    PARSE --> INGEST["ingest/pipeline.py\nnormalises + writes to SQLite"]
+    INGEST --> SQLITE[("data/ledger.sqlite\ntransactions · positions\nstatements · cash")]
+    FEED["yfinance\n+ SEC EDGAR"] --> SCRAPE["market/scrape.py\nrate-limited HTTP"]
+    SCRAPE --> DUCKDB[("data/market.duckdb\ndaily_prices · dividends\nsplits · financials\nearnings · fx_rates")]
+    SQLITE --> API["FastAPI backend"]
+    DUCKDB --> API
+    API --> UI["React + Vite + TS\n① Transactions\n② Monthly snapshot\n③ Performance\n④ Stock research\n⑤ Visualisations"]
 ```
 
 ## Database split
