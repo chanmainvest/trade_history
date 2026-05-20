@@ -28,6 +28,9 @@
   --plotly-paper: #1C2541;
   --plotly-plot: #131C2E;
   --plotly-grid: #2A3F5F;
+  --scrollbar-track: #131C2E;
+  --scrollbar-thumb: #3A7BD5;
+  --scrollbar-thumb-hover: #4A8CE5;
 }
 
 :root[data-theme="light"] {
@@ -57,6 +60,9 @@
   --plotly-paper: #FFFFFF;
   --plotly-plot: #FFFFFF;
   --plotly-grid: #E1E6F0;
+  --scrollbar-track: #E5EBF5;
+  --scrollbar-thumb: #2A5BB5;
+  --scrollbar-thumb-hover: #3A7BD5;
 }
 
 html, body, :root {
@@ -65,6 +71,28 @@ html, body, :root {
 }
 body { background: var(--bg); color: var(--fg); margin: 0; }
 * { box-sizing: border-box; }
+* {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  scrollbar-width: thin;
+}
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 3px solid var(--scrollbar-track);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
+}
 body, html, #root { margin: 0; padding: 0; min-height: 100%; }
 a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -227,18 +255,19 @@ tbody tr:hover td { background: var(--row-hover); }
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
-  min-width: 1680px;
+  min-width: 1672px;
 }
 .transactions-table .txn-col-date { width: 116px; }
 .transactions-table .txn-col-institution { width: 116px; }
 .transactions-table .txn-col-account { width: 158px; }
 .transactions-table .txn-col-type { width: 168px; }
-.transactions-table .txn-col-symbol { width: 96px; }
-.transactions-table .txn-col-option { width: 250px; }
+.transactions-table .txn-col-symbol { width: 104px; }
+.transactions-table .txn-col-option { width: 158px; }
 .transactions-table .txn-col-qty { width: 96px; }
 .transactions-table .txn-col-price { width: 92px; }
 .transactions-table .txn-col-amount { width: 132px; }
-.transactions-table .txn-col-currency { width: 68px; }
+.transactions-table .txn-col-currency { width: 72px; }
+.transactions-table .txn-col-description { width: 460px; }
 .transactions-table th,
 .transactions-table td {
   overflow: hidden;
@@ -248,14 +277,47 @@ tbody tr:hover td { background: var(--row-hover); }
   position: sticky;
   top: 0;
   z-index: 4;
+  padding-right: 18px;
   box-shadow: 0 1px 0 var(--border);
+}
+.transactions-table .column-header-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.transactions-table .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  width: 14px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.transactions-table .column-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 22%;
+  bottom: 22%;
+  left: 6px;
+  width: 2px;
+  border-radius: 999px;
+  background: transparent;
+}
+.transactions-table .column-resize-handle:hover::before,
+.transactions-table .column-resize-handle:focus-visible::before {
+  background: var(--accent-2);
+}
+.transactions-table .column-resize-handle:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: -3px;
 }
 .transactions-table tbody tr {
   scroll-snap-align: start;
   scroll-margin-top: var(--transactions-header-height, 40px);
 }
 .transactions-table .description-cell {
-  max-width: 360px;
   overflow: hidden;
   text-overflow: ellipsis;
 }

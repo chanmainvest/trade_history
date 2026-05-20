@@ -7,6 +7,7 @@ statement types is NOT implemented (see AGENTS.md §8).
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -16,21 +17,40 @@ from ...db import sqlite as sqlite_db
 
 router = APIRouter(prefix="/statements", tags=["statements"])
 
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+PDF_MAGIC = b"%PDF-"
+
+
+def _safe_upload_name(filename: str | None) -> str:
+    raw_name = Path((filename or "statement.pdf").replace("\\", "/")).name
+    safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", raw_name).strip(" .")
+    if not safe_name:
+        safe_name = "statement.pdf"
+    if not safe_name.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only .pdf files are accepted.")
+    return safe_name
+
 
 @router.post("/upload")
 async def upload(file: UploadFile = File(...)) -> dict:  # noqa: B008  (FastAPI idiom)
     """Accept a PDF, save it to STATEMENTS_DIR/uploads/, fingerprint it."""
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(400, "Only .pdf files are accepted.")
+    safe_name = _safe_upload_name(file.filename)
 
-    body = await file.read()
+    body = await file.read(MAX_UPLOAD_BYTES + 1)
     if not body:
         raise HTTPException(400, "Empty file.")
+    if len(body) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "PDF upload exceeds the 25 MiB limit.")
+    if not body.startswith(PDF_MAGIC):
+        raise HTTPException(400, "Uploaded file is not a valid PDF.")
     sha = hashlib.sha256(body).hexdigest()
 
     uploads_dir: Path = STATEMENTS_DIR / "uploads"
     uploads_dir.mkdir(parents=True, exist_ok=True)
-    dest = uploads_dir / f"{sha[:12]}_{file.filename}"
+    dest = (uploads_dir / f"{sha[:12]}_{safe_name}").resolve()
+    uploads_root = uploads_dir.resolve()
+    if not dest.is_relative_to(uploads_root):
+        raise HTTPException(400, "Invalid upload filename.")
     dest.write_bytes(body)
 
     # Is this PDF already known?
@@ -46,13 +66,12 @@ async def upload(file: UploadFile = File(...)) -> dict:  # noqa: B008  (FastAPI 
         "sha256": sha,
         "already_ingested": bool(existing),
         "parse_status": (existing["parse_status"] if existing else None),
-        # Next step (not implemented): pick a parser, run it, return the
-        # provisional transactions for the user to review.
+        # Next step (not implemented): run an upload review/import workflow.
         "note": (
-            "PDF upload accepted. Auto-parse + LLM-assisted new-parser "
-            "drafting is not implemented yet. Run `uv run ledger ingest run` "
-            "to ingest, or configure an LLM API key in Settings and click "
-            "'Generate parser' (also not yet implemented)."
+            "PDF upload accepted and saved. Upload review/import and "
+            "LLM-assisted new-parser drafting are not implemented yet. "
+            "Move the PDF into a recognized institution folder or run "
+            "`uv run ledger ingest run --force` after adding parser support."
         ),
     }
 

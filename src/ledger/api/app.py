@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .routes import config as config_route
 from .routes import monthly, performance, research, statements, transactions, viz
 
-app = FastAPI(title="Ledger API", version="0.1.0")
+app = FastAPI(title="Trade History API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

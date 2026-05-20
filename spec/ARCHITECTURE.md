@@ -95,8 +95,10 @@ replays signed transactions after that checkpoint up to the selected day.
 Empty statement rows, such as annual reports with no holdings table, are
 not checkpoints. Before the first available snapshot, it starts from
 `initial_positions` and replays transactions forward. The Performance
-route still forward-fills account snapshots to avoid zig-zag when account
-statement dates are staggered.
+route forward-fills securities and cash to avoid zig-zag when account
+statement dates are staggered. A later broker checkpoint clears any prior
+security for that account that no longer appears in the statement, so
+sold-out holdings do not live forever.
 
 **Why snapshots still matter:** brokers sometimes apply lot adjustments,
 splits, name changes, and book-cost roll-ups that *only* appear on the
@@ -108,19 +110,31 @@ first available statement — they let you record or infer an opening
 balance for holdings that pre-date your earliest PDF. `ledger ingest
 infer-initials` deletes and recomputes only rows whose `notes` begin with
 `inferred:`; reviewed/manual opening balances use a different note prefix
-and are preserved on re-run.
+and are preserved on re-run. Cash inference uses the first monthly cash
+snapshot for each `(account, currency)`; annual/interim records do not
+act as cash checkpoints. It subtracts cash-impacting transaction
+`net_amount` rows, including buys/sells/fees/transfers/dividends, while
+excluding non-cash corporate-action rows such as splits and name changes.
+Legacy inferred cash rows from before the `notes` column existed are
+replaced with tagged inferred rows.
+
+Annual performance reports, when a parser exposes them, are stored in
+`annual_performance_reports`. These rows are statement-level summaries
+such as RBC money-weighted returns; they do not create transactions or
+position snapshots.
 
 ### 1.5 In-kind transfers between MY accounts
 
 When a holding moves from CIBC Investor's Edge to a CIBC TFSA, both
-statements show one half of the move. The schema captures both:
+statements show one half of the move. The schema has placeholders for
+capturing both:
 
 - `account_links` — date-level link (transfer_date, from, to, notes).
 - `transactions.counterpart_account_id` / `counterpart_txn_id` —
   event-level pairing.
 
-This lets the Performance and Monthly tabs trace a lot across accounts
-without double-counting cash.
+These tables are not yet populated by ingest or exposed in API workflows;
+they are scaffolding for future transfer chaining and reconciliation.
 
 ### 1.6 The quarantine principle
 
@@ -299,6 +313,26 @@ erDiagram
         TEXT notes
     }
 
+    annual_performance_reports {
+        INTEGER performance_id PK
+        INTEGER statement_id FK
+        INTEGER account_id FK
+        TEXT currency
+        TEXT period_start
+        TEXT period_end
+        TEXT since_date
+        REAL beginning_market_value
+        REAL deposits_transfers_in
+        REAL withdrawals_transfers_out
+        REAL net_investment_return
+        REAL ending_market_value
+        REAL money_weighted_1y
+        REAL money_weighted_3y
+        REAL money_weighted_5y
+        REAL money_weighted_10y
+        REAL money_weighted_since
+    }
+
     position_transaction_links {
         INTEGER link_id PK
         INTEGER snapshot_id FK
@@ -320,6 +354,7 @@ erDiagram
     accounts ||--o{ cash_balances : "has"
     accounts ||--o{ initial_positions : "has"
     accounts ||--o{ initial_cash : "has"
+    accounts ||--o{ annual_performance_reports : "summarized by"
     instruments ||--o{ instrument_aliases : "aliased by"
     instruments ||--o{ transactions : "referenced in"
     instruments ||--o{ position_snapshots : "snapshot of"
@@ -328,6 +363,7 @@ erDiagram
     statements ||--o{ transactions : "groups"
     statements ||--o{ position_snapshots : "contains"
     statements ||--o{ cash_balances : "contains"
+    statements ||--o{ annual_performance_reports : "summarizes"
     position_snapshots ||--o{ position_transaction_links : "attributed via"
     transactions ||--o{ position_transaction_links : "attributed via"
 ```
@@ -347,6 +383,7 @@ erDiagram
 | `cash_balances` | `(statement_id, currency)` | `idx_cash_account_date` |
 | `initial_positions` | `(account_id, as_of_date, instrument_id)` | — |
 | `initial_cash` | `(account_id, as_of_date, currency)` | — |
+| `annual_performance_reports` | `(statement_id, currency)` | — |
 | `position_transaction_links` | `(snapshot_id, transaction_id)` | — |
 
 ### 2.2 Transaction type vocabulary
@@ -358,13 +395,14 @@ buy / sell / short_sell / buy_to_cover
 option_buy_to_open / option_sell_to_open
 option_buy_to_close / option_sell_to_close
 option_assignment / option_exercise / option_expiration
-dividend / distribution / interest_income
+dividend / reinvest_dividend / distribution / interest_income
 interest_expense / margin_interest
 transfer_in / transfer_out / journal
 deposit / withdrawal
 tax_withholding
 fee / commission / adjustment / fx_conversion
-stock_split / name_change / spinoff / merger / return_of_capital
+stock_split / stock_split_credit / stock_split_debit
+name_change / spinoff / merger / return_of_capital
 ```
 
 Adding a new type requires updating both the literal *and* the analytics
@@ -493,7 +531,7 @@ flowchart TD
     E -->|text| D
     D --> G[registry.select_parser\nfolder_name + first-page sniff]
     G -->|matched| H[Parser.parse pdf]
-    G -->|no match| I[GenericParser stub\nno-op — skip]
+    G -->|no match| I[skip\nrecord failed source_file]
     H -->|success| J[ParseResult\nlist of ParsedStatement]
     H -->|partial / error| K[quarantine_transactions\n+ partial commit]
     J --> L[ingest_one\nSQLite upserts]
@@ -504,16 +542,20 @@ flowchart TD
 ```
 
 Entry point: `ledger ingest run` (see [src/ledger/ingest/pipeline.py](../src/ledger/ingest/pipeline.py)).
+Use `uv run ledger ingest run --force` after parser-code changes when you
+want to re-parse PDFs whose bytes are unchanged.
 
 ### 4.2 Idempotency
 
 Re-running ingest on the same PDF is safe because:
 
 1. `source_files` is keyed on `relpath` — the row is updated, not duplicated.
-2. `sha256` is compared before re-parsing; an unchanged file is a no-op.
+2. `sha256` is compared before text extraction and parsing; an unchanged
+  file is a no-op unless `--force` is passed.
 3. Every derived table (`statements`, `transactions`, `position_snapshots`,
-   `cash_balances`) upserts by its natural key, so stale rows are replaced,
-   not appended.
+  `cash_balances`, `annual_performance_reports`, `quarantine_transactions`)
+  upserts or replaces by its natural key, so stale rows are replaced, not
+  appended.
 
 ### 4.3 The Parser protocol
 
@@ -575,6 +617,7 @@ flowchart TD
     INST --> TXN[transactions\nbulk insert]
     INST --> SNAP[position_snapshots\nbulk upsert]
     INST --> CASH[cash_balances\nbulk upsert]
+    STM --> PERF[annual_performance_reports\nbulk upsert]
     TXN --> QUAR[quarantine_transactions\nfor unconfident rows]
 ```
 
@@ -586,8 +629,8 @@ flowchart TD
 | CIBC Investor's Edge | `CIBC Invest Direct/` | Monthly. `Tax-Document_*.pdf` skipped. Option expiry `MM/DD/YY`. |
 | CIBC TFSA | `CIBC TSFA/` | Same engine as CIBC IE; account-type heuristic detects TFSA. |
 | HSBC Direct Invest | `HSBC direct invest/` | pdfplumber drops spaces; `_normalize()` re-inserts space after `MmmDD`. Compact options `PUT-100TLT'2616JA@75`. Multi-account per PDF. |
-| RBC Direct Investing | `RBC Invest Direct/` | One PDF holds CAD + USD statements → 2 `ParsedStatement` rows. Full month names. Trailing-hyphen negatives. |
-| TD WebBroker | `TD Webbroker/` | Two sub-accounts per PDF (`<acct>-CDN` / `<acct>-USD`). Option positions span two lines. Legacy 2016-2017 quarterly format. |
+| RBC Direct Investing | `RBC Invest Direct/` | One PDF holds CAD + USD statements → 2 `ParsedStatement` rows. Full month names. Trailing-hyphen negatives. Annual performance reports populate `annual_performance_reports` with money-weighted returns. |
+| TD WebBroker | `TD Webbroker/` | Two sub-accounts per PDF (`<acct>-CDN` / `<acct>-USD`). Option positions span two lines. Legacy bundled PDFs are split into one statement per month/currency. |
 
 ### 4.7 Symbol resolution (and synthetic symbols)
 
@@ -617,7 +660,7 @@ parens-ticker. The app's strategy, in order:
 This keeps the audit trail honest: the description always matches the
 PDF, even if the canonical ticker can't be inferred.
 
-See [doc/extraction-corner-cases.md](doc/extraction-corner-cases.md) for
+See [EXTRACTION-CORNER-CASES.md](EXTRACTION-CORNER-CASES.md) for
 parser gotchas such as generic `DISTRIB.` labels, CIBC fund-code lookup
 requests, and DLR/DLR.U currency-transfer direction.
 
@@ -735,7 +778,7 @@ corpus (redacted or synthetic) that covers:
 **Step 5 — Re-ingest and verify**
 
 ```powershell
-uv run ledger ingest run
+uv run ledger ingest run --force
 # check quarantine count didn't spike
 uv run python -c "
 import sqlite3; c=sqlite3.connect('data/ledger.sqlite')

@@ -21,7 +21,8 @@ TxnType = Literal[
     "deposit", "withdrawal",
     "tax_withholding",
     "fee", "commission", "adjustment", "fx_conversion",
-    "stock_split", "name_change", "spinoff", "merger", "return_of_capital",
+    "reinvest_dividend", "stock_split", "stock_split_credit", "stock_split_debit",
+    "name_change", "spinoff", "merger", "return_of_capital",
 ]
 
 
@@ -80,6 +81,24 @@ class ParsedCashBalance:
 
 
 @dataclass
+class ParsedAnnualPerformance:
+    currency: str
+    period_start: str
+    period_end: str
+    since_date: str | None
+    beginning_market_value: float | None
+    deposits_transfers_in: float | None
+    withdrawals_transfers_out: float | None
+    net_investment_return: float | None
+    ending_market_value: float | None
+    money_weighted_1y: float | None
+    money_weighted_3y: float | None
+    money_weighted_5y: float | None
+    money_weighted_10y: float | None
+    money_weighted_since: float | None
+
+
+@dataclass
 class ParsedAccount:
     account_number: str
     account_type: str | None       # Cash/Margin/RRSP/TFSA...
@@ -95,6 +114,7 @@ class ParsedStatement:
     transactions: list[ParsedTxn] = field(default_factory=list)
     positions: list[ParsedPosition] = field(default_factory=list)
     cash_balances: list[ParsedCashBalance] = field(default_factory=list)
+    annual_performance: list[ParsedAnnualPerformance] = field(default_factory=list)
     quarantine: list[tuple[str, str]] = field(default_factory=list)  # (raw_line, reason)
 
 

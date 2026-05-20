@@ -211,13 +211,17 @@ def _parse_holdings(text: str, currency: str, stmt: ParsedStatement) -> None:
         # Section labels HSBC uses
         lower = s.lower()
         if lower.startswith("equities"):
-            section = "Equities"; continue
+            section = "Equities"
+            continue
         if "options/rights/warrants" in lower:
-            section = "Options"; continue
+            section = "Options"
+            continue
         if lower.startswith("mutual funds"):
-            section = "MutualFunds"; continue
+            section = "MutualFunds"
+            continue
         if lower.startswith("cash"):
-            section = "Cash"; continue
+            section = "Cash"
+            continue
         if lower.startswith("total"):
             continue
 
@@ -300,10 +304,12 @@ def _parse_activity(text: str, currency: str, year_default: int,
             continue
         mo = RE_OPENING.match(s)
         if mo:
-            opening = parse_money(mo.group(1)); continue
+            opening = parse_money(mo.group(1))
+            continue
         mc = RE_CLOSING.match(s)
         if mc:
-            closing = parse_money(mc.group(1)); continue
+            closing = parse_money(mc.group(1))
+            continue
 
         m = RE_ACT_ROW.match(s)
         if not m:

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, TxnRow } from "../api";
@@ -20,6 +21,52 @@ const MONEY_THRESHOLDS = [
   { value: 1_000_000, label: "≥ $1M" },
 ];
 
+type TxnColumnKey =
+  | "date"
+  | "institution"
+  | "account"
+  | "type"
+  | "symbol"
+  | "option"
+  | "quantity"
+  | "price"
+  | "amount"
+  | "currency"
+  | "description";
+
+type TxnColumnSpec = {
+  key: TxnColumnKey;
+  className: string;
+  defaultWidth: number;
+  minWidth: number;
+  maxWidth: number;
+};
+
+const TRANSACTION_COLUMN_SPECS: TxnColumnSpec[] = [
+  { key: "date", className: "txn-col-date", defaultWidth: 116, minWidth: 92, maxWidth: 180 },
+  { key: "institution", className: "txn-col-institution", defaultWidth: 116, minWidth: 92, maxWidth: 220 },
+  { key: "account", className: "txn-col-account", defaultWidth: 158, minWidth: 110, maxWidth: 260 },
+  { key: "type", className: "txn-col-type", defaultWidth: 168, minWidth: 116, maxWidth: 280 },
+  { key: "symbol", className: "txn-col-symbol", defaultWidth: 104, minWidth: 74, maxWidth: 180 },
+  { key: "option", className: "txn-col-option", defaultWidth: 158, minWidth: 96, maxWidth: 320 },
+  { key: "quantity", className: "txn-col-qty", defaultWidth: 96, minWidth: 78, maxWidth: 180 },
+  { key: "price", className: "txn-col-price", defaultWidth: 92, minWidth: 74, maxWidth: 180 },
+  { key: "amount", className: "txn-col-amount", defaultWidth: 132, minWidth: 98, maxWidth: 220 },
+  { key: "currency", className: "txn-col-currency", defaultWidth: 72, minWidth: 64, maxWidth: 130 },
+  { key: "description", className: "txn-col-description", defaultWidth: 460, minWidth: 220, maxWidth: 760 },
+];
+
+const DEFAULT_TRANSACTION_COLUMN_WIDTHS = TRANSACTION_COLUMN_SPECS.reduce(
+  (widths, columnSpec) => ({ ...widths, [columnSpec.key]: columnSpec.defaultWidth }),
+  {} as Record<TxnColumnKey, number>,
+);
+
+function clampColumnWidth(key: TxnColumnKey, width: number) {
+  const columnSpec = TRANSACTION_COLUMN_SPECS.find((spec) => spec.key === key);
+  if (!columnSpec) return width;
+  return Math.min(columnSpec.maxWidth, Math.max(columnSpec.minWidth, Math.round(width)));
+}
+
 export default function Transactions() {
   const { activeAccountIds, accounts } = usePortfolio();
   const { t } = useI18n();
@@ -33,6 +80,14 @@ export default function Transactions() {
   const [symbols, setSymbols] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
   const [minAbs, setMinAbs] = useState(0);
+  const [columnWidths, setColumnWidths] = useState<Record<TxnColumnKey, number>>(
+    () => ({ ...DEFAULT_TRANSACTION_COLUMN_WIDTHS }),
+  );
+
+  const tableMinWidth = useMemo(() => TRANSACTION_COLUMN_SPECS.reduce(
+    (totalWidth, columnSpec) => totalWidth + columnWidths[columnSpec.key],
+    0,
+  ), [columnWidths]);
 
   const syncTransactionsHeaderHeight = () => {
     const node = tableWrapRef.current;
@@ -93,6 +148,49 @@ export default function Transactions() {
     scrollSnapTimerRef.current = window.setTimeout(snapTransactionsToRow, 90);
   };
 
+  const setColumnWidth = (key: TxnColumnKey, width: number) => {
+    const nextWidth = clampColumnWidth(key, width);
+    setColumnWidths((currentWidths) => {
+      if (currentWidths[key] === nextWidth) return currentWidths;
+      return { ...currentWidths, [key]: nextWidth };
+    });
+  };
+
+  const resetColumnWidth = (key: TxnColumnKey) => {
+    setColumnWidth(key, DEFAULT_TRANSACTION_COLUMN_WIDTHS[key]);
+  };
+
+  const startColumnResize = (event: ReactPointerEvent<HTMLSpanElement>, key: TxnColumnKey) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const startClientX = event.clientX;
+    const startWidth = columnWidths[key];
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      setColumnWidth(key, startWidth + moveEvent.clientX - startClientX);
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.requestAnimationFrame(syncTransactionsHeaderHeight);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+  };
+
+  const resizeColumnWithKeyboard = (event: ReactKeyboardEvent<HTMLSpanElement>, key: TxnColumnKey) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const direction = event.key === "ArrowRight" ? 1 : -1;
+    const step = event.shiftKey ? 24 : 8;
+    setColumnWidth(key, columnWidths[key] + direction * step);
+  };
+
   useEffect(() => {
     const node = tableWrapRef.current;
     const headerCell = node?.querySelector<HTMLTableCellElement>("thead th");
@@ -145,6 +243,31 @@ export default function Transactions() {
     return m;
   }, [accounts]);
 
+  const renderResizableHeader = (key: TxnColumnKey, label: string, className?: string) => (
+    <th className={className}>
+      <span className="column-header-label">{label}</span>
+      <span
+        aria-label={`Resize ${label} column`}
+        aria-orientation="vertical"
+        aria-valuemax={TRANSACTION_COLUMN_SPECS.find((columnSpec) => columnSpec.key === key)?.maxWidth}
+        aria-valuemin={TRANSACTION_COLUMN_SPECS.find((columnSpec) => columnSpec.key === key)?.minWidth}
+        aria-valuenow={columnWidths[key]}
+        className="column-resize-handle"
+        onClick={(event) => event.stopPropagation()}
+        onDoubleClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          resetColumnWidth(key);
+        }}
+        onKeyDown={(event) => resizeColumnWithKeyboard(event, key)}
+        onPointerDown={(event) => startColumnResize(event, key)}
+        role="separator"
+        tabIndex={0}
+        title={`Resize ${label}`}
+      />
+    </th>
+  );
+
   return (
     <>
       <h2>{t("nav.transactions")}</h2>
@@ -162,7 +285,12 @@ export default function Transactions() {
             ))}
           </select>
         </label>
-        <span className="muted">{txnsQ.data?.count ?? 0} rows</span>
+        <span className="muted">
+          {txnsQ.data?.count ?? 0}{txnsQ.data?.has_more ? ` of ${txnsQ.data.total_count}` : ""} rows
+        </span>
+        {txnsQ.data?.has_more && (
+          <span className="tag accent">limited to first {txnsQ.data.count.toLocaleString()} rows</span>
+        )}
         {activeAccountIds.length > 0 && accountIds.length === 0 && (
           <span className="tag accent">portfolio filter on</span>
         )}
@@ -182,26 +310,29 @@ export default function Transactions() {
       )}
 
       <div className="card table-scroll transactions-table-wrap" ref={tableWrapRef} onScroll={scheduleTransactionsSnap}>
-        <table className="transactions-table">
+        <table className="transactions-table" style={{ minWidth: `${tableMinWidth}px` }}>
           <colgroup>
-            <col className="txn-col-date" />
-            <col className="txn-col-institution" />
-            <col className="txn-col-account" />
-            <col className="txn-col-type" />
-            <col className="txn-col-symbol" />
-            <col className="txn-col-option" />
-            <col className="txn-col-qty" />
-            <col className="txn-col-price" />
-            <col className="txn-col-amount" />
-            <col className="txn-col-currency" />
-            <col className="txn-col-description" />
+            {TRANSACTION_COLUMN_SPECS.map((columnSpec) => (
+              <col
+                className={columnSpec.className}
+                key={columnSpec.key}
+                style={{ width: `${columnWidths[columnSpec.key]}px` }}
+              />
+            ))}
           </colgroup>
           <thead>
             <tr>
-              <th>{t("th.date")}</th><th>{t("f.institution")}</th><th>{t("th.account")}</th><th>{t("th.type")}</th>
-              <th>{t("th.symbol")}</th><th>Option</th>
-              <th className="num">{t("th.quantity")}</th><th className="num">{t("th.price")}</th>
-              <th className="num">{t("th.amount")}</th><th>{t("th.currency")}</th><th>{t("th.description")}</th>
+              {renderResizableHeader("date", t("th.date"))}
+              {renderResizableHeader("institution", t("f.institution"))}
+              {renderResizableHeader("account", t("th.account"))}
+              {renderResizableHeader("type", t("th.type"))}
+              {renderResizableHeader("symbol", t("th.symbol"))}
+              {renderResizableHeader("option", "Option")}
+              {renderResizableHeader("quantity", t("th.quantity"), "num")}
+              {renderResizableHeader("price", t("th.price"), "num")}
+              {renderResizableHeader("amount", t("th.amount"), "num")}
+              {renderResizableHeader("currency", t("th.currency"))}
+              {renderResizableHeader("description", t("th.description"))}
             </tr>
           </thead>
           <tbody>

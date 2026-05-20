@@ -145,7 +145,9 @@ CREATE INDEX IF NOT EXISTS idx_statements_account_period ON statements(account_i
 --   deposit, withdrawal,                       -- external cash
 --   tax_withholding,
 --   fee, commission, adjustment, fx_conversion,
---   stock_split, name_change, spinoff, merger, return_of_capital
+--   reinvest_dividend,
+--   stock_split, stock_split_credit, stock_split_debit,
+--   name_change, spinoff, merger, return_of_capital
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS transactions (
@@ -257,6 +259,29 @@ CREATE TABLE IF NOT EXISTS initial_cash (
     UNIQUE(account_id, as_of_date, currency)
 );
 
+-- Annual performance-report totals such as RBC money-weighted returns.
+-- These are statement-level summaries, not transaction events.
+CREATE TABLE IF NOT EXISTS annual_performance_reports (
+    performance_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    statement_id              INTEGER NOT NULL REFERENCES statements(statement_id) ON DELETE CASCADE,
+    account_id                INTEGER NOT NULL REFERENCES accounts(account_id),
+    currency                  TEXT NOT NULL,
+    period_start              TEXT NOT NULL,
+    period_end                TEXT NOT NULL,
+    since_date                TEXT,
+    beginning_market_value    REAL,
+    deposits_transfers_in     REAL,
+    withdrawals_transfers_out REAL,
+    net_investment_return     REAL,
+    ending_market_value       REAL,
+    money_weighted_1y         REAL,
+    money_weighted_3y         REAL,
+    money_weighted_5y         REAL,
+    money_weighted_10y        REAL,
+    money_weighted_since      REAL,
+    UNIQUE(statement_id, currency)
+);
+
 -- ---------------------------------------------------------------------------
 -- POSITION-TO-TRANSACTION RECONCILIATION
 -- For each (account, instrument) movement, attribute closing-month positions
@@ -281,4 +306,4 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value            TEXT NOT NULL
 );
 
-INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '3');
+INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '4');

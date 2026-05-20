@@ -78,6 +78,12 @@ Brokers) with a current holdings snapshot mirroring the
 `portfolio_dashboard/sample_portfolio.xlsx` reference, plus ~37
 invented buy/sell/option events spread over 2021-2026.
 
+Example-data screenshots:
+
+![Transactions tab with example data](../docs/screenshots/transactions-example.png)
+
+![Monthly snapshot tab with example data](../docs/screenshots/monthly-example.png)
+
 Reset back to your real data with `$env:LEDGER_PROFILE = "real"` or
 just close the terminal.
 
@@ -91,6 +97,11 @@ just close the terminal.
    ```powershell
    uv run ledger ingest run
    ```
+
+  Re-running is fast when PDFs are unchanged because the ingester compares
+  `source_files.sha256` before parsing. Use `uv run ledger ingest run --force`
+  after parser upgrades when you intentionally want to re-parse unchanged
+  PDFs.
 
 3. Pull market data for everything you hold:
 
@@ -122,7 +133,8 @@ just close the terminal.
     Monthly / Performance views know what you were already holding when
     our records start. Idempotent. Inferred rows are tagged with
     `notes = 'inferred:...'`; any reviewed/manual rows with a different
-    note prefix are preserved on re-run.
+    note prefix are preserved on re-run. Cash rows are inferred from the
+    first monthly cash snapshot for each account/currency.
 
 5. *(Optional after parser upgrades)* Repair already-ingested legacy
     symbols without deleting PDFs or re-ingesting everything. The repair
@@ -169,17 +181,19 @@ database, across all accounts in the active portfolio.
 
 ### 4.3 Performance
 
-Total portfolio market value over time.
+Total portfolio value over time, including cash.
 
 - **Period** buttons: 1m / 3m / 6m / 1y / 3y / 5y / 10y / max / custom.
 - **Currency**: CAD / USD / Both.
 - **Show as %** — rebases all series to 100 at the start of the window;
   forced on if "Hide $ values" is set in Settings.
 - **Portfolio / institution / account** filters (multi-select).
-- Cash chart toggles off automatically when "Hide $ values" is on.
+- The separate cash chart remains available as a cash-only breakdown and
+  toggles off automatically when "Hide $ values" is on.
 
 The chart no longer zig-zags between accounts whose statement dates
-don't line up — see
+don't line up, and sold-out holdings are cleared when later broker
+snapshots omit them — see
 [ARCHITECTURE.md §1.4](ARCHITECTURE.md#14-transactions-snapshots-and-the-reconciliation-gap) for the
 forward-fill rationale.
 
@@ -235,10 +249,10 @@ account filters inside the tab:
 ## 5. PDF upload (beta)
 
 A `POST /statements/upload` endpoint exists for in-browser PDF upload.
-Today it accepts the file, fingerprints it, and runs the existing
-parsers if the institution can be recognized. If no parser claims the
-file, the response is `unrecognized` and (when an LLM API key is
-configured) the app will prompt to draft a new extraction routine.
+Today it accepts only files named `.pdf` whose bytes start with PDF magic
+bytes, rejects empty files and files over 25 MiB, sanitizes the upload
+filename, saves the file under `Statements/uploads/`, and returns its
+SHA-256 fingerprint. It does not yet run a review/import workflow.
 
 LLM-driven parser drafting is **not implemented yet**; the API-key
 slots in Settings are placeholders. See `AGENTS.md` deferred items.
@@ -278,7 +292,7 @@ offer arbitrary shell access.
 |---|---|---|
 | Vite crashes with `Failed to resolve` on Windows | Vite realpath'd the workspace onto another drive | Already fixed via `resolve.preserveSymlinks: true` in `frontend/vite.config.ts` |
 | Treemap is blank | Picked a date with no snapshot | Pick a date ≥ your earliest statement; the API falls back to the latest available |
-| Performance chart goes flat to zero | One account's data gap | Forward-fill is on by default; if you really want raw, pass `forward_fill=false` to `/api/performance/total` |
+| Performance chart drops to zero | All filtered holdings were sold or omitted by the latest broker checkpoint | Broaden the account/symbol filters, or pass `forward_fill=false` to `/api/performance/total` if you want raw checkpoint sums |
 | `BOUGHT` appears as a symbol in RBC rows | Pre-fix bug | Run `uv run ledger ingest repair-symbols` or re-ingest after pulling. The parser now strips leading verbs and applies a small name-to-ticker map (e.g. iShares 20+ → TLT) |
 | Empty option symbol on a CIBC `option_expiration` row | Pre-fix bug | Run `uv run ledger ingest repair-symbols` or re-ingest. The parser now recognizes `CALL ROOT MON DD YYYY STRIKE` shapes |
 

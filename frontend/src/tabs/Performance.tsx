@@ -141,7 +141,7 @@ export default function Performance() {
       </div>
 
       <div className="card">
-        <h3>Total market value{(normalize || hideMoney) ? " — % change" : ""}</h3>
+        <h3>Total portfolio value{(normalize || hideMoney) ? " — % change" : ""}</h3>
         <Plot
           data={Array.from(seriesByCcy.entries()).map(([ccy, s]) => ({
             type: "scatter", mode: "lines", name: ccy,
@@ -165,9 +165,9 @@ export default function Performance() {
           useResizeHandler
         />
         <p className="muted" style={{ marginBottom: 0 }}>
-          Snapshots are forward-filled from each account's last statement to
-          remove the saw-tooth that arose from accounts publishing on
-          different calendars.
+          Securities and cash are forward-filled from each account's latest
+          statement checkpoints to remove the saw-tooth that arose from
+          accounts publishing on different calendars.
         </p>
       </div>
 

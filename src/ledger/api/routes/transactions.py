@@ -32,14 +32,8 @@ def list_transactions(
     ),
     limit: int = 5000,
 ) -> dict:
-    sql = [
-        "SELECT t.transaction_id, t.trade_date, t.settle_date, t.txn_type,",
-        "       t.quantity, t.price, t.gross_amount, t.commission, t.other_fees,",
-        "       t.net_amount, t.currency, t.description,",
-        "       a.account_id, a.account_number, a.account_type, a.nickname,",
-        "       i.code AS institution_code, i.display_name AS institution_name,",
-        "       COALESCE(inst.option_root, inst.symbol) AS symbol,",
-        "       inst.asset_type, inst.option_expiry, inst.option_strike, inst.option_type",
+    limit = min(max(limit, 1), 50_000)
+    from_sql = [
         "  FROM transactions t",
         "  JOIN accounts a ON a.account_id = t.account_id",
         "  JOIN institutions i ON i.institution_id = a.institution_id",
@@ -48,36 +42,47 @@ def list_transactions(
     ]
     params: list = []
     if start:
-        sql.append(" AND t.trade_date >= ?")
+        from_sql.append(" AND t.trade_date >= ?")
         params.append(start)
     if end:
-        sql.append(" AND t.trade_date <= ?")
+        from_sql.append(" AND t.trade_date <= ?")
         params.append(end)
     insts = _csv_list(institution)
     if insts:
-        sql.append(f" AND i.code IN ({','.join('?' * len(insts))})")
+        from_sql.append(f" AND i.code IN ({','.join('?' * len(insts))})")
         params.extend(insts)
     accts = [int(x) for x in _csv_list(account_id) if x.isdigit()]
     if accts:
-        sql.append(f" AND a.account_id IN ({','.join('?' * len(accts))})")
+        from_sql.append(f" AND a.account_id IN ({','.join('?' * len(accts))})")
         params.extend(accts)
     syms = [s.upper() for s in _csv_list(symbol)]
     if syms:
-        sql.append(f" AND COALESCE(inst.option_root, inst.symbol) IN ({','.join('?' * len(syms))})")
+        from_sql.append(f" AND COALESCE(inst.option_root, inst.symbol) IN ({','.join('?' * len(syms))})")
         params.extend(syms)
     types = _csv_list(txn_type)
     if types:
-        sql.append(f" AND t.txn_type IN ({','.join('?' * len(types))})")
+        from_sql.append(f" AND t.txn_type IN ({','.join('?' * len(types))})")
         params.extend(types)
     if min_abs_amount is not None and min_abs_amount > 0:
-        sql.append(" AND ABS(COALESCE(t.net_amount, 0)) >= ?")
+        from_sql.append(" AND ABS(COALESCE(t.net_amount, 0)) >= ?")
         params.append(min_abs_amount)
-    sql.append(" ORDER BY t.trade_date DESC, t.transaction_id DESC LIMIT ?")
-    params.append(limit)
+
+    select_sql = [
+        "SELECT t.transaction_id, t.trade_date, t.settle_date, t.txn_type,",
+        "       t.quantity, t.price, t.gross_amount, t.commission, t.other_fees,",
+        "       t.net_amount, t.currency, t.description,",
+        "       a.account_id, a.account_number, a.account_type, a.nickname,",
+        "       i.code AS institution_code, i.display_name AS institution_name,",
+        "       COALESCE(inst.option_root, inst.symbol) AS symbol,",
+        "       inst.asset_type, inst.option_expiry, inst.option_strike, inst.option_type",
+        *from_sql,
+        " ORDER BY t.trade_date DESC, t.transaction_id DESC LIMIT ?",
+    ]
 
     with sqlite_db.session() as conn:
-        rows = [dict(r) for r in conn.execute("\n".join(sql), params).fetchall()]
-    return {"rows": rows, "count": len(rows)}
+        total_count = conn.execute("SELECT COUNT(*) " + "\n".join(from_sql), params).fetchone()[0]
+        rows = [dict(r) for r in conn.execute("\n".join(select_sql), [*params, limit]).fetchall()]
+    return {"rows": rows, "count": len(rows), "total_count": total_count, "has_more": total_count > len(rows)}
 
 
 @router.get("/accounts")

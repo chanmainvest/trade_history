@@ -45,3 +45,25 @@ def test_rbc_options_classification():
         assert t.instrument.option_expiry is not None
         assert t.instrument.option_type in {"CALL", "PUT"}
         assert t.txn_type.startswith("option_")
+
+
+def test_rbc_annual_performance_report_parses_money_weighted_returns():
+    pdf = _load("RBC Invest Direct/66844715-2022_annual_report.txt")
+    res = RBCParser().parse(pdf)
+    assert res.errors == []
+    assert len(res.statements) == 1
+    statement = res.statements[0]
+    assert statement.statement_type == "annual"
+    assert statement.period_start == "2022-01-01"
+    assert statement.period_end == "2022-12-31"
+    rows = {row.currency: row for row in statement.annual_performance}
+    assert rows["CAD"].ending_market_value == 504398.5
+    assert rows["CAD"].money_weighted_1y == -10.63
+    assert rows["CAD"].money_weighted_since == 5.99
+    assert rows["USD"].since_date == "2022-03-28"
+    assert rows["USD"].beginning_market_value == 0.0
+    assert rows["USD"].deposits_transfers_in == 70214.83
+    assert rows["USD"].withdrawals_transfers_out == -209.09
+    assert rows["USD"].net_investment_return == -22423.89
+    assert rows["USD"].ending_market_value == 47581.85
+    assert rows["USD"].money_weighted_since == -48.03

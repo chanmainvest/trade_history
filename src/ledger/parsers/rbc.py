@@ -31,6 +31,7 @@ from .helpers import parse_money, parse_option_expiry
 from .registry import register
 from .types import (
     ParsedAccount,
+    ParsedAnnualPerformance,
     ParsedCashBalance,
     ParsedInstrument,
     ParsedPosition,
@@ -54,6 +55,10 @@ RE_PERIOD_END = re.compile(
 )
 RE_LAST_STMT = re.compile(
     r"Date of Last Statement:\s+([A-Z]+)\.?\s+(\d{1,2}),?\s+(\d{4})", re.IGNORECASE,
+)
+RE_ANNUAL_PERIOD = re.compile(
+    r"For the period from\s+([A-Z][a-z]+)\s*(\d{1,2}),\s*(\d{4})\s+"
+    r"to\s+([A-Z][a-z]+)\s*(\d{1,2}),\s*(\d{4})",
 )
 RE_ACCT_NUM = re.compile(r"Your Account Number:\s+(\d{3}[- ]?\d{5}-\d-\d)")
 RE_ACCT_TYPE = re.compile(r"^\s*(Margin|Cash|RRSP|TFSA|RRIF|RESP|LIRA)\s*-\s*(Long|Short)?",
@@ -110,6 +115,108 @@ def _is_annual(relpath: str, text: str) -> bool:
     tl = text.lower()
     return ("annual investment report" in tl
             or "annual investment performance report" in tl)
+
+
+def _parse_annual_period(text: str, fallback_year: int | None) -> tuple[str, str] | None:
+    match = RE_ANNUAL_PERIOD.search(text)
+    if match:
+        try:
+            start_month = _MONTH_ABBR[match.group(1).upper()[:3]]
+            start_day = int(match.group(2))
+            start_year = int(match.group(3))
+            end_month = _MONTH_ABBR[match.group(4).upper()[:3]]
+            end_day = int(match.group(5))
+            end_year = int(match.group(6))
+            return date(start_year, start_month, start_day).isoformat(), date(end_year, end_month, end_day).isoformat()
+        except (KeyError, ValueError):
+            pass
+    if fallback_year is None:
+        return None
+    return f"{fallback_year}-01-01", f"{fallback_year}-12-31"
+
+
+def _parse_since_date(block: str) -> str | None:
+    match = re.search(r"Since([A-Z][a-z]+)\s*(\d{1,2}),\s*(\d{4})", block)
+    if not match:
+        return None
+    month = _MONTH_ABBR.get(match.group(1).upper()[:3])
+    if not month:
+        return None
+    try:
+        return date(int(match.group(3)), month, int(match.group(2))).isoformat()
+    except ValueError:
+        return None
+
+
+def _annual_pair(block: str, label: str) -> tuple[float | None, float | None]:
+    money = r"(-?[\d,]+(?:\.\d+)?|-)"
+    match = re.search(rf"{label}\s+{money}\s+{money}", block)
+    if not match:
+        return None, None
+    return parse_money(match.group(1)), parse_money(match.group(2))
+
+
+def _parse_percent(token: str) -> float | None:
+    token = token.strip()
+    if token == "-":
+        return None
+    return parse_money(token.rstrip("%"))
+
+
+def _annual_period_or_since(period_value: float | None, since_value: float | None) -> float | None:
+    return period_value if period_value is not None else since_value
+
+
+def _annual_returns(block: str) -> tuple[float | None, float | None, float | None, float | None, float | None]:
+    match = re.search(
+        r"Money-weighted rate ofreturn\s+Past.*?\n.*?\n([^\n]+)",
+        block,
+        re.DOTALL,
+    )
+    if not match:
+        return None, None, None, None, None
+    tokens = re.findall(r"-?\d+(?:\.\d+)?%|-", match.group(1))
+    values = [_parse_percent(token) for token in tokens[:5]]
+    while len(values) < 5:
+        values.append(None)
+    return values[0], values[1], values[2], values[3], values[4]
+
+
+def _parse_annual_performance(text: str, period_start: str, period_end: str) -> list[ParsedAnnualPerformance]:
+    anchors = [("CAD", "Your Canadian dollar account"), ("USD", "Your U.S. dollar account")]
+    out: list[ParsedAnnualPerformance] = []
+    for idx, (currency, heading) in enumerate(anchors):
+        start = text.find(heading)
+        if start < 0:
+            continue
+        next_starts = [text.find(next_heading, start + len(heading)) for _, next_heading in anchors[idx + 1:]]
+        next_starts.append(text.find("Additionalnotes:", start + len(heading)))
+        end_candidates = [pos for pos in next_starts if pos > start]
+        end = min(end_candidates) if end_candidates else len(text)
+        block = text[start:end]
+        beginning, beginning_since = _annual_pair(block, "Beginningmarketvalue")
+        deposits, deposits_since = _annual_pair(block, "Depositsandtransfers-in")
+        withdrawals, withdrawals_since = _annual_pair(block, "Withdrawalsandtransfers-out")
+        net_return, net_return_since = _annual_pair(block, "Netinvestmentreturn")
+        ending, ending_since = _annual_pair(block, r"Endingmarketvalueat[A-Z][a-z]+\d{1,2},\d{4}")
+        mwrr_1y, mwrr_3y, mwrr_5y, mwrr_10y, mwrr_since = _annual_returns(block)
+        out.append(ParsedAnnualPerformance(
+            currency=currency,
+            period_start=period_start,
+            period_end=period_end,
+            since_date=_parse_since_date(block),
+            beginning_market_value=_annual_period_or_since(beginning, beginning_since),
+            deposits_transfers_in=_annual_period_or_since(deposits, deposits_since),
+            withdrawals_transfers_out=_annual_period_or_since(withdrawals, withdrawals_since),
+            net_investment_return=_annual_period_or_since(net_return, net_return_since),
+            ending_market_value=_annual_period_or_since(ending, ending_since),
+            money_weighted_1y=mwrr_1y,
+            money_weighted_3y=mwrr_3y,
+            money_weighted_5y=mwrr_5y,
+            money_weighted_10y=mwrr_10y,
+            money_weighted_since=mwrr_since,
+        ))
+    return out
 
 
 def _parse_block_period(text: str, year: int) -> tuple[str, str] | None:
@@ -251,10 +358,12 @@ def _parse_activity(body: str, currency: str, year: int,
             continue
         mo = RE_OPENING_BAL.search(s)
         if mo:
-            opening = parse_money(mo.group(1)); continue
+            opening = parse_money(mo.group(1))
+            continue
         mc = RE_CLOSING_BAL.search(s)
         if mc:
-            closing = parse_money(mc.group(1)); continue
+            closing = parse_money(mc.group(1))
+            continue
 
         m = RE_ACT_DATE.match(s)
         if not m:
@@ -423,7 +532,7 @@ class RBCParser:
 
         if _is_annual(pdf.relpath, text):
             # Emit empty annual entry to record the file
-            ym = re.search(r"(\d{4})", pdf.relpath)
+            ym = re.search(r"(20\d{2})", pdf.relpath)
             year = int(ym.group(1)) if ym else None
             acct_m = RE_ACCT_NUM.search(text)
             acct = acct_m.group(1) if acct_m else None
@@ -433,12 +542,18 @@ class RBCParser:
                 if fn:
                     acct = f"{fn.group(1)}-{fn.group(2)}-?-?"
             if acct and year:
+                annual_period = _parse_annual_period(text, year)
+                if annual_period is None:
+                    result.errors.append("could not parse annual performance period")
+                    return result
+                ps, pe = annual_period
                 result.statements.append(ParsedStatement(
                     account=ParsedAccount(account_number=acct,
                                           account_type="Margin",
                                           base_currency="CAD"),
-                    period_start=f"{year}-01-01", period_end=f"{year}-12-31",
+                    period_start=ps, period_end=pe,
                     statement_type="annual",
+                    annual_performance=_parse_annual_performance(text, ps, pe),
                 ))
             return result
 

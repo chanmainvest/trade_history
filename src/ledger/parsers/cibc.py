@@ -456,7 +456,8 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                     )
                     if m2:
                         # Heuristic: treat as price/amount missing, qty/amount.
-                        q = m2.group(1); a = m2.group(2)
+                        q = m2.group(1)
+                        a = m2.group(2)
                         amount = parse_money(a)
                         if q not in {"—", "-"}:
                             qty = parse_money(q)

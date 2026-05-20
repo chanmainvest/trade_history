@@ -1,8 +1,10 @@
 """Ingest pipeline scaffolding. Real parsers slot in via the registry."""
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime
+from pathlib import Path
 
 from .. import config
 from ..db import sqlite as sqlite_db
@@ -13,6 +15,26 @@ from ..parsers.types import ParsedStatement, ParseResult
 from ..pdf_text import PdfText, extract_pdf
 
 log = get_logger("ingest")
+
+SKIPPABLE_PARSE_STATUSES = {"ok", "partial", "skipped"}
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _unchanged_source_file_id(conn, *, relpath: str, sha256: str) -> int | None:
+    row = conn.execute(
+        "SELECT source_file_id, parse_status FROM source_files WHERE relpath = ? AND sha256 = ?",
+        (relpath, sha256),
+    ).fetchone()
+    if row and row["parse_status"] in SKIPPABLE_PARSE_STATUSES:
+        return int(row["source_file_id"])
+    return None
 
 
 def _record_source_file(conn, pdf: PdfText, *, parser_name: str | None,
@@ -70,6 +92,11 @@ def _write_statement(conn, *, source_file_id: int, institution_code: str,
     conn.execute("DELETE FROM transactions WHERE statement_id = ?", (statement_id,))
     conn.execute("DELETE FROM position_snapshots WHERE statement_id = ?", (statement_id,))
     conn.execute("DELETE FROM cash_balances WHERE statement_id = ?", (statement_id,))
+    conn.execute("DELETE FROM annual_performance_reports WHERE statement_id = ?", (statement_id,))
+    conn.execute(
+        "DELETE FROM quarantine_transactions WHERE source_file_id = ? AND account_id = ?",
+        (source_file_id, acct_id),
+    )
 
     for t in stmt.transactions:
         instr_id = None
@@ -140,6 +167,40 @@ def _write_statement(conn, *, source_file_id: int, institution_code: str,
              c.opening_balance, c.closing_balance),
         )
 
+    for perf in stmt.annual_performance:
+        conn.execute(
+            """INSERT INTO annual_performance_reports
+            (statement_id, account_id, currency, period_start, period_end, since_date,
+             beginning_market_value, deposits_transfers_in, withdrawals_transfers_out,
+             net_investment_return, ending_market_value, money_weighted_1y,
+             money_weighted_3y, money_weighted_5y, money_weighted_10y,
+             money_weighted_since)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(statement_id, currency) DO UPDATE SET
+                period_start = excluded.period_start,
+                period_end = excluded.period_end,
+                since_date = excluded.since_date,
+                beginning_market_value = excluded.beginning_market_value,
+                deposits_transfers_in = excluded.deposits_transfers_in,
+                withdrawals_transfers_out = excluded.withdrawals_transfers_out,
+                net_investment_return = excluded.net_investment_return,
+                ending_market_value = excluded.ending_market_value,
+                money_weighted_1y = excluded.money_weighted_1y,
+                money_weighted_3y = excluded.money_weighted_3y,
+                money_weighted_5y = excluded.money_weighted_5y,
+                money_weighted_10y = excluded.money_weighted_10y,
+                money_weighted_since = excluded.money_weighted_since""",
+            (
+                statement_id, acct_id, perf.currency, perf.period_start,
+                perf.period_end, perf.since_date, perf.beginning_market_value,
+                perf.deposits_transfers_in, perf.withdrawals_transfers_out,
+                perf.net_investment_return, perf.ending_market_value,
+                perf.money_weighted_1y, perf.money_weighted_3y,
+                perf.money_weighted_5y, perf.money_weighted_10y,
+                perf.money_weighted_since,
+            ),
+        )
+
     for raw, reason in stmt.quarantine:
         conn.execute(
             "INSERT INTO quarantine_transactions(source_file_id, account_id, raw_line, reason) "
@@ -148,7 +209,7 @@ def _write_statement(conn, *, source_file_id: int, institution_code: str,
         )
 
 
-def run_ingest(*, institution: str | None = None, limit: int | None = None) -> None:
+def run_ingest(*, institution: str | None = None, limit: int | None = None, force: bool = False) -> None:
     sqlite_db.init_db()
     seen = 0
     skipped_log = config.LOG_DIR / "skipped_pdfs.log"
@@ -169,6 +230,12 @@ def run_ingest(*, institution: str | None = None, limit: int | None = None) -> N
                 if limit is not None and seen >= limit:
                     return
                 seen += 1
+                relpath = p.relative_to(config.ROOT).as_posix()
+                if not force:
+                    sha = _sha256_file(p)
+                    if _unchanged_source_file_id(conn, relpath=relpath, sha256=sha) is not None:
+                        log.info("Skipping unchanged %s/%s", folder.name, p.name)
+                        continue
                 log.info("Reading %s/%s", folder.name, p.name)
                 try:
                     pdf = extract_pdf(p, repo_root=config.ROOT)

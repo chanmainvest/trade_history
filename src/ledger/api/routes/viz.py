@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import duckdb
 from fastapi import APIRouter, Query
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from ...config import DUCKDB_PATH
 from ...db import sqlite as sqlite_db
+from .monthly import _holdings_at
 
 router = APIRouter(prefix="/viz", tags=["viz"])
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(0.25))
 def _duck() -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(DUCKDB_PATH), read_only=True)
 
@@ -57,6 +60,16 @@ def _resolve_as_of(month_end: str | None) -> str | None:
     return row[0] if row and row[0] else None
 
 
+def _held_symbols_at(as_of: str, account_ids: list[int]) -> list[str]:
+    rows = _holdings_at(as_of, account_ids)
+    symbols = {
+        r["symbol"]
+        for r in rows
+        if r["symbol"] and r["asset_type"] in {"equity", "etf"} and abs(r["quantity"] or 0.0) > 1e-9
+    }
+    return sorted(symbols)
+
+
 @router.get("/holdings_by_sector")
 def holdings_by_sector(
     month_end: str | None = Query(None, description="ISO date; defaults to latest"),
@@ -66,33 +79,20 @@ def holdings_by_sector(
     as_of = _resolve_as_of(month_end)
     if not as_of:
         return {"as_of_date": None, "rows": []}
-    sql = [
-        "WITH latest AS (",
-        "  SELECT account_id, instrument_id, MAX(as_of_date) AS d",
-        "    FROM position_snapshots",
-        "   WHERE as_of_date <= ?",
+    grouped: dict[tuple[str, str, str], float] = {}
+    for row in _holdings_at(as_of, accts):
+        if row["asset_type"] not in {"equity", "etf", "mutual_fund", "bond"}:
+            continue
+        market_value = row["market_value"] or 0.0
+        if market_value <= 0:
+            continue
+        key = (row["symbol"], row["asset_type"], row["currency"])
+        grouped[key] = grouped.get(key, 0.0) + market_value
+    rows = [
+        {"symbol": symbol, "asset_type": asset_type, "currency": currency, "market_value": market_value}
+        for (symbol, asset_type, currency), market_value in sorted(grouped.items())
+        if market_value > 0
     ]
-    params: list = [as_of]
-    if accts:
-        sql.append(f"     AND account_id IN ({','.join('?' * len(accts))})")
-        params.extend(accts)
-    sql.extend([
-        "GROUP BY account_id, instrument_id",
-        ")",
-        "SELECT inst.symbol, inst.asset_type, inst.currency,",
-        "       SUM(ps.market_value) AS market_value",
-        "  FROM position_snapshots ps",
-        "  JOIN latest l ON l.account_id = ps.account_id",
-        "               AND l.instrument_id = ps.instrument_id",
-        "               AND l.d = ps.as_of_date",
-        "  JOIN instruments inst ON inst.instrument_id = ps.instrument_id",
-        " WHERE inst.asset_type IN ('equity','etf','mutual_fund','bond')",
-        "   AND ps.market_value IS NOT NULL AND ps.market_value > 0",
-        "GROUP BY inst.symbol, inst.asset_type, inst.currency",
-        " HAVING market_value > 0",
-    ])
-    with sqlite_db.session() as conn:
-        rows = [dict(r) for r in conn.execute("\n".join(sql), params).fetchall()]
     profiles = _symbol_profiles([r["symbol"] for r in rows])
     for r in rows:
         profile = profiles.get(r["symbol"], {})
@@ -109,22 +109,7 @@ def correlation(
 ) -> dict:
     """Pairwise correlation of daily returns over [start, end] for held symbols."""
     accts = _csv_ints(account_id)
-    with sqlite_db.session() as conn:
-        if accts:
-            ph = ",".join("?" * len(accts))
-            symbols = [r[0] for r in conn.execute(
-                f"SELECT DISTINCT inst.symbol FROM instruments inst "
-                f"JOIN position_snapshots ps ON ps.instrument_id = inst.instrument_id "
-                f"WHERE inst.asset_type IN ('equity','etf') "
-                f"  AND ps.account_id IN ({ph}) "
-                f"ORDER BY inst.symbol",
-                accts,
-            ).fetchall()]
-        else:
-            symbols = [r[0] for r in conn.execute(
-                "SELECT DISTINCT symbol FROM instruments "
-                "WHERE asset_type IN ('equity','etf') ORDER BY symbol"
-            ).fetchall()]
+    symbols = _held_symbols_at(end, accts)
     if not symbols:
         return {"symbols": [], "matrix": []}
     con = _duck()
@@ -155,21 +140,8 @@ def rrg(
     account_id: str | None = None,
 ) -> dict:
     accts = _csv_ints(account_id)
-    with sqlite_db.session() as conn:
-        if accts:
-            ph = ",".join("?" * len(accts))
-            symbols = [r[0] for r in conn.execute(
-                f"SELECT DISTINCT inst.symbol FROM instruments inst "
-                f"JOIN position_snapshots ps ON ps.instrument_id = inst.instrument_id "
-                f"WHERE inst.asset_type IN ('equity','etf') AND ps.account_id IN ({ph}) "
-                f"ORDER BY inst.symbol",
-                accts,
-            ).fetchall()]
-        else:
-            symbols = [r[0] for r in conn.execute(
-                "SELECT DISTINCT symbol FROM instruments "
-                "WHERE asset_type IN ('equity','etf') ORDER BY symbol"
-            ).fetchall()]
+    as_of = _resolve_as_of(end)
+    symbols = _held_symbols_at(as_of, accts) if as_of else []
     con = _duck()
     try:
         priced = {r[0] for r in con.execute(
@@ -189,9 +161,11 @@ def rrg(
                f"WHERE symbol IN ({ph})")
         params: list = list(targets)
         if start:
-            sql += " AND trade_date >= ?"; params.append(start)
+            sql += " AND trade_date >= ?"
+            params.append(start)
         if end:
-            sql += " AND trade_date <= ?"; params.append(end)
+            sql += " AND trade_date <= ?"
+            params.append(end)
         df = con.execute(sql, params).df()
     finally:
         con.close()

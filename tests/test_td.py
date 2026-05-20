@@ -53,3 +53,20 @@ def test_td_summary_pdf():
     assert s.statement_type == "annual"
     assert s.period_start == "2023-01-01"
     assert s.period_end == "2023-12-31"
+
+
+def test_td_legacy_quarterly_file_splits_bundled_months():
+    pdf = _load("TD Webbroker/Statement_77FF49_2016_01-04.txt")
+    res = TDParser().parse(pdf)
+    assert res.errors == []
+    assert len(res.statements) == 8
+    periods = sorted({(s.period_start, s.period_end) for s in res.statements})
+    assert periods == [
+        ("2016-01-01", "2016-01-31"),
+        ("2016-02-01", "2016-02-29"),
+        ("2016-03-01", "2016-03-31"),
+        ("2016-04-01", "2016-04-30"),
+    ]
+    assert {s.account.account_number for s in res.statements} == {"77FF49-CAD", "77FF49-USD"}
+    assert all(s.positions for s in res.statements)
+    assert all(s.cash_balances for s in res.statements)

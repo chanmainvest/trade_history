@@ -28,12 +28,14 @@ flowchart TD
 Two stores, deliberately separated:
 
 - **SQLite — `data/ledger.sqlite`**: my private trading data. Multi-currency
-  by design. Tables: `institutions`, `accounts`, `account_links`,
-  `instruments`, `instrument_aliases`, `source_files`, `statements`,
-  `transactions`, `quarantine_transactions`, `position_snapshots`,
-  `cash_balances`, `initial_positions`, `initial_cash`,
-  `position_transaction_links`. Schema is in
-  [src/ledger/db/schema.sql](src/ledger/db/schema.sql).
+   by design. Tables: `institutions`, `accounts`, `account_links`,
+   `instruments`, `instrument_aliases`, `source_files`, `statements`,
+   `transactions`, `quarantine_transactions`, `position_snapshots`,
+   `cash_balances`, `initial_positions`, `initial_cash`,
+   `annual_performance_reports`, `position_transaction_links`. Schema is in
+   [src/ledger/db/schema.sql](src/ledger/db/schema.sql).
+   Transfer-link/reconciliation tables are schema scaffolding until the
+   matching workflows are wired.
 - **DuckDB — `data/market.duckdb`**: public market data scraped on demand.
   Tables: `daily_prices`, `dividends`, `splits`, `option_implied_vol`,
   `fx_rates`, `financials_quarterly`, `financials_annual`,
@@ -75,6 +77,14 @@ cd frontend && npm install && npm run dev
 
 All scripts log to `logs/<command>.log` (and JSONL where structured).
 
+## Screenshots
+
+These screenshots use the synthetic example profile, not real account data.
+
+![Transactions tab with example data](docs/screenshots/transactions-example.png)
+
+![Monthly snapshot tab with example data](docs/screenshots/monthly-example.png)
+
 ### Docker
 
 ```powershell
@@ -107,6 +117,7 @@ trade_history_opus47/
 ├── pyproject.toml
 ├── data/                ← SQLite + DuckDB live here (git-ignored)
 ├── logs/                ← every script writes here (git-ignored)
+├── docs/                ← generated docs + synthetic screenshots
 ├── Statements/          ← raw PDFs per institution (git-ignored)
 ├── scripts/             ← one-shot CLIs (refresh, ingest, scrape)
 ├── src/ledger/
@@ -131,8 +142,8 @@ trade_history_opus47/
 2. **Monthly** — pick any date and view consolidated holdings reconstructed
    from the latest account snapshot plus subsequent transactions; diff two
    dates side-by-side.
-3. **Performance** — total asset value over time; filter by account /
-   institution / ticker / asset class.
+3. **Performance** — total portfolio value over time, including cash;
+   filter by account / institution / ticker / asset class.
 4. **Stock research** — clicking any symbol anywhere drills in here:
    candlestick price chart with 50/200 MA toggles + my buy/sell markers,
    volume sub-chart, then quarterly financial-statement chart with

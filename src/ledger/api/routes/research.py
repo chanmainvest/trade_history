@@ -21,9 +21,11 @@ def prices(symbol: str = Query(...), start: str | None = None,
     where = ["symbol = ?"]
     params: list = [sym]
     if start:
-        where.append("trade_date >= ?"); params.append(start)
+        where.append("trade_date >= ?")
+        params.append(start)
     if end:
-        where.append("trade_date <= ?"); params.append(end)
+        where.append("trade_date <= ?")
+        params.append(end)
     sql = ("SELECT trade_date, open, high, low, close, adj_close, volume "
            "FROM daily_prices WHERE " + " AND ".join(where) + " ORDER BY trade_date")
     con = _duck()

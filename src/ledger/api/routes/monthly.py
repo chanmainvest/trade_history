@@ -35,12 +35,22 @@ def _holdings_at(as_of: str, account_ids: list[int], path: Path | str | None = N
              GROUP BY account_id
         ),
         anchor_qty AS (
-            SELECT ps.account_id, ps.instrument_id, ps.quantity, ps.as_of_date,
-                   ps.avg_cost, ps.book_value, ps.market_price,
-                   ps.market_value, ps.unrealized_pnl
-              FROM position_snapshots ps
-              JOIN account_anchor aa ON aa.account_id = ps.account_id
+              SELECT account_id, instrument_id, quantity, as_of_date,
+                    avg_cost, book_value, market_price,
+                    market_value, unrealized_pnl
+                FROM (
+                 SELECT ps.account_id, ps.instrument_id, ps.quantity, ps.as_of_date,
+                       ps.avg_cost, ps.book_value, ps.market_price,
+                       ps.market_value, ps.unrealized_pnl,
+                       ROW_NUMBER() OVER (
+                        PARTITION BY ps.account_id, ps.instrument_id
+                        ORDER BY ps.statement_id DESC, ps.snapshot_id DESC
+                       ) AS rn
+                   FROM position_snapshots ps
+                   JOIN account_anchor aa ON aa.account_id = ps.account_id
                                     AND aa.d = ps.as_of_date
+                )
+               WHERE rn = 1
         ),
         post_txn AS (
             SELECT t.account_id, t.instrument_id,

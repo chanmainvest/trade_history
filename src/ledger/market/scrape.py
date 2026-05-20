@@ -22,8 +22,8 @@ from ..logging_setup import get_logger, jsonl_path
 log = get_logger("market_scrape")
 
 
-def _held_symbols() -> list[tuple[str, str]]:
-    """Return [(symbol, currency)] for every instrument we've ever held.
+def _held_symbols() -> list[tuple[str, str, str | None]]:
+    """Return [(symbol, currency, exchange)] for every instrument we've ever held.
 
     Filters out synthetic/mangled symbols (e.g. CIBC fallback names that
     underscore-joined the description). yfinance only accepts canonical
@@ -40,15 +40,15 @@ def _held_symbols() -> list[tuple[str, str]]:
     }
     with sqlite_db.session() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT symbol, currency FROM instruments "
+            "SELECT DISTINCT symbol, currency, exchange FROM instruments "
             "WHERE asset_type IN ('equity','etf') ORDER BY symbol"
         ).fetchall()
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str, str | None]] = []
     skipped: list[str] = []
     for r in rows:
         sym = (r["symbol"] or "").strip().upper()
         if pat.match(sym) and sym not in blocklist:
-            out.append((sym, r["currency"]))
+            out.append((sym, r["currency"], r["exchange"]))
         else:
             skipped.append(sym)
     if skipped:
@@ -57,13 +57,16 @@ def _held_symbols() -> list[tuple[str, str]]:
     return out
 
 
-def _yf_symbol(symbol: str, currency: str) -> str:
+def _yf_symbol(symbol: str, currency: str, exchange: str | None = None) -> str:
     """Map our internal symbol to a yfinance-compatible ticker."""
-    s = symbol.upper().replace(".", "-")
-    if currency == "CAD" and not s.endswith(".TO") and ".TO" not in symbol:
-        # Canadian listings on yfinance are .TO. Caller may have set it already.
-        return f"{s}.TO" if "." not in symbol else symbol.upper()
-    return symbol.upper()
+    symbol_upper = symbol.upper()
+    if symbol_upper.endswith(".TO"):
+        return symbol_upper
+    yfinance_symbol = symbol_upper.replace(".", "-")
+    exchange_upper = (exchange or "").upper()
+    if exchange_upper in {"TSX", "TSXV", "TSX-V", "NEO", "CSE"} and "." not in symbol_upper:
+        return f"{yfinance_symbol}.TO"
+    return yfinance_symbol
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=30))
@@ -81,15 +84,15 @@ def refresh_market_data(*, symbols: list[str] | None = None,
     con = duckdb.connect(str(DUCKDB_PATH))
     jsonl = jsonl_path("market_scrape").open("a", encoding="utf-8")
     try:
-        targets: list[tuple[str, str]]
+        targets: list[tuple[str, str, str | None]]
         if symbols:
-            targets = [(s, "USD") for s in symbols]
+            targets = [(s, "USD", None) for s in symbols]
         else:
             targets = _held_symbols()
         start = (datetime.utcnow() - timedelta(days=365 * lookback_years)).date().isoformat()
 
-        for sym, ccy in targets:
-            yfsym = _yf_symbol(sym, ccy)
+        for sym, ccy, exchange in targets:
+            yfsym = _yf_symbol(sym, ccy, exchange)
             log.info("Fetching %s (%s)", yfsym, ccy)
             try:
                 df = _fetch_history(yfsym, start)

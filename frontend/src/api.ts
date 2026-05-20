@@ -31,7 +31,7 @@ async function putJSON<T>(path: string, body: any): Promise<T> {
 
 export const api = {
   transactions: (p: Record<string, any> = {}) =>
-    getJSON<{ rows: TxnRow[]; count: number }>("/transactions", p),
+    getJSON<{ rows: TxnRow[]; count: number; total_count: number; has_more: boolean }>("/transactions", p),
   accounts: () => getJSON<{ rows: Account[] }>("/transactions/accounts"),
   symbols: () => getJSON<{ rows: SymbolRow[] }>("/transactions/symbols"),
   txnTypes: () => getJSON<{ rows: string[] }>("/transactions/txn-types"),

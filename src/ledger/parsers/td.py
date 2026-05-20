@@ -68,6 +68,8 @@ RE_ACCT_NUM = re.compile(r"Account number:\s+([A-Z0-9]+)")
 RE_ACCT_TYPE = re.compile(r"Account type:\s+Direct Trading\s*-\s*(CDN|US)")
 RE_BEGIN_BAL = re.compile(r"Beginning cash balance\s+\$?\(?(-?[\d,]+(?:\.\d+)?)\)?")
 RE_END_BAL = re.compile(r"Ending cash balance\s+\$?\(?(-?[\d,]+(?:\.\d+)?)\)?")
+RE_LEGACY_BEGIN_BAL = re.compile(r"Cash-opening balance\s+\$?\(?(-?[\d,]+(?:\.\d+)?)\)?")
+RE_LEGACY_END_BAL = re.compile(r"Cash-closing balance\s+\$?\(?(-?[\d,]+(?:\.\d+)?)\)?")
 
 # Option token in activity (single line). Captures: cp, mult sign, root,
 # yy, [dd]mm, strike. Examples: "PUT -100 SLV'26 FB@100", "CALL-100 SLV'26 13FB@115"
@@ -84,6 +86,13 @@ RE_HOLDING_LINE = re.compile(
     r"^(.+?)\s+([\d,]+(?:\.\d+)?)\s*(?:SEG\s+)?"
     r"([\d,]+(?:\.\d+)?)\s+(-?[\d,]+(?:\.\d+)?)\s+(-?[\d,]+(?:\.\d+)?)\s+"
     r"(-?[\d,]+(?:\.\d+)?)\s+(-?[\d,]+(?:\.\d+)?)\s*%$"
+)
+RE_LEGACY_HOLDING_LINE = re.compile(
+    r"^([\d,]+(?:\.\d+)?)\s+Seg\s+(.+?)\s+([A-Z][A-Z0-9.]{0,8})\s+"
+    r"(N/D|[\d,]+(?:\.\d+)?)\s+"
+    r"(N/D|-?[\d,]+(?:\.\d+)?)\s+"
+    r"(N/D|-?[\d,]+(?:\.\d+)?)\s+"
+    r"(-?[\d,]+(?:\.\d+)?)$"
 )
 RE_TRAIL_SYM = re.compile(r"\(([A-Z][A-Z0-9.\-]{0,8})\s*\)")
 
@@ -171,6 +180,38 @@ def _parse_period(text: str) -> tuple[str, str] | None:
         except (KeyError, ValueError):
             pass
     return None
+
+
+def _legacy_period_from_match(match: re.Match[str]) -> tuple[str, str] | None:
+    try:
+        sm = _MON_FULL[match.group(1)]
+        sd = int(match.group(2))
+        em = _MON_FULL[match.group(3)]
+        ed = int(match.group(4))
+        year = int(match.group(5))
+        return date(year, sm, sd).isoformat(), date(year, em, ed).isoformat()
+    except (KeyError, ValueError):
+        return None
+
+
+def _statement_chunks(text: str) -> list[tuple[str, str, str]]:
+    matches = list(RE_PERIOD_LEGACY.finditer(text))
+    if not matches:
+        period = _parse_period(text)
+        return [(period[0], period[1], text)] if period else []
+
+    chunks: list[tuple[str, str, str]] = []
+    current_period = _legacy_period_from_match(matches[0])
+    current_start = matches[0].start()
+    for match in matches[1:]:
+        period = _legacy_period_from_match(match)
+        if period and current_period and period != current_period:
+            chunks.append((current_period[0], current_period[1], text[current_start:match.start()]))
+            current_period = period
+            current_start = match.start()
+    if current_period:
+        chunks.append((current_period[0], current_period[1], text[current_start:]))
+    return chunks
 
 
 def _split_subs(text: str) -> list[_Sub]:
@@ -272,25 +313,51 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> None:
         # Section detection
         sl = s.lower()
         if sl.startswith("cash") and not RE_HOLDING_LINE.match(s):
-            section = "cash"; continue
-        if "common shares" in sl and ("canadian" in sl or "foreign" in sl or "us " in sl):
-            section = "equity"; continue
+            section = "cash"
+            continue
+        if (("common shares" in sl or "commonshares" in sl)
+                and ("canadian" in sl or "foreign" in sl or "us " in sl)):
+            section = "equity"
+            continue
         if "preferred" in sl and "shares" in sl:
-            section = "equity"; continue
-        if "mutual fund" in sl:
-            section = "mutual_fund"; continue
+            section = "equity"
+            continue
+        if "mutual fund" in sl or "mutualfund" in sl:
+            section = "mutual_fund"
+            continue
         if "exchange traded fund" in sl or "etf" in sl:
-            section = "etf"; continue
+            section = "etf"
+            continue
         if sl.startswith("options") or sl == "options":
-            section = "option"; continue
+            section = "option"
+            continue
         if sl.startswith("fixed income") or "bond" in sl:
-            section = "bond"; continue
+            section = "bond"
+            continue
         if sl.startswith("equities") or "(continued)" in sl or sl.startswith("total ") \
            or sl.startswith("description") or sl.startswith("quantity") \
            or sl.startswith("holdings in"):
             continue
         if sl.startswith("definitions") or sl.startswith("an explanation"):
             break
+
+        legacy_holding = RE_LEGACY_HOLDING_LINE.match(s)
+        if legacy_holding:
+            qty_s, name, symbol, price_s, book_s, mv_s, _pct_s = legacy_holding.groups()
+            if price_s == "N/D" or mv_s == "N/D":
+                continue
+            atype = section if section in {"equity", "etf", "mutual_fund", "bond"} else "equity"
+            instr = ParsedInstrument(
+                asset_type=atype, symbol=symbol, currency=currency,
+                name=name.strip()[:120],
+            )
+            stmt.positions.append(ParsedPosition(
+                instrument=instr, quantity=parse_money(qty_s) or 0.0,
+                avg_cost=None, book_value=parse_money(book_s),
+                market_price=parse_money(price_s), market_value=parse_money(mv_s),
+                unrealized_pnl=None, currency=currency, raw_line=ln,
+            ))
+            continue
 
         # Option holding line — first line has "(CALL|PUT)[-\s]?100 ROOT'YY[-US]?"
         # then numeric columns; the strike "[dd]MM@strike" is on the next line.
@@ -351,7 +418,8 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> None:
             while j < len(lines) and j < i + 4:
                 nxt = lines[j].strip()
                 if not nxt:
-                    j += 1; continue
+                    j += 1
+                    continue
                 # If the next line itself looks like a new holding row, stop.
                 if RE_HOLDING_LINE.match(nxt):
                     break
@@ -392,6 +460,14 @@ def _parse_activity(body: str, currency: str, year_end: int,
         s = ln.strip()
         if not s:
             continue
+        mb = RE_BEGIN_BAL.search(s) or RE_LEGACY_BEGIN_BAL.search(s)
+        if mb:
+            opening = parse_money(mb.group(1))
+            continue
+        me = RE_END_BAL.search(s) or RE_LEGACY_END_BAL.search(s)
+        if me:
+            closing = parse_money(me.group(1))
+            continue
         # noise
         if (s.startswith("Order-Execution-Only") or s.startswith("TD Waterhouse")
             or s.startswith("Page ") or s.startswith("Member ")
@@ -402,12 +478,6 @@ def _parse_activity(body: str, currency: str, year_end: int,
             or s.startswith("Your investment") or s.startswith("i Important")
             or s.startswith("Details of")):
             continue
-        mb = RE_BEGIN_BAL.search(s)
-        if mb:
-            opening = parse_money(mb.group(1)); continue
-        me = RE_END_BAL.search(s)
-        if me:
-            closing = parse_money(me.group(1)); continue
 
         m = RE_ACT_DATE.match(s)
         if not m:
@@ -531,39 +601,44 @@ class TDParser:
                 ))
             return result
 
-        period = _parse_period(text)
-        if not period:
+        chunks = _statement_chunks(text)
+        if not chunks:
             result.errors.append("could not parse period")
             return result
-        ps, pe = period
-        period_end_month = int(pe[5:7])
-        period_end_year = int(pe[:4])
+        for ps, pe, chunk_text in chunks:
+            period_end_month = int(pe[5:7])
+            period_end_year = int(pe[:4])
 
-        for sub in _split_subs(text):
-            stmt = ParsedStatement(
-                account=ParsedAccount(
-                    account_number=f"{sub.account_number}-{sub.currency[:3]}",
-                    account_type="Direct Trading",
-                    base_currency=sub.currency,
-                ),
-                period_start=ps, period_end=pe, statement_type="monthly",
-            )
-            # Holdings section starts at "Holdings in your account" and ends
-            # at "Activity in your account this period" or "Definitions".
-            hm = re.search(r"Holdings in your account", sub.text)
-            am = re.search(r"Activity in your account this period", sub.text)
-            if hm and am and am.start() > hm.start():
-                _parse_holdings(sub.text[hm.end():am.start()], sub.currency, stmt)
-                tail = sub.text[am.end():]
-                # End markers: "Details of investment income" / "Disclosures"
-                end = re.search(r"Details of investment income|^\s*Disclosures",
-                                tail, re.MULTILINE)
-                act_body = tail[:end.start()] if end else tail
-                _parse_activity(act_body, sub.currency, period_end_year,
-                                period_end_month, stmt)
-            elif hm:
-                _parse_holdings(sub.text[hm.end():], sub.currency, stmt)
-            result.statements.append(stmt)
+            for sub in _split_subs(chunk_text):
+                stmt = ParsedStatement(
+                    account=ParsedAccount(
+                        account_number=f"{sub.account_number}-{sub.currency[:3]}",
+                        account_type="Direct Trading",
+                        base_currency=sub.currency,
+                    ),
+                    period_start=ps, period_end=pe, statement_type="monthly",
+                )
+                hm = re.search(r"Holdings in your account|^Holdings\b", sub.text, re.MULTILINE)
+                am = re.search(
+                    r"Activity in your account this period|^Activities\b",
+                    sub.text,
+                    re.MULTILINE,
+                )
+                if hm and am and am.start() > hm.start():
+                    _parse_holdings(sub.text[hm.end():am.start()], sub.currency, stmt)
+                    tail = sub.text[am.end():]
+                    end = re.search(r"Details of investment income|^\s*Disclosures",
+                                    tail, re.MULTILINE)
+                    act_body = tail[:end.start()] if end else tail
+                    _parse_activity(act_body, sub.currency, period_end_year,
+                                    period_end_month, stmt)
+                elif hm:
+                    _parse_holdings(sub.text[hm.end():], sub.currency, stmt)
+                elif am:
+                    tail = sub.text[am.end():]
+                    _parse_activity(tail, sub.currency, period_end_year,
+                                    period_end_month, stmt)
+                result.statements.append(stmt)
         return result
 
 

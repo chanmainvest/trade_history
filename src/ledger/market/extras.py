@@ -66,7 +66,8 @@ def refresh_profiles(*, sleep_s: float = 1.0) -> None:
                    sector=row["sector"], industry=row["industry"])
             time.sleep(sleep_s)
     finally:
-        jsonl.close(); con.close()
+        jsonl.close()
+        con.close()
 
 
 # --------------------------------------------------------------- dividends
@@ -86,7 +87,8 @@ def refresh_dividends(*, sleep_s: float = 1.5) -> None:
                 continue
             if ser is None or ser.empty:
                 _audit(jsonl, kind="dividends", symbol=sym, status="empty")
-                time.sleep(sleep_s); continue
+                time.sleep(sleep_s)
+                continue
             df = ser.reset_index()
             # yfinance sometimes returns extra columns (e.g. timezone). Take
             # the first two columns only: date and amount.
@@ -97,11 +99,14 @@ def refresh_dividends(*, sleep_s: float = 1.5) -> None:
             df["currency"] = ccy
             df = df[["symbol", "ex_date", "amount", "currency"]]
             con.execute("DELETE FROM dividends WHERE symbol = ?", [sym])
-            con.register("d", df); con.execute("INSERT INTO dividends SELECT * FROM d"); con.unregister("d")
+            con.register("d", df)
+            con.execute("INSERT INTO dividends SELECT * FROM d")
+            con.unregister("d")
             _audit(jsonl, kind="dividends", symbol=sym, status="ok", rows=int(len(df)))
             time.sleep(sleep_s)
     finally:
-        jsonl.close(); con.close()
+        jsonl.close()
+        con.close()
 
 
 # ----------------------------------------------------------------- splits
@@ -121,7 +126,8 @@ def refresh_splits(*, sleep_s: float = 1.5) -> None:
                 continue
             if ser is None or ser.empty:
                 _audit(jsonl, kind="splits", symbol=sym, status="empty")
-                time.sleep(sleep_s); continue
+                time.sleep(sleep_s)
+                continue
             df = ser.reset_index()
             df = df.iloc[:, :2]
             df.columns = ["split_date", "ratio"]
@@ -129,11 +135,14 @@ def refresh_splits(*, sleep_s: float = 1.5) -> None:
             df["symbol"] = sym
             df = df[["symbol", "split_date", "ratio"]]
             con.execute("DELETE FROM splits WHERE symbol = ?", [sym])
-            con.register("d", df); con.execute("INSERT INTO splits SELECT * FROM d"); con.unregister("d")
+            con.register("d", df)
+            con.execute("INSERT INTO splits SELECT * FROM d")
+            con.unregister("d")
             _audit(jsonl, kind="splits", symbol=sym, status="ok", rows=int(len(df)))
             time.sleep(sleep_s)
     finally:
-        jsonl.close(); con.close()
+        jsonl.close()
+        con.close()
 
 
 # ------------------------------------------------------------- financials
@@ -329,7 +338,8 @@ def refresh_financials(*, sleep_s: float = 2.0) -> None:
                 _audit(jsonl, kind=label, symbol=sym, status="ok", rows=int(len(df)))
             time.sleep(sleep_s)
     finally:
-        jsonl.close(); con.close()
+        jsonl.close()
+        con.close()
 
 
 # --------------------------------------------------------------- earnings
@@ -349,7 +359,8 @@ def refresh_earnings(*, sleep_s: float = 1.5) -> None:
                 continue
             if df is None or df.empty:
                 _audit(jsonl, kind="earnings", symbol=sym, status="empty")
-                time.sleep(sleep_s); continue
+                time.sleep(sleep_s)
+                continue
             df = df.reset_index()
             # yfinance columns vary; normalize
             cols = {c.lower(): c for c in df.columns}
@@ -369,11 +380,14 @@ def refresh_earnings(*, sleep_s: float = 1.5) -> None:
             })
             out = out.dropna(subset=["report_date"]).drop_duplicates("report_date")
             con.execute("DELETE FROM earnings_events WHERE symbol = ?", [sym])
-            con.register("d", out); con.execute("INSERT INTO earnings_events SELECT * FROM d"); con.unregister("d")
+            con.register("d", out)
+            con.execute("INSERT INTO earnings_events SELECT * FROM d")
+            con.unregister("d")
             _audit(jsonl, kind="earnings", symbol=sym, status="ok", rows=int(len(out)))
             time.sleep(sleep_s)
     finally:
-        jsonl.close(); con.close()
+        jsonl.close()
+        con.close()
 
 
 # ---------------------------------------------------------------------- FX
@@ -394,7 +408,8 @@ def refresh_fx(*, lookback_years: int = 15, sleep_s: float = 1.5) -> None:
                 _audit(jsonl, kind="fx", pair=pair, status="fail", err=str(e))
                 continue
             if df is None or df.empty:
-                _audit(jsonl, kind="fx", pair=pair, status="empty"); continue
+                _audit(jsonl, kind="fx", pair=pair, status="empty")
+                continue
             df = df.reset_index()
             out = pd.DataFrame({
                 "base": base,
@@ -403,8 +418,11 @@ def refresh_fx(*, lookback_years: int = 15, sleep_s: float = 1.5) -> None:
                 "rate": df["Close"],
             }).dropna()
             con.execute("DELETE FROM fx_rates WHERE base=? AND quote=?", [base, quote])
-            con.register("d", out); con.execute("INSERT INTO fx_rates SELECT * FROM d"); con.unregister("d")
+            con.register("d", out)
+            con.execute("INSERT INTO fx_rates SELECT * FROM d")
+            con.unregister("d")
             _audit(jsonl, kind="fx", pair=pair, status="ok", rows=int(len(out)))
             time.sleep(sleep_s)
     finally:
-        jsonl.close(); con.close()
+        jsonl.close()
+        con.close()

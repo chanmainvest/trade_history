@@ -109,6 +109,25 @@ def test_infer_initials_preserves_curated_rows_and_tags_cash(tmp_path):
             """,
             (statement_id, account_id),
         )
+        annual_source_id = conn.execute(
+            "INSERT INTO source_files(relpath, parse_status) VALUES (?, 'ok') RETURNING source_file_id",
+            ("Statements/Test/annual.pdf",),
+        ).fetchone()[0]
+        annual_statement_id = conn.execute(
+            """
+            INSERT INTO statements(source_file_id, account_id, period_start, period_end, statement_type)
+            VALUES (?, ?, '2023-01-01', '2023-12-31', 'annual')
+            RETURNING statement_id
+            """,
+            (annual_source_id, account_id),
+        ).fetchone()[0]
+        conn.execute(
+            """
+            INSERT INTO cash_balances(statement_id, account_id, as_of_date, currency, closing_balance)
+            VALUES (?, ?, '2023-12-31', 'USD', 9999)
+            """,
+            (annual_statement_id, account_id),
+        )
         conn.execute(
             """
             INSERT INTO initial_positions(account_id, as_of_date, instrument_id, quantity, currency, notes)
@@ -120,6 +139,13 @@ def test_infer_initials_preserves_curated_rows_and_tags_cash(tmp_path):
             """
             INSERT INTO initial_cash(account_id, as_of_date, currency, balance, notes)
             VALUES (?, '2024-01-30', 'CAD', 999, 'manual: reviewed opening cash')
+            """,
+            (account_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO initial_cash(account_id, as_of_date, currency, balance, notes)
+            VALUES (?, '2024-01-30', 'USD', 123, NULL)
             """,
             (account_id,),
         )

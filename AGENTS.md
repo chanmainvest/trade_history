@@ -181,20 +181,25 @@ and the corresponding section in [spec/ARCHITECTURE.md](spec/ARCHITECTURE.md) / 
 - **Initial holdings inference** — implemented via
   `uv run ledger ingest infer-initials`. For each (account, instrument)
   it sets `initial_positions.quantity = first_snapshot_qty − Σ pre-snapshot transactions`
-  and dates the row one day before the earliest snapshot. Same logic for
-  `initial_cash`. Idempotent. Inferred rows carry `notes LIKE 'inferred:%'`
-  so user-curated rows are preserved on re-run.
+  and dates the row one day before the earliest snapshot. For each
+  `(account, currency)`, `initial_cash.balance` is inferred from the first
+  monthly cash snapshot minus cash transactions up to that date. Idempotent.
+  Inferred rows carry `notes LIKE 'inferred:%'` so user-curated rows are
+  preserved on re-run; legacy untagged inferred cash rows are replaced with
+  tagged rows.
 - **Daily holding reconstruction** — implemented in `/monthly/snapshot`.
-  The API uses the latest complete statement per account as a checkpoint,
-  then replays signed transactions after that checkpoint up to the requested
-  day. Before the first statement, it uses `initial_positions` plus
-  transactions. Broker snapshots remain the audit ground truth.
+  The API uses the latest `position_snapshots.as_of_date` per account as a
+  checkpoint, then replays signed transactions after that checkpoint up to
+  the requested day. Before the first snapshot, it uses `initial_positions`
+  plus transactions. Broker snapshots remain the audit ground truth.
 - **Long-history fundamentals** — implemented for US-listed symbols via
   SEC EDGAR Company Facts fallback in `ledger market scrape`. Non-US
   securities still depend on yfinance unless another free source is added.
 - **PDF upload + new-statement-type extraction via LLM.** API endpoint
-  `POST /statements/upload` exists as a stub; LLM-driven parser creation
-  is not implemented. The Config tab has placeholder slots for
+  `POST /statements/upload` validates PDF magic bytes, caps uploads at
+  25 MiB, sanitizes filenames, saves to `Statements/uploads/`, and returns
+  a fingerprint. LLM-driven parser creation and upload-to-ingest review
+  flow are not implemented. The Config tab has placeholder slots for
   OpenAI / Anthropic / Google API keys.
 - **Per-statement extraction explainer UI** (overlay of PDF → text dump →
   parsed transactions). Backend route `/statements/explain/{id}` is
@@ -203,15 +208,18 @@ and the corresponding section in [spec/ARCHITECTURE.md](spec/ARCHITECTURE.md) / 
   `symbol_profiles` in DuckDB and `uv run ledger market refresh-profiles`
   (also included in `refresh-all`). Colors cluster by sector when profile
   metadata is available; unknown symbols fall back to neutral colors.
-- **TD legacy quarterly PDFs (2016-2017)** emit one statement per file
-  (the first month); the bundled later months are not split.
-- **RBC annual performance reports** are recorded as empty annual
-  statements; the cumulative IRR is not parsed into the schema.
-- **Screenshots** for the README/user guide — needs a live browser
-  session; deferred until the example_data run-through can be captured.
-- **Lint cleanup.** ~45 `E702` (semicolon-joined statements) pre-existing
-  warnings in `ruff check src tests`. Functional impact: none. Cosmetic
-  cleanup deferred.
+- **TD legacy quarterly PDFs (2016-2017)** are split into one statement
+  per bundled month/currency, with legacy cash balances and clean holding
+  rows parsed where defensible.
+- **RBC annual performance reports** populate `annual_performance_reports`
+  with CAD/USD annual money-weighted return summaries. They remain annual
+  statements and do not fabricate transactions or position snapshots.
+- **Screenshots** for the README/user guide are captured from the
+  synthetic example profile under `docs/screenshots/`.
+- **Transfer-link and reconciliation workflows** remain schema scaffolding:
+  `account_links`, transaction counterpart fields, and
+  `position_transaction_links` exist, but ingest/API code does not yet
+  populate those relationships automatically.
 
 ## 9. Ingestion summary (real profile, current state)
 
@@ -219,9 +227,9 @@ After `uv run ledger ingest run` against `Statements/`:
 
 - 324 PDFs scanned, 323 parsed, 1 intentionally skipped
   (`CIBC Tax-Document_58MRB0.pdf`).
-- 398 statements, 2,776 transactions, 5,519 position snapshots,
-  404 cash balances.
-- 13/13 parser unit tests pass.
+- 427 statements, 2,848 transactions, 5,841 position snapshots,
+  438 cash balances, 5 annual performance rows.
+- 20/20 parser and analytics unit tests pass.
 - TD 2025-12 USD statement reconciles to portfolio total within $1.
 
 For full per-institution quirks see

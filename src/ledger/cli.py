@@ -48,8 +48,8 @@ def db_init() -> None:
     log.info("DuckDB ready: %s", config.DUCKDB_PATH)
     # Seed institutions row
     with sqlite_db.session() as conn:
-        for code, name in config.INSTITUTIONS.items():
-            sqlite_db.upsert_institution(conn, code=name, display_name=code)
+        for folder_name, code in config.INSTITUTIONS.items():
+            sqlite_db.upsert_institution(conn, code=code, display_name=folder_name)
     log.info("Institutions seeded.")
 
 
@@ -134,9 +134,10 @@ def ingest() -> None:
 @ingest.command("run")
 @click.option("--institution", default=None, help="Restrict to one folder name.")
 @click.option("--limit", type=int, default=None, help="Stop after N PDFs.")
-def ingest_run(institution: str | None, limit: int | None) -> None:
+@click.option("--force", is_flag=True, help="Re-parse PDFs even when sha256 is unchanged.")
+def ingest_run(institution: str | None, limit: int | None, force: bool) -> None:
     from .ingest.pipeline import run_ingest
-    run_ingest(institution=institution, limit=limit)
+    run_ingest(institution=institution, limit=limit, force=force)
 
 
 @ingest.command("infer-initials")

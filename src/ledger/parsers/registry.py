@@ -11,8 +11,11 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Protocol
 
+from ..logging_setup import get_logger
 from ..pdf_text import PdfText
 from .types import ParseResult
+
+log = get_logger("parser_registry")
 
 
 class Parser(Protocol):
@@ -41,6 +44,7 @@ def select_parser(folder_name: str, pdf: PdfText) -> Parser | None:
         try:
             if p.can_handle(folder_name, head):
                 return p
-        except Exception:
+        except Exception as exc:
+            log.warning("%s.can_handle failed for %s: %s", p.NAME, pdf.relpath, exc, exc_info=True)
             continue
     return None

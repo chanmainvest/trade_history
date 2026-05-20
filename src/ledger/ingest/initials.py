@@ -9,7 +9,8 @@ one day before the earliest snapshot. Same logic for cash.
 
 Idempotent: re-running deletes inferred rows (notes LIKE 'inferred:%') and
 recomputes from scratch. User-curated rows (with a different ``notes``
-prefix) are preserved.
+prefix) are preserved. Legacy ``initial_cash`` rows created before the notes
+column existed are treated as inferred output and replaced with tagged rows.
 """
 from __future__ import annotations
 
@@ -21,6 +22,15 @@ from ..db import sqlite as sqlite_db
 from ..quantity import quantity_delta
 
 log = logging.getLogger(__name__)
+
+NON_CASH_TXN_TYPES = {
+    "stock_split",
+    "stock_split_credit",
+    "stock_split_debit",
+    "name_change",
+    "spinoff",
+    "merger",
+}
 
 
 def _day_before(iso: str) -> str:
@@ -40,7 +50,7 @@ def infer_initials(path: Path | str | None = None) -> dict:
     with sqlite_db.session(db_path) as conn:
         # Wipe previously-inferred rows so we recompute idempotently.
         conn.execute("DELETE FROM initial_positions WHERE notes LIKE 'inferred:%'")
-        conn.execute("DELETE FROM initial_cash WHERE notes LIKE 'inferred:%'")
+        conn.execute("DELETE FROM initial_cash WHERE notes LIKE 'inferred:%' OR notes IS NULL")
         # Positions ------------------------------------------------------
         rows = conn.execute(
             "SELECT account_id, instrument_id, MIN(as_of_date) AS first_date "
@@ -98,19 +108,25 @@ def infer_initials(path: Path | str | None = None) -> dict:
                 n_positions += 1
 
         # Cash -----------------------------------------------------------
-        # Walk each (account, currency) cash series.
+        # Walk each (account, currency) first monthly cash snapshot. Annual and
+        # interim statements can be recorded without a real holdings checkpoint.
         cash_rows = conn.execute(
-            "SELECT account_id, currency, MIN(as_of_date) AS first_date "
-            "  FROM cash_balances "
-            " GROUP BY account_id, currency"
+            "SELECT cb.account_id, cb.currency, MIN(cb.as_of_date) AS first_date "
+            "  FROM cash_balances cb "
+            "  JOIN statements s ON s.statement_id = cb.statement_id "
+            " WHERE s.statement_type = 'monthly' "
+            " GROUP BY cb.account_id, cb.currency"
         ).fetchall()
         for r in cash_rows:
             acct = r["account_id"]
             ccy = r["currency"]
             first = r["first_date"]
             first_bal = conn.execute(
-                "SELECT closing_balance AS balance FROM cash_balances "
-                " WHERE account_id = ? AND currency = ? AND as_of_date = ? "
+                "SELECT cb.closing_balance AS balance "
+                "  FROM cash_balances cb "
+                "  JOIN statements s ON s.statement_id = cb.statement_id "
+                " WHERE cb.account_id = ? AND cb.currency = ? AND cb.as_of_date = ? "
+                "   AND s.statement_type = 'monthly' "
                 " LIMIT 1",
                 (acct, ccy, first),
             ).fetchone()
@@ -120,8 +136,10 @@ def infer_initials(path: Path | str | None = None) -> dict:
             net_rows = conn.execute(
                 "SELECT COALESCE(SUM(net_amount), 0) AS s "
                 "  FROM transactions "
-                " WHERE account_id = ? AND currency = ? AND trade_date <= ?",
-                (acct, ccy, first),
+                " WHERE account_id = ? AND currency = ? AND trade_date <= ? "
+                "   AND net_amount IS NOT NULL "
+                f"   AND txn_type NOT IN ({','.join('?' * len(NON_CASH_TXN_TYPES))})",
+                (acct, ccy, first, *sorted(NON_CASH_TXN_TYPES)),
             ).fetchone()
             net = float(net_rows["s"] or 0.0) if net_rows else 0.0
             implied = bal - net
