@@ -39,7 +39,7 @@ Two stores, deliberately separated:
 - **DuckDB — `data/market.duckdb`**: public market data scraped on demand.
   Tables: `daily_prices`, `dividends`, `splits`, `option_implied_vol`,
   `fx_rates`, `financials_quarterly`, `financials_annual`,
-  `earnings_events`, `scrape_log`. Defined in
+   `earnings_events`, `symbol_profiles`, `scrape_log`. Defined in
   [src/ledger/db/duckdb_store.py](src/ledger/db/duckdb_store.py).
 
 Cash balances are tracked per `(account, currency)` so CAD and USD never get
@@ -141,16 +141,19 @@ trade_history_opus47/
    account, institution, ticker and type.
 2. **Monthly** — pick any date and view consolidated holdings reconstructed
    from the latest account snapshot plus subsequent transactions; diff two
-   dates side-by-side.
+   dates side-by-side. Cash positions are shown per account/currency, with
+   native CAD/USD totals and combined CAD/USD totals from FX rates.
 3. **Performance** — total portfolio value over time, including cash;
    filter by account / institution / ticker / asset class.
-4. **Stock research** — clicking any symbol anywhere drills in here:
+4. **Stock research** — clicking any symbol anywhere drills in here; an empty
+   search box lists known tickers and narrows as you type. The view includes a
    candlestick price chart with 50/200 MA toggles + my buy/sell markers,
    volume sub-chart, then quarterly financial-statement chart with
    per-line visibility toggles. Daily/weekly/monthly switch.
 5. **Visualisations** — sector rotation (RRG) with date scrubber + play
-   button, treemap by sector, collapsible correlation matrix. Each view
-   is animatable across history.
+   button, treemap grouped by institution/account, type, or sector with
+   green/red period performance coloring, and a sortable correlation matrix
+   with clickable ticker headers.
 
 ## Data quality rule
 

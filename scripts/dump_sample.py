@@ -1,6 +1,5 @@
 """Throwaway: dump sample_portfolio.xlsx sheets."""
 import pandas as pd
-import sys
 
 p = r"c:\Users\hevan\work\chanmainvest\portfolio_dashboard\sample_portfolio.xlsx"
 sheets = pd.read_excel(p, sheet_name=None)

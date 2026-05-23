@@ -1,6 +1,7 @@
 """GET/PUT /config — user preferences and portfolio profiles stored in
 ``data/config.json``. The schema is intentionally loose so the frontend can
-add fields without a migration.
+add fields without a migration. Legacy ``display_currency`` keys are ignored;
+currency conversion is handled by individual views instead of a global setting.
 
 Default shape::
 
@@ -10,7 +11,6 @@ Default shape::
       ],
       "active_portfolio": "all",
       "theme": "dark",
-      "display_currency": "CAD",
       "hide_money": false
     }
 """
@@ -31,7 +31,6 @@ _DEFAULT: dict = {
     "portfolios": [{"id": "all", "name": "All accounts", "account_ids": []}],
     "active_portfolio": "all",
     "theme": "dark",
-    "display_currency": "CAD",
     "hide_money": False,
     "language": "en",
     # Placeholder slots for LLM-assisted features. NOT used yet — see
@@ -56,6 +55,7 @@ def _read() -> dict:
     # Merge defaults so newly-added fields appear.
     out = dict(_DEFAULT)
     out.update(data or {})
+    out.pop("display_currency", None)
     if not isinstance(out.get("portfolios"), list) or not out["portfolios"]:
         out["portfolios"] = list(_DEFAULT["portfolios"])
     return out
@@ -78,6 +78,8 @@ def get_config() -> dict:
 def put_config(payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="config payload must be a JSON object")
+    payload = dict(payload)
+    payload.pop("display_currency", None)
     # Light validation.
     portfolios = payload.get("portfolios")
     if portfolios is not None:
@@ -93,5 +95,6 @@ def put_config(payload: dict) -> dict:
             p.setdefault("account_ids", [])
     cur = _read()
     cur.update(payload)
+    cur.pop("display_currency", None)
     _write(cur)
     return cur

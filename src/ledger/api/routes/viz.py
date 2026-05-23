@@ -1,6 +1,8 @@
 """GET /viz — sector rotation, treemap, correlation matrix data feeds."""
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import duckdb
 from fastapi import APIRouter, Query
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -70,35 +72,101 @@ def _held_symbols_at(as_of: str, account_ids: list[int]) -> list[str]:
     return sorted(symbols)
 
 
+def _period_start(as_of: str, period: str) -> str:
+    end = date.fromisoformat(as_of)
+    match period:
+        case "1d":
+            days = 1
+        case "1w":
+            days = 7
+        case "1m":
+            days = 30
+        case "3m":
+            days = 90
+        case "6m":
+            days = 180
+        case "1y":
+            days = 365
+        case _:
+            return date(end.year, 1, 1).isoformat()
+    return (end - timedelta(days=days)).isoformat()
+
+
+def _symbol_performance(symbols: list[str], as_of: str, period: str) -> dict[str, float | None]:
+    if not symbols:
+        return {}
+    start = _period_start(as_of, period)
+    out: dict[str, float | None] = {}
+    con = _duck()
+    try:
+        for symbol in symbols:
+            end_row = con.execute(
+                """
+                SELECT adj_close FROM daily_prices
+                 WHERE symbol = ? AND trade_date <= ?
+                   AND adj_close IS NOT NULL
+                 ORDER BY trade_date DESC
+                 LIMIT 1
+                """,
+                [symbol, as_of],
+            ).fetchone()
+            start_row = con.execute(
+                """
+                SELECT adj_close FROM daily_prices
+                 WHERE symbol = ? AND trade_date <= ?
+                   AND adj_close IS NOT NULL
+                 ORDER BY trade_date DESC
+                 LIMIT 1
+                """,
+                [symbol, start],
+            ).fetchone()
+            if not end_row or not start_row or not start_row[0]:
+                out[symbol] = None
+            else:
+                out[symbol] = (float(end_row[0]) / float(start_row[0]) - 1.0) * 100.0
+    except Exception:
+        return {symbol: None for symbol in symbols}
+    finally:
+        con.close()
+    return out
+
+
 @router.get("/holdings_by_sector")
 def holdings_by_sector(
     month_end: str | None = Query(None, description="ISO date; defaults to latest"),
     account_id: str | None = Query(None),
+    period: str = Query("1m", pattern="^(1d|1w|1m|3m|6m|1y|ytd)$"),
 ) -> dict:
     accts = _csv_ints(account_id)
     as_of = _resolve_as_of(month_end)
     if not as_of:
         return {"as_of_date": None, "rows": []}
-    grouped: dict[tuple[str, str, str], float] = {}
+    rows = []
     for row in _holdings_at(as_of, accts):
         if row["asset_type"] not in {"equity", "etf", "mutual_fund", "bond"}:
             continue
         market_value = row["market_value"] or 0.0
         if market_value <= 0:
             continue
-        key = (row["symbol"], row["asset_type"], row["currency"])
-        grouped[key] = grouped.get(key, 0.0) + market_value
-    rows = [
-        {"symbol": symbol, "asset_type": asset_type, "currency": currency, "market_value": market_value}
-        for (symbol, asset_type, currency), market_value in sorted(grouped.items())
-        if market_value > 0
-    ]
+        rows.append({
+            "account_id": row["account_id"],
+            "account_number": row["account_number"],
+            "institution_code": row["institution_code"],
+            "institution_name": row["institution_name"],
+            "symbol": row["symbol"],
+            "asset_type": row["asset_type"],
+            "currency": row["currency"],
+            "market_value": market_value,
+        })
     profiles = _symbol_profiles([r["symbol"] for r in rows])
+    performance = _symbol_performance([r["symbol"] for r in rows], as_of, period)
     for r in rows:
         profile = profiles.get(r["symbol"], {})
         r["sector"] = profile.get("sector")
         r["industry"] = profile.get("industry")
-    return {"as_of_date": as_of, "rows": rows}
+        r["performance_pct"] = performance.get(r["symbol"])
+    rows.sort(key=lambda r: (r["institution_code"], r["account_number"], r["symbol"], r["currency"]))
+    return {"as_of_date": as_of, "period": period, "rows": rows}
 
 
 @router.get("/correlation")

@@ -14,6 +14,7 @@ function isoDaysAgo(days: number) {
   const d = new Date(); d.setDate(d.getDate() - days);
   return d.toISOString().slice(0, 10);
 }
+function todayISO() { return new Date().toISOString().slice(0, 10); }
 function periodStart(p: Period): string {
   switch (p) {
     case "1d": return isoDaysAgo(1);
@@ -79,6 +80,8 @@ export default function Performance() {
 
   const totalRows = totalQ.data?.rows ?? [];
   const cashRows = cashQ.data?.rows ?? [];
+  const chartEnd = end || todayISO();
+  const chartStart = start || totalRows[0]?.as_of_date || cashRows[0]?.as_of_date || chartEnd;
 
   const filteredTotal = useMemo(() => {
     return totalRows.filter((r) => {
@@ -99,6 +102,32 @@ export default function Performance() {
     }
     return m;
   }, [filteredTotal]);
+
+  const filteredCash = useMemo(() => {
+    return cashRows.filter((r) => {
+      if (start && r.as_of_date < start) return false;
+      if (end && r.as_of_date > end) return false;
+      if (showCcy !== "both" && r.currency !== showCcy) return false;
+      return true;
+    });
+  }, [cashRows, start, end, showCcy]);
+
+  const cashSeriesByCcy = useMemo(() => {
+    const byKey = new Map<string, number>();
+    for (const row of filteredCash) {
+      const key = `${row.currency}::${row.as_of_date}`;
+      byKey.set(key, (byKey.get(key) || 0) + (row.closing_balance || 0));
+    }
+    const out = new Map<string, { x: string[]; y: number[] }>();
+    for (const [key, value] of Array.from(byKey.entries()).sort()) {
+      const [currency, asOfDate] = key.split("::");
+      const series = out.get(currency) || { x: [], y: [] };
+      series.x.push(asOfDate);
+      series.y.push(value);
+      out.set(currency, series);
+    }
+    return out;
+  }, [filteredCash]);
 
   const theme = plotlyTheme();
 
@@ -124,7 +153,7 @@ export default function Performance() {
         )}
         <SmartSelect label={t("f.institution")} options={instOpts} value={institutions} onChange={setInstitutions} />
         <SmartSelect label={t("f.account")} options={acctOpts} value={accountIds} onChange={setAccountIds} />
-        <span className="segmented-control" role="group" aria-label={t("cfg.display_currency")}>
+        <span className="segmented-control" role="group" aria-label="Currency filter">
           {(["both", "CAD", "USD"] as const).map((ccy) => (
             <button key={ccy} className={showCcy === ccy ? "active" : ""}
                     onClick={() => setShowCcy(ccy)}>
@@ -144,15 +173,16 @@ export default function Performance() {
         <h3>Total portfolio value{(normalize || hideMoney) ? " — % change" : ""}</h3>
         <Plot
           data={Array.from(seriesByCcy.entries()).map(([ccy, s]) => ({
-            type: "scatter", mode: "lines", name: ccy,
+            type: "scatter", name: ccy,
             x: s.x,
             y: (normalize || hideMoney) ? rebase(s.y) : s.y,
+            mode: s.x.length <= 2 ? "lines+markers" : "lines",
             line: { width: 2 },
           }))}
           layout={{
             paper_bgcolor: theme.paper_bgcolor, plot_bgcolor: theme.plot_bgcolor,
             font: theme.font, margin: { t: 10, r: 10, b: 40, l: 60 },
-            xaxis: { gridcolor: theme.xaxis_gridcolor, title: "Date" },
+            xaxis: { gridcolor: theme.xaxis_gridcolor, title: "Date", range: [chartStart, chartEnd] },
             yaxis: {
               gridcolor: theme.yaxis_gridcolor,
               title: (normalize || hideMoney) ? "% change" : "Market value",
@@ -175,22 +205,14 @@ export default function Performance() {
         <div className="card">
           <h3>Cash by currency</h3>
           <Plot
-            data={[
-              {
-                type: "scatter", mode: "lines", name: "CAD",
-                x: cashRows.filter((r) => r.currency === "CAD").map((r) => r.as_of_date),
-                y: cashRows.filter((r) => r.currency === "CAD").map((r) => r.closing_balance),
-              },
-              {
-                type: "scatter", mode: "lines", name: "USD",
-                x: cashRows.filter((r) => r.currency === "USD").map((r) => r.as_of_date),
-                y: cashRows.filter((r) => r.currency === "USD").map((r) => r.closing_balance),
-              },
-            ]}
+            data={Array.from(cashSeriesByCcy.entries()).map(([ccy, s]) => ({
+              type: "scatter", mode: s.x.length <= 2 ? "lines+markers" : "lines", name: ccy,
+              x: s.x, y: s.y,
+            }))}
             layout={{
               paper_bgcolor: theme.paper_bgcolor, plot_bgcolor: theme.plot_bgcolor,
               font: theme.font, margin: { t: 10, r: 10, b: 40, l: 60 },
-              xaxis: { gridcolor: theme.xaxis_gridcolor },
+              xaxis: { gridcolor: theme.xaxis_gridcolor, range: [chartStart, chartEnd] },
               yaxis: { gridcolor: theme.yaxis_gridcolor },
               height: 320,
             }}

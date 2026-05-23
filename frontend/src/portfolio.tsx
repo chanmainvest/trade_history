@@ -31,7 +31,6 @@ const DEFAULT_CFG: UserConfig = {
   portfolios: [{ id: "all", name: "All accounts", account_ids: [] }],
   active_portfolio: "all",
   theme: "dark",
-  display_currency: "CAD",
   hide_money: false,
   language: "en",
 };

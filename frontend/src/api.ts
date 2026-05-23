@@ -38,7 +38,7 @@ export const api = {
   latestDate: () => getJSON<{ latest: string | null }>("/transactions/latest-date"),
 
   monthlySnapshot: (p: { month_end?: string; account_id?: number[] } = {}) =>
-    getJSON<{ as_of_date: string; rows: HoldingRow[] }>("/monthly/snapshot", p),
+    getJSON<{ as_of_date: string; rows: HoldingRow[]; totals?: SnapshotTotals }>("/monthly/snapshot", p),
   monthlyDiff: (p: { a: string; b: string; account_id?: number[] }) =>
     getJSON<{ a: string; b: string; rows: DiffRow[] }>("/monthly/diff", p),
 
@@ -58,8 +58,8 @@ export const api = {
     getJSON<{ symbol: string; period: string; rows: any[] }>(
       "/research/financials", { symbol, period }),
 
-  vizSector: (p: { month_end?: string; account_id?: number[] } = {}) =>
-    getJSON<{ as_of_date: string | null; rows: { symbol: string; asset_type: string; currency: string; market_value: number; sector?: string | null; industry?: string | null }[] }>(
+  vizSector: (p: { month_end?: string; account_id?: number[]; period?: string } = {}) =>
+    getJSON<{ as_of_date: string | null; period?: string; rows: { account_id: number; account_number: string; institution_code: string; institution_name: string; symbol: string; asset_type: string; currency: string; market_value: number; sector?: string | null; industry?: string | null; performance_pct?: number | null }[] }>(
       "/viz/holdings_by_sector", p),
   vizCorrelation: (p: { start: string; end: string; account_id?: number[] }) =>
     getJSON<{ symbols: string[]; matrix: number[][]; profiles?: Record<string, { sector?: string | null; industry?: string | null }> }>("/viz/correlation", p),
@@ -127,6 +127,18 @@ export type HoldingRow = {
   unrealized_pnl: number | null;
 };
 
+export type SnapshotTotals = {
+  native?: Record<string, number>;
+  combined?: {
+    CAD?: number;
+    USD?: number;
+    usd_cad?: number;
+    cad_usd?: number;
+    cad_fx_date?: string | null;
+    usd_fx_date?: string | null;
+  };
+};
+
 export type DiffRow = {
   account_id: number;
   account_number: string;
@@ -154,7 +166,6 @@ export type UserConfig = {
   portfolios: Portfolio[];
   active_portfolio: string;
   theme: "dark" | "light";
-  display_currency: "CAD" | "USD";
   hide_money: boolean;
   /** UI language: en, zh-HK (HK Trad.), zh-TW (TW Trad.), zh-CN (Simplified). */
   language?: "en" | "zh-HK" | "zh-TW" | "zh-CN";

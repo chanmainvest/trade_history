@@ -70,13 +70,6 @@ export default function Config() {
               <option value="light">{t("nav.theme.light")}</option>
             </select>
           </label>
-          <label>{t("cfg.display_currency")}:&nbsp;
-            <select value={config.display_currency}
-                    onChange={(e) => saveConfig({ display_currency: e.target.value as "CAD" | "USD" })}>
-              <option value="CAD">CAD</option>
-              <option value="USD">USD</option>
-            </select>
-          </label>
           <label>
             <input type="checkbox" checked={config.hide_money}
                    onChange={(e) => saveConfig({ hide_money: e.target.checked })} />

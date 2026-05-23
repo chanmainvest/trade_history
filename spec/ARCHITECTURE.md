@@ -98,7 +98,11 @@ not checkpoints. Before the first available snapshot, it starts from
 route forward-fills securities and cash to avoid zig-zag when account
 statement dates are staggered. A later broker checkpoint clears any prior
 security for that account that no longer appears in the statement, so
-sold-out holdings do not live forever.
+sold-out holdings do not live forever. `/monthly/snapshot` also reconstructs
+cash per `(account, currency)` from cash-balance checkpoints plus subsequent
+cash-impacting transactions. It emits cash rows alongside securities and a
+`totals` payload with native currency totals plus combined CAD/USD totals from
+DuckDB FX rates.
 
 **Why snapshots still matter:** brokers sometimes apply lot adjustments,
 splits, name changes, and book-cost roll-ups that *only* appear on the
@@ -906,7 +910,6 @@ Stored as `<DATA_DIR>/config.json`. Schema:
   ],
   "active_portfolio": "all",
   "theme": "dark",
-  "display_currency": "CAD",
   "hide_money": false,
   "language": "en"
 }
@@ -914,6 +917,9 @@ Stored as `<DATA_DIR>/config.json`. Schema:
 
 The frontend reads it via `GET /config` and writes via `PUT /config`.
 A portfolio with empty `account_ids` is implicitly "all accounts".
+The backend tolerates legacy `display_currency` keys in older config files by
+dropping them on read/write; the current frontend does not expose or use that
+preference.
 
 ---
 
@@ -936,6 +942,13 @@ The example dataset is rebuilt by:
 $env:LEDGER_PROFILE = "example"
 uv run python scripts/build_example_data.py
 ```
+
+The builder recreates both example databases. SQLite gets synthetic accounts,
+transactions, cash balances, and multiple historical snapshots. DuckDB is
+seeded from the real market database for matching symbols and fills missing
+sample tickers with deterministic synthetic prices, FX rates, and profile
+metadata so the example profile can exercise Research, Performance, RRG,
+Treemap, and Correlation without pointing at real account data.
 
 ---
 

@@ -46,6 +46,7 @@ export default function Research() {
   const [period, setPeriod] = useState<Period>("1y");
   const [showMA50, setShowMA50] = useState(true);
   const [showMA200, setShowMA200] = useState(true);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [finPeriod, setFinPeriod] = useState<"quarterly" | "annual">("quarterly");
   const [finMetrics, setFinMetrics] = useState<Record<string, boolean>>({
     revenue: true, net_income: true, free_cash_flow: true,
@@ -67,6 +68,7 @@ export default function Research() {
     queryFn: () => api.financials(symbol, finPeriod),
     enabled: !!symbol,
   });
+  const symbolsQ = useQuery({ queryKey: ["symbols"], queryFn: api.symbols });
 
   const allRows = pricesQ.data?.rows ?? [];
   // Period cutoff
@@ -108,20 +110,55 @@ export default function Research() {
 
   const theme = plotlyTheme();
 
+  const symbolOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const row of symbolsQ.data?.rows ?? []) {
+      if (!row.symbol) continue;
+      seen.set(row.symbol, `${row.asset_type} • ${row.currency}`);
+    }
+    return Array.from(seen.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [symbolsQ.data]);
+
+  const filteredSymbols = useMemo(() => {
+    const query = input.trim().toLowerCase();
+    if (!query) return symbolOptions;
+    return symbolOptions.filter(([ticker, hint]) =>
+      ticker.toLowerCase().includes(query) || hint.toLowerCase().includes(query));
+  }, [input, symbolOptions]);
+
   function go() {
     if (input.trim()) nav(`/research/${input.trim().toUpperCase()}`);
+  }
+  function chooseSymbol(nextSymbol: string) {
+    setInput(nextSymbol);
+    setSearchOpen(false);
+    nav(`/research/${nextSymbol}`);
   }
 
   return (
     <>
       <h2>{t("nav.research")} {symbol && <>— {symbol}</>}</h2>
       <div className="filters">
-        <input value={input}
-               onChange={(e) => setInput(e.target.value.toUpperCase())}
-               placeholder={t("f.symbol") + " (e.g. AAPL)"}
-               onKeyDown={(e) => { if (e.key === "Enter") go(); }}
-               onBlur={() => { if (input && input !== symbol) go(); }}
-               style={{ minWidth: 140 }} />
+        <div className="ticker-search">
+          <input value={input}
+                 onFocus={() => setSearchOpen(true)}
+                 onChange={(e) => { setInput(e.target.value.toUpperCase()); setSearchOpen(true); }}
+                 placeholder={t("f.symbol") + " (e.g. AAPL)"}
+                 onKeyDown={(e) => { if (e.key === "Enter") go(); if (e.key === "Escape") setSearchOpen(false); }}
+                 onBlur={() => window.setTimeout(() => setSearchOpen(false), 120)}
+                 style={{ minWidth: 180 }} />
+          {searchOpen && (
+            <div className="ticker-search-panel">
+              {filteredSymbols.map(([ticker, hint]) => (
+                <button key={ticker} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => chooseSymbol(ticker)}>
+                  <strong>{ticker}</strong>
+                  <span>{hint}</span>
+                </button>
+              ))}
+              {filteredSymbols.length === 0 && <div className="ticker-search-empty">No matching tickers.</div>}
+            </div>
+          )}
+        </div>
         {PERIODS.map((p) => (
           <button key={p} className={p === period ? "active" : ""}
                   onClick={() => setPeriod(p)}>{t(`period.${p}`)}</button>

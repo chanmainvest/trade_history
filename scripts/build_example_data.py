@@ -16,16 +16,19 @@ real market history (covid recovery, AI rally, 2023 bond pain, etc.).
 """
 from __future__ import annotations
 
+import math
 import os
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
+
+import duckdb
 
 # Force the example profile *before* importing ledger.config.
 os.environ["LEDGER_PROFILE"] = "example"
 
 from ledger import config  # noqa: E402
-from ledger.db import duckdb_store, sqlite as sqlite_db  # noqa: E402
-
+from ledger.db import duckdb_store  # noqa: E402
+from ledger.db import sqlite as sqlite_db
 
 # --------------------------------------------------------------------------- holdings
 # Current holdings as of 2026-05-11 (from sample_portfolio.xlsx).
@@ -53,6 +56,17 @@ CASH = [
     ("TD", "USD",  3000.0),
     ("IB", "CAD",  2000.0),
     ("IB", "USD",     0.0),
+]
+
+AS_OF = "2026-05-11"
+PERIOD_START = "2026-05-01"
+SNAPSHOT_DATES = [
+    "2021-12-31",
+    "2022-12-30",
+    "2023-12-29",
+    "2024-12-31",
+    "2025-12-31",
+    AS_OF,
 ]
 
 # Backstory transactions: (date, account_code, txn_type, symbol, asset_type,
@@ -92,28 +106,137 @@ TRADES = [
     # 2026 — current year
     ("2026-01-22", "TD", "buy",      "SPY",  "etf",    "USD",   50.0, 689.40, "SPY rebalance into year"),
     ("2026-03-11", "TD", "buy",      "QQQ",  "etf",    "USD",   60.0, 651.20, "QQQ added on Fed pause"),
-    # --- A few option events (FCX June 2026 PUT spread = sell 5000 @ $40 / buy 2000 @ $45)
-    ("2026-04-02", "TD", "option_sell_to_open", "FCX", "option", "USD", -5000.0, 1.20,
+    # --- A few option events (quantities are option contracts, not underlying shares)
+    ("2026-04-02", "TD", "option_sell_to_open", "FCX", "option", "USD", -50.0, 1.20,
         "PUT FCX JUN 18 2026 40.00 — sold 50 contracts"),
-    ("2026-04-02", "TD", "option_buy_to_open",  "FCX", "option", "USD",  2000.0, 0.45,
+    ("2026-04-02", "TD", "option_buy_to_open",  "FCX", "option", "USD",  20.0, 0.45,
         "PUT FCX JUN 18 2026 45.00 — bought 20 contracts"),
     # SLV credit spread
-    ("2026-04-15", "TD", "option_sell_to_open", "SLV", "option", "USD", -5000.0, 0.95,
+    ("2026-04-15", "TD", "option_sell_to_open", "SLV", "option", "USD", -50.0, 0.95,
         "PUT SLV JUN 18 2026 63.00 — short premium"),
-    ("2026-04-15", "TD", "option_buy_to_open",  "SLV", "option", "USD",  2500.0, 0.30,
+    ("2026-04-15", "TD", "option_buy_to_open",  "SLV", "option", "USD",  25.0, 0.30,
         "PUT SLV JUN 18 2026 70.00 — long protective"),
     # AAPL long-dated ladder
-    ("2026-04-22", "TD", "option_buy_to_open",  "AAPL", "option", "USD", 1200.0, 4.20,
+    ("2026-04-22", "TD", "option_buy_to_open",  "AAPL", "option", "USD", 12.0, 4.20,
         "PUT AAPL JAN 15 2027 150.00 — long protection"),
-    ("2026-04-22", "TD", "option_sell_to_open", "AAPL", "option", "USD", -900.0, 14.80,
+    ("2026-04-22", "TD", "option_sell_to_open", "AAPL", "option", "USD", -9.0, 14.80,
         "PUT AAPL JAN 15 2027 200.00 — short premium"),
-    ("2026-04-22", "TD", "option_buy_to_open",  "AAPL", "option", "USD",  300.0, 32.10,
+    ("2026-04-22", "TD", "option_buy_to_open",  "AAPL", "option", "USD",  3.0, 32.10,
         "PUT AAPL JAN 15 2027 250.00 — deep long"),
     # Dividends sprinkled in
     ("2025-09-19", "TD", "dividend", "XOM",  "equity", "USD",    None,  None,  "XOM Q3 dividend $0.95 x 200"),
     ("2025-09-19", "TD", "dividend", "CVX",  "equity", "USD",    None,  None,  "CVX Q3 dividend $1.63 x 200"),
     ("2025-12-12", "TD", "dividend", "XIU",  "etf",    "CAD",    None,  None,  "XIU Q4 distribution"),
 ]
+
+EXTRA_PRICE_SEEDS = {
+    "AAPL": ("USD", 200.0),
+    "FCX": ("USD", 42.0),
+    "SLV": ("USD", 65.0),
+}
+
+
+def _sample_symbols() -> list[str]:
+    symbols = {row[1] for row in OPTION_POSITIONS}
+    symbols |= {sym for _, sym, *_ in HOLDINGS}
+    symbols |= {row[3] for row in TRADES if row[3]}
+    symbols |= set(EXTRA_PRICE_SEEDS)
+    return sorted(symbols)
+
+
+def _seed_market_data(duck_path) -> None:
+    symbols = _sample_symbols()
+    real_path = config.ROOT / "data" / "market.duckdb"
+    target = duckdb.connect(str(duck_path))
+    try:
+        if real_path.exists() and real_path.resolve() != duck_path.resolve():
+            escaped = str(real_path).replace("'", "''")
+            target.execute(f"ATTACH '{escaped}' AS real_market (READ_ONLY)")
+            ph = ",".join("?" * len(symbols))
+            table_columns = {
+                "daily_prices": "symbol, exchange, currency, trade_date, open, high, low, close, adj_close, volume",
+                "financials_quarterly": "symbol, period_end, fiscal_year, fiscal_q, revenue, gross_profit, operating_income, net_income, eps_basic, eps_diluted, ebitda, total_assets, total_liab, total_equity, cash_and_equiv, long_term_debt, op_cash_flow, free_cash_flow, shares_diluted",
+                "financials_annual": "symbol, period_end, fiscal_year, revenue, gross_profit, operating_income, net_income, eps_basic, eps_diluted, ebitda, total_assets, total_liab, total_equity, op_cash_flow, free_cash_flow, shares_diluted",
+                "dividends": "symbol, ex_date, amount, currency",
+                "splits": "symbol, split_date, ratio",
+                "earnings_events": "symbol, report_date, fiscal_year, fiscal_q, eps_est, eps_actual, surprise",
+            }
+            try:
+                for table, columns in table_columns.items():
+                    target.execute(
+                        f"""
+                        INSERT OR REPLACE INTO {table} ({columns})
+                        SELECT {columns} FROM real_market.{table}
+                         WHERE symbol IN ({ph})
+                        """,
+                        symbols,
+                    )
+                target.execute(
+                    """
+                    INSERT OR REPLACE INTO fx_rates(base, quote, rate_date, rate)
+                    SELECT base, quote, rate_date, rate FROM real_market.fx_rates
+                    """
+                )
+            finally:
+                target.execute("DETACH real_market")
+
+        # Add local profile metadata from the synthetic holdings so sector UI is useful.
+        for _, sym, atype, _ccy, _shares, _price, sector in HOLDINGS:
+            target.execute(
+                """
+                INSERT OR REPLACE INTO symbol_profiles(symbol, short_name, sector, industry, quote_type, fetched_at)
+                VALUES (?, ?, ?, ?, ?, current_timestamp)
+                """,
+                [sym, sym, sector, sector, atype.upper()],
+            )
+
+        _fill_missing_prices(target, symbols)
+    finally:
+        target.close()
+
+
+def _fill_missing_prices(con: duckdb.DuckDBPyConnection, symbols: list[str]) -> None:
+    price_seed = {sym: (ccy, price) for _, sym, _atype, ccy, _shares, price, _sector in HOLDINGS}
+    price_seed.update(EXTRA_PRICE_SEEDS)
+    start = date(2021, 1, 4)
+    end = date.fromisoformat(AS_OF)
+    days: list[date] = []
+    cursor = start
+    while cursor <= end:
+        if cursor.weekday() < 5:
+            days.append(cursor)
+        cursor += timedelta(days=1)
+    for symbol in symbols:
+        count = con.execute("SELECT COUNT(*) FROM daily_prices WHERE symbol = ?", [symbol]).fetchone()[0]
+        if count:
+            continue
+        currency, current_price = price_seed.get(symbol, ("USD", 100.0))
+        rows = []
+        for index, day in enumerate(days):
+            progress = index / max(1, len(days) - 1)
+            wave = 1 + 0.055 * math.sin(index / 19 + len(symbol)) + 0.025 * math.sin(index / 47)
+            close = max(0.5, current_price * (0.58 + 0.42 * progress) * wave)
+            open_ = close * (1 + 0.004 * math.sin(index / 11))
+            high = max(open_, close) * 1.012
+            low = min(open_, close) * 0.988
+            volume = int(500_000 + 25_000 * (1 + math.sin(index / 13)) * max(1, len(symbol)))
+            rows.append((symbol, None, currency, day, open_, high, low, close, close, volume))
+        con.executemany(
+            """
+            INSERT OR REPLACE INTO daily_prices
+            (symbol, exchange, currency, trade_date, open, high, low, close, adj_close, volume)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+
+
+def _estimate_snapshot_price(symbol: str, snap_date: str, current_price: float) -> float:
+    start = date(2021, 1, 1)
+    end = date.fromisoformat(AS_OF)
+    current = date.fromisoformat(snap_date)
+    progress = max(0.0, min(1.0, (current - start).days / max(1, (end - start).days)))
+    return round(current_price * (0.58 + 0.42 * progress), 2)
 # Dividend net_amount (positive, cash credit)
 DIV_AMOUNTS = {
     ("2025-09-19", "XOM"): 190.00,
@@ -146,6 +269,7 @@ def build() -> None:
         duck_path.unlink()
     sqlite_db.init_db()
     duckdb_store.init_db()
+    _seed_market_data(duck_path)
 
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA foreign_keys = ON")
@@ -199,32 +323,25 @@ def build() -> None:
         )
         return cur.lastrowid
 
-    # ----- A single source file + statement per account, dated 2026-05-11
-    AS_OF = "2026-05-11"
-    PERIOD_START = "2026-05-01"
+    # ----- Synthetic monthly/annual checkpoint statements for charts
+    stmt_id: dict[tuple[str, str], int] = {}
     for acct_code, account_id in accts.items():
-        cur.execute(
-            "INSERT INTO source_files(relpath, sha256, size_bytes, page_count, "
-            "is_image_only, parser_name, parser_version, parsed_at, parse_status) "
-            "VALUES(?,?,?,?,?,?,?,datetime('now'),'ok')",
-            (f"example_data/Statements/{acct_code}/2026-05.example",
-             None, 0, 1, 0, "example-builder", "1.0"),
-        )
-        sf_id = cur.lastrowid
-        cur.execute(
-            "INSERT INTO statements(source_file_id, account_id, period_start, "
-            "period_end, statement_type) VALUES(?,?,?,?,?)",
-            (sf_id, account_id, PERIOD_START, AS_OF, "monthly"),
-        )
-
-    # Pull the statement_id per account
-    stmt_id = {
-        code: cur.execute(
-            "SELECT statement_id FROM statements WHERE account_id=? ORDER BY period_end DESC LIMIT 1",
-            (aid,),
-        ).fetchone()[0]
-        for code, aid in accts.items()
-    }
+        for snap_date in SNAPSHOT_DATES:
+            period_start = f"{snap_date[:8]}01"
+            cur.execute(
+                "INSERT INTO source_files(relpath, sha256, size_bytes, page_count, "
+                "is_image_only, parser_name, parser_version, parsed_at, parse_status) "
+                "VALUES(?,?,?,?,?,?,?,datetime('now'),'ok')",
+                (f"example_data/Statements/{acct_code}/{snap_date}.example",
+                 None, 0, 1, 0, "example-builder", "1.0"),
+            )
+            sf_id = cur.lastrowid
+            cur.execute(
+                "INSERT INTO statements(source_file_id, account_id, period_start, "
+                "period_end, statement_type) VALUES(?,?,?,?,?)",
+                (sf_id, account_id, period_start, snap_date, "monthly"),
+            )
+            stmt_id[(acct_code, snap_date)] = cur.lastrowid
 
     # ----- Position snapshots: equities + ETFs
     for acct, sym, atype, ccy, shares, price, _sector in HOLDINGS:
@@ -235,7 +352,7 @@ def build() -> None:
             "instrument_id, quantity, avg_cost, book_value, market_price, "
             "market_value, unrealized_pnl, currency) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (stmt_id[acct], accts[acct], AS_OF, iid,
+              (stmt_id[(acct, AS_OF)], accts[acct], AS_OF, iid,
              shares, None, None, price, mv, None, ccy),
         )
 
@@ -249,7 +366,7 @@ def build() -> None:
             "instrument_id, quantity, avg_cost, book_value, market_price, "
             "market_value, unrealized_pnl, currency) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (stmt_id[acct], accts[acct], AS_OF, iid,
+              (stmt_id[(acct, AS_OF)], accts[acct], AS_OF, iid,
              qty, None, None, mark, mv, None, ccy),
         )
 
@@ -258,8 +375,41 @@ def build() -> None:
         cur.execute(
             "INSERT INTO cash_balances(statement_id, account_id, as_of_date, "
             "currency, opening_balance, closing_balance) VALUES(?,?,?,?,?,?)",
-            (stmt_id[acct], accts[acct], AS_OF, ccy, amt, amt),
+            (stmt_id[(acct, AS_OF)], accts[acct], AS_OF, ccy, amt, amt),
         )
+
+    current_prices = {sym: price for _, sym, _atype, _ccy, _shares, price, _sector in HOLDINGS}
+    for snap_date in SNAPSHOT_DATES[:-1]:
+        quantities: dict[tuple[str, str, str, str], float] = {}
+        for trade_date, acct, ttype, sym, atype, ccy, qty, _price, _desc in TRADES:
+            if not qty or atype == "option" or ttype == "dividend" or trade_date > snap_date:
+                continue
+            key = (acct, sym, atype, ccy)
+            quantities[key] = quantities.get(key, 0.0) + qty
+        for (acct, sym, atype, ccy), qty in sorted(quantities.items()):
+            if abs(qty) <= 1e-9:
+                continue
+            iid = instr_id(atype, sym, ccy)
+            price = _estimate_snapshot_price(sym, snap_date, current_prices.get(sym, 100.0))
+            mv = qty * price
+            cur.execute(
+                "INSERT INTO position_snapshots(statement_id, account_id, as_of_date, "
+                "instrument_id, quantity, avg_cost, book_value, market_price, "
+                "market_value, unrealized_pnl, currency) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (stmt_id[(acct, snap_date)], accts[acct], snap_date, iid,
+                 qty, None, None, price, mv, None, ccy),
+            )
+        progress = (date.fromisoformat(snap_date) - date(2021, 1, 1)).days / (
+            date.fromisoformat(AS_OF) - date(2021, 1, 1)
+        ).days
+        for acct, ccy, amt in CASH:
+            balance = round(amt * (0.35 + 0.65 * progress), 2)
+            cur.execute(
+                "INSERT INTO cash_balances(statement_id, account_id, as_of_date, "
+                "currency, opening_balance, closing_balance) VALUES(?,?,?,?,?,?)",
+                (stmt_id[(acct, snap_date)], accts[acct], snap_date, ccy, balance, balance),
+            )
 
     # ----- Transactions
     for row in TRADES:
@@ -294,18 +444,18 @@ def build() -> None:
             "txn_type, instrument_id, quantity, price, net_amount, currency, "
             "description, raw_line) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (accts[acct], stmt_id[acct], trade_date, ttype, iid,
+            (accts[acct], stmt_id[(acct, AS_OF)], trade_date, ttype, iid,
              qty, price, net, ccy, desc, desc),
         )
 
+    n_pos = cur.execute("SELECT COUNT(*) FROM position_snapshots").fetchone()[0]
     conn.commit()
     conn.close()
 
     n_txn = sum(1 for _ in TRADES)
-    n_pos = len(HOLDINGS) + len(OPTION_POSITIONS)
     print(f"Built example DB: {db_path}")
     print(f"  {len(accts)} accounts, {n_txn} transactions, {n_pos} positions.")
-    print(f"  DuckDB: {duck_path} (empty — run `ledger market` to populate).")
+    print(f"  DuckDB: {duck_path} (seeded from real market DB where available).")
 
 
 if __name__ == "__main__":

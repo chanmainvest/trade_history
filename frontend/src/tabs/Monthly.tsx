@@ -94,6 +94,19 @@ export default function Monthly() {
   for (const r of filtered) {
     totalsByCurrency[r.currency] = (totalsByCurrency[r.currency] || 0) + (r.market_value || 0);
   }
+  const snapshotTotals = snapQ.data?.totals;
+  const fxTotals = snapshotTotals?.combined;
+  const combinedTotals: { CAD?: number; USD?: number } = {};
+  if (Object.keys(totalsByCurrency).length > 0) {
+    const cad = totalsByCurrency.CAD || 0;
+    const usd = totalsByCurrency.USD || 0;
+    if (usd === 0 || fxTotals?.usd_cad !== undefined) {
+      combinedTotals.CAD = cad + usd * (fxTotals?.usd_cad || 0);
+    }
+    if (cad === 0 || fxTotals?.cad_usd !== undefined) {
+      combinedTotals.USD = usd + cad * (fxTotals?.cad_usd || 0);
+    }
+  }
 
   function toggleSort(c: Col) {
     if (c === sortCol) setSortDir(sortDir === "asc" ? "desc" : "asc");
@@ -121,6 +134,9 @@ export default function Monthly() {
         <label>{t("f.compare_to")}:&nbsp;
           <input type="date" value={effectiveA} onChange={(e) => setA(e.target.value)} />
         </label>
+        <button type="button" onClick={() => setA(effectiveB)} disabled={!effectiveB || effectiveA === effectiveB}>
+          Sync compare to as of
+        </button>
         <SmartSelect label={t("f.institution")} options={instOpts} value={instFilter} onChange={setInstFilter} />
         <SmartSelect label={t("f.account")} options={acctOpts} value={acctFilter} onChange={setAcctFilter} />
         <label><input type="checkbox" checked={hideZero}
@@ -135,6 +151,12 @@ export default function Monthly() {
           {Object.entries(totalsByCurrency).map(([c, v]) => (
             <span key={c} className="tag accent"><strong>{c}</strong>&nbsp;{fmtNum(v)}</span>
           ))}
+          {combinedTotals.CAD !== undefined && (
+            <span className="tag"><strong>Total CAD</strong>&nbsp;{fmtNum(combinedTotals.CAD)}</span>
+          )}
+          {combinedTotals.USD !== undefined && (
+            <span className="tag"><strong>Total USD</strong>&nbsp;{fmtNum(combinedTotals.USD)}</span>
+          )}
           {effectiveA !== effectiveB && (
             <span className="tag">Diff vs {effectiveA} — green = added, red = removed</span>
           )}

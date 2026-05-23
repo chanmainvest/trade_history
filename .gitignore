@@ -8,6 +8,7 @@ data/*.sqlite
 data/*.duckdb
 data/*.duckdb.wal
 data/text_dumps/
+example_data/data/config.json
 logs/*.log
 logs/*.jsonl
 Statements/

@@ -91,7 +91,7 @@
   </nav>
   <main>
     <h1>Trade History — Documentation</h1>
-    <p>Generated 2026-05-18 from <code>spec/*.md</code> &mdash;
+    <p>Generated 2026-05-20 from <code>spec/*.md</code> &mdash;
        <a href="https://github.com/chanmainvest/trade_history">chanmainvest/trade_history</a>.</p>
 <div class="doc-section" id="user-guide">
   <div class="section-banner">User Guide</div>
@@ -147,7 +147,14 @@ same database and PDFs are used.</p>
 <p>The example dataset has two accounts (TD Direct Investing and Interactive
 Brokers) with a current holdings snapshot mirroring the
 <code>portfolio_dashboard/sample_portfolio.xlsx</code> reference, plus ~37
-invented buy/sell/option events spread over 2021-2026.</p>
+invented buy/sell/option events spread over 2021-2026. Option transaction
+quantities are contracts, not underlying shares. The builder also seeds an
+example DuckDB with market prices, FX rates, and sector/profile metadata for
+the sample symbols so Research, Performance, Correlation, and Treemap work
+without using your real database.</p>
+<p>Example-data screenshots:</p>
+<p><img alt="Transactions tab with example data" src="../docs/screenshots/transactions-example.png" /></p>
+<p><img alt="Monthly snapshot tab with example data" src="../docs/screenshots/monthly-example.png" /></p>
 <p>Reset back to your real data with <code>$env:LEDGER_PROFILE = "real"</code> or
 just close the terminal.</p>
 <h2 id="3-load-your-statements">3. Load your statements</h2>
@@ -159,38 +166,47 @@ just close the terminal.</p>
 </ol>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">run</span>
 </code></pre></div>
+<p>Re-running is fast when PDFs are unchanged because the ingester compares
+  <code>source_files.sha256</code> before parsing. Use <code>uv run ledger ingest run --force</code>
+  after parser upgrades when you intentionally want to re-parse unchanged
+  PDFs.</p>
 <ol>
-<li>Pull market data for everything you hold:</li>
-</ol>
-<p><code>powershell
-  uv run ledger market refresh</code></p>
+<li>
+<p>Pull market data for everything you hold:</p>
+<div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">market</span> <span class="n">refresh</span>
+</code></pre></div>
 <p>This calls yfinance and, for US-listed fundamentals, the free SEC
-  EDGAR Company Facts API. Be patient and don't run it on a flaky link.
-  Re-running is safe; it's an upsert.</p>
+EDGAR Company Facts API. Be patient and don't run it on a flaky link.
+Re-running is safe; it's an upsert.</p>
 <p>To fetch sector/profile metadata used by Visualization colors, run:</p>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">market</span> <span class="n">refresh-profiles</span>
 </code></pre></div>
 <p><code>uv run ledger market refresh-all</code> includes profiles, prices,
-  dividends, splits, financials, earnings, and FX in one pass.</p>
-<ol>
-<li><em>(Optional but recommended)</em> Back-fill positions that pre-date your
-   earliest statement:</li>
-</ol>
+dividends, splits, financials, earnings, and FX in one pass.</p>
+</li>
+<li>
+<p><em>(Optional but recommended)</em> Back-fill positions that pre-date your
+    earliest statement:</p>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">infer-initials</span>
 </code></pre></div>
 <p>This populates <code>initial_positions</code> and <code>initial_cash</code> so the
-   Monthly / Performance views know what you were already holding when
-   our records start. Idempotent.</p>
-<ol>
-<li><em>(Optional after parser upgrades)</em> Repair already-ingested legacy
-  symbols without deleting PDFs or re-ingesting everything. The repair
-  uses known ticker mappings first, then matches transactions to holdings
-  from the same statement where the PDF only printed a security name:</li>
-</ol>
+Monthly / Performance views know what you were already holding when
+our records start. Idempotent. Inferred rows are tagged with
+<code>notes = 'inferred:...'</code>; any reviewed/manual rows with a different
+note prefix are preserved on re-run. Cash rows are inferred from the
+first monthly cash snapshot for each account/currency.</p>
+</li>
+<li>
+<p><em>(Optional after parser upgrades)</em> Repair already-ingested legacy
+    symbols without deleting PDFs or re-ingesting everything. The repair
+    uses known ticker mappings first, then matches transactions to holdings
+    from the same statement where the PDF only printed a security name:</p>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="nb">repair-symbols</span>
 </code></pre></div>
-<ol>
-<li>Reload the browser. The Transactions tab should now have data.</li>
+</li>
+<li>
+<p>Reload the browser. The Transactions tab should now have data.</p>
+</li>
 </ol>
 <h2 id="4-the-tabs">4. The tabs</h2>
 <h3 id="41-transactions">4.1 Transactions</h3>
@@ -199,7 +215,7 @@ just close the terminal.</p>
 <li><strong>Institution</strong> (multi-select with search).</li>
 <li><strong>Account</strong> (multi-select with search; respects the active portfolio).</li>
 <li><strong>Symbol</strong> (multi-select with search; scrolls inside max 2/3 screen
-  width).</li>
+  height).</li>
 <li><strong>Type</strong> (buy / sell / dividend / option_… etc., multi-select).</li>
 <li><strong>Min |amount|</strong> — 100 / 1k / 10k / 100k / 1M presets.</li>
 <li><strong>Date range</strong>.</li>
@@ -209,34 +225,45 @@ just close the terminal.</p>
 <p>Default view: holdings as of the most recent statement date in the
 database, across all accounts in the active portfolio.</p>
 <ul>
-<li><strong>As of</strong> date — pick any day; the app starts from the latest complete
-  account statement checkpoint and replays transactions after it. Before
-  the first statement, it uses inferred/manual initial holdings.</li>
+<li><strong>As of</strong> date — pick any day; the app starts from the latest account
+  holdings snapshot checkpoint and replays transactions after it. Empty
+  statement rows without holdings are ignored as checkpoints. Before the
+  first snapshot, it uses inferred/manual initial holdings.</li>
 <li><strong>Compare to</strong> — picking a second date adds a <code>Δ</code> column. Rows where
   the position grew are tinted green, rows that shrank are tinted red,
   in git-diff style. Positions that disappeared between the two dates
   appear at the bottom.</li>
+<li><strong>Sync compare to as of</strong> — copies the current <strong>As of</strong> date into the
+  comparison date when you want to reset the diff.</li>
+<li>Cash positions appear as <code>CAD Cash</code> / <code>USD Cash</code> rows per account. Totals
+  show native currency buckets plus combined CAD and USD totals using the
+  latest FX rate on or before the snapshot date.</li>
 <li>Columns sortable; institution / account / profile are visible, and the
   filters can narrow the table to specific institutions or accounts.</li>
 </ul>
 <h3 id="43-performance">4.3 Performance</h3>
-<p>Total portfolio market value over time.</p>
+<p>Total portfolio value over time, including cash.</p>
 <ul>
 <li><strong>Period</strong> buttons: 1m / 3m / 6m / 1y / 3y / 5y / 10y / max / custom.</li>
 <li><strong>Currency</strong>: CAD / USD / Both.</li>
 <li><strong>Show as %</strong> — rebases all series to 100 at the start of the window;
   forced on if "Hide $ values" is set in Settings.</li>
 <li><strong>Portfolio / institution / account</strong> filters (multi-select).</li>
-<li>Cash chart toggles off automatically when "Hide $ values" is on.</li>
+<li>The separate cash chart remains available as a cash-only breakdown and
+  toggles off automatically when "Hide $ values" is on.</li>
 </ul>
 <p>The chart no longer zig-zags between accounts whose statement dates
-don't line up — see
+don't line up, and sold-out holdings are cleared when later broker
+snapshots omit them — see
 <a href="ARCHITECTURE.md#14-transactions-snapshots-and-the-reconciliation-gap">ARCHITECTURE.md §1.4</a> for the
 forward-fill rationale.</p>
 <h3 id="44-research">4.4 Research</h3>
 <p>Per-symbol deep dive.</p>
 <ul>
-<li>Type a ticker, press <strong>Enter</strong> (no Go button — it was useless).</li>
+<li>Type a ticker, press <strong>Enter</strong> (no Go button — it was useless). When the
+  search box is empty it lists known tickers; typing narrows the list by
+  ticker, asset type, or currency. The list scrolls at a max 2/3 viewport
+  height so it stays usable on smaller screens.</li>
 <li><strong>Period</strong> buttons + daily/weekly/monthly resample.</li>
 <li>Candlestick with <strong>MA50 / MA200</strong> toggles, volume sub-chart.</li>
 <li>Your buy/sell marks overlay the chart. <strong>Solid triangles</strong> =
@@ -256,13 +283,14 @@ account filters inside the tab:</p>
   Symbols in the same sector use related colors when profile metadata is
   available. Use the checkbox row below the chart to hide individual
   symbols.</li>
-<li><strong>Treemap</strong> — holdings grouped by asset type, sized by market value.
-  With sector metadata, holdings group by sector; otherwise they fall
-  back to asset type. Defaults to the latest snapshot date (so it's never
-  blank unless you actually have no holdings).</li>
+<li><strong>Treemap</strong> — holdings sized by market value. Use <strong>Group by</strong> to switch
+  between institution/account, type, and sector. Use <strong>Performance</strong> to pick
+  the period used for green/red coloring on the holding tiles. Defaults to
+  the latest snapshot date (so it's never blank unless you actually have no
+  holdings).</li>
 <li><strong>Correlation matrix</strong> — square heatmap using the same color scale as
-  <code>portfolio_dashboard</code>. <strong>Sort-by</strong> dropdown or clicking a ticker in the
-  chart reorders both axes by correlation against that symbol; checkboxes
+  <code>portfolio_dashboard</code>. <strong>Sort-by</strong> dropdown, top/left ticker labels, or
+  cells can reorder both axes by correlation against a symbol; checkboxes
   hide/show individual symbols and use sector-colored accents.</li>
 </ul>
 <h3 id="46-settings">4.6 Settings</h3>
@@ -270,7 +298,6 @@ account filters inside the tab:</p>
 <li><strong>Theme</strong> — light / dark.</li>
 <li><strong>Language</strong> — English / 繁體 (HK) / 繁體 (TW) / 简体 (CN). Flag picker
   in the top right.</li>
-<li><strong>Display currency</strong> — CAD or USD.</li>
 <li><strong>Hide $ values</strong> — show percentages only (useful for screenshots).</li>
 <li><strong>Portfolios</strong> — add named groups of accounts. Example:</li>
 <li><em>Dad's TFSA</em> → CIBC TFSA only.</li>
@@ -281,10 +308,10 @@ account filters inside the tab:</p>
   tab.</p>
 <h2 id="5-pdf-upload-beta">5. PDF upload (beta)</h2>
 <p>A <code>POST /statements/upload</code> endpoint exists for in-browser PDF upload.
-Today it accepts the file, fingerprints it, and runs the existing
-parsers if the institution can be recognized. If no parser claims the
-file, the response is <code>unrecognized</code> and (when an LLM API key is
-configured) the app will prompt to draft a new extraction routine.</p>
+Today it accepts only files named <code>.pdf</code> whose bytes start with PDF magic
+bytes, rejects empty files and files over 25 MiB, sanitizes the upload
+filename, saves the file under <code>Statements/uploads/</code>, and returns its
+SHA-256 fingerprint. It does not yet run a review/import workflow.</p>
 <p>LLM-driven parser drafting is <strong>not implemented yet</strong>; the API-key
 slots in Settings are placeholders. See <code>AGENTS.md</code> deferred items.</p>
 <h2 id="6-mcp-server-for-ai-agents">6. MCP server for AI agents</h2>
@@ -329,9 +356,9 @@ offer arbitrary shell access.</p>
 <td>Pick a date ≥ your earliest statement; the API falls back to the latest available</td>
 </tr>
 <tr>
-<td>Performance chart goes flat to zero</td>
-<td>One account's data gap</td>
-<td>Forward-fill is on by default; if you really want raw, pass <code>forward_fill=false</code> to <code>/api/performance/total</code></td>
+<td>Performance chart drops to zero</td>
+<td>All filtered holdings were sold or omitted by the latest broker checkpoint</td>
+<td>Broaden the account/symbol filters, or pass <code>forward_fill=false</code> to <code>/api/performance/total</code> if you want raw checkpoint sums</td>
 </tr>
 <tr>
 <td><code>BOUGHT</code> appears as a symbol in RBC rows</td>
@@ -441,29 +468,51 @@ angles:</p>
 <li><code>position_snapshots</code> — the <em>state at the end of each statement</em>.</li>
 </ul>
 <p>Holdings on statement dates come from <code>position_snapshots</code>. For an
-arbitrary historical date, the Monthly API uses the latest complete
-statement for each account as a checkpoint, then replays signed
-transactions after that checkpoint up to the selected day. Before the
-first available statement, it starts from <code>initial_positions</code> and replays
-transactions forward. The Performance route still forward-fills account
-snapshots to avoid zig-zag when account statement dates are staggered.</p>
+arbitrary historical date, the Monthly API uses the latest
+<code>position_snapshots.as_of_date</code> for each account as the checkpoint, then
+replays signed transactions after that checkpoint up to the selected day.
+Empty statement rows, such as annual reports with no holdings table, are
+not checkpoints. Before the first available snapshot, it starts from
+<code>initial_positions</code> and replays transactions forward. The Performance
+route forward-fills securities and cash to avoid zig-zag when account
+statement dates are staggered. A later broker checkpoint clears any prior
+security for that account that no longer appears in the statement, so
+sold-out holdings do not live forever. <code>/monthly/snapshot</code> also reconstructs
+cash per <code>(account, currency)</code> from cash-balance checkpoints plus subsequent
+cash-impacting transactions. It emits cash rows alongside securities and a
+<code>totals</code> payload with native currency totals plus combined CAD/USD totals from
+DuckDB FX rates.</p>
 <p><strong>Why snapshots still matter:</strong> brokers sometimes apply lot adjustments,
 splits, name changes, and book-cost roll-ups that <em>only</em> appear on the
 snapshot side. Treating broker snapshots as checkpoints makes the app
 robust to those adjustments while transactions remain the audit trail.</p>
 <p><code>initial_positions</code> and <code>initial_cash</code> are for the period <em>before</em> the
 first available statement — they let you record or infer an opening
-balance for holdings that pre-date your earliest PDF.</p>
+balance for holdings that pre-date your earliest PDF. <code>ledger ingest
+infer-initials</code> deletes and recomputes only rows whose <code>notes</code> begin with
+<code>inferred:</code>; reviewed/manual opening balances use a different note prefix
+and are preserved on re-run. Cash inference uses the first monthly cash
+snapshot for each <code>(account, currency)</code>; annual/interim records do not
+act as cash checkpoints. It subtracts cash-impacting transaction
+<code>net_amount</code> rows, including buys/sells/fees/transfers/dividends, while
+excluding non-cash corporate-action rows such as splits and name changes.
+Legacy inferred cash rows from before the <code>notes</code> column existed are
+replaced with tagged inferred rows.</p>
+<p>Annual performance reports, when a parser exposes them, are stored in
+<code>annual_performance_reports</code>. These rows are statement-level summaries
+such as RBC money-weighted returns; they do not create transactions or
+position snapshots.</p>
 <h3 id="15-in-kind-transfers-between-my-accounts">1.5 In-kind transfers between MY accounts</h3>
 <p>When a holding moves from CIBC Investor's Edge to a CIBC TFSA, both
-statements show one half of the move. The schema captures both:</p>
+statements show one half of the move. The schema has placeholders for
+capturing both:</p>
 <ul>
 <li><code>account_links</code> — date-level link (transfer_date, from, to, notes).</li>
 <li><code>transactions.counterpart_account_id</code> / <code>counterpart_txn_id</code> —
   event-level pairing.</li>
 </ul>
-<p>This lets the Performance and Monthly tabs trace a lot across accounts
-without double-counting cash.</p>
+<p>These tables are not yet populated by ingest or exposed in API workflows;
+they are scaffolding for future transfer chaining and reconciliation.</p>
 <h3 id="16-the-quarantine-principle">1.6 The quarantine principle</h3>
 <p>Any unparseable line goes to <code>quarantine_transactions</code> with
 <code>raw_line + reason</code>. <strong>We never fabricate a transaction.</strong> A confidence
@@ -632,6 +681,27 @@ erDiagram
         TEXT as_of_date
         TEXT currency
         REAL balance
+        TEXT notes
+    }
+
+    annual_performance_reports {
+        INTEGER performance_id PK
+        INTEGER statement_id FK
+        INTEGER account_id FK
+        TEXT currency
+        TEXT period_start
+        TEXT period_end
+        TEXT since_date
+        REAL beginning_market_value
+        REAL deposits_transfers_in
+        REAL withdrawals_transfers_out
+        REAL net_investment_return
+        REAL ending_market_value
+        REAL money_weighted_1y
+        REAL money_weighted_3y
+        REAL money_weighted_5y
+        REAL money_weighted_10y
+        REAL money_weighted_since
     }
 
     position_transaction_links {
@@ -655,6 +725,7 @@ erDiagram
     accounts ||--o{ cash_balances : "has"
     accounts ||--o{ initial_positions : "has"
     accounts ||--o{ initial_cash : "has"
+    accounts ||--o{ annual_performance_reports : "summarized by"
     instruments ||--o{ instrument_aliases : "aliased by"
     instruments ||--o{ transactions : "referenced in"
     instruments ||--o{ position_snapshots : "snapshot of"
@@ -663,6 +734,7 @@ erDiagram
     statements ||--o{ transactions : "groups"
     statements ||--o{ position_snapshots : "contains"
     statements ||--o{ cash_balances : "contains"
+    statements ||--o{ annual_performance_reports : "summarizes"
     position_snapshots ||--o{ position_transaction_links : "attributed via"
     transactions ||--o{ position_transaction_links : "attributed via"
 </div>
@@ -732,6 +804,11 @@ erDiagram
 <td>—</td>
 </tr>
 <tr>
+<td><code>annual_performance_reports</code></td>
+<td><code>(statement_id, currency)</code></td>
+<td>—</td>
+</tr>
+<tr>
 <td><code>position_transaction_links</code></td>
 <td><code>(snapshot_id, transaction_id)</code></td>
 <td>—</td>
@@ -744,13 +821,14 @@ erDiagram
 option_buy_to_open / option_sell_to_open
 option_buy_to_close / option_sell_to_close
 option_assignment / option_exercise / option_expiration
-dividend / distribution / interest_income
+dividend / reinvest_dividend / distribution / interest_income
 interest_expense / margin_interest
 transfer_in / transfer_out / journal
 deposit / withdrawal
 tax_withholding
 fee / commission / adjustment / fx_conversion
-stock_split / name_change / spinoff / merger / return_of_capital
+stock_split / stock_split_credit / stock_split_debit
+name_change / spinoff / merger / return_of_capital
 </code></pre></div>
 <p>Adding a new type requires updating both the literal <em>and</em> the analytics
 that switch on it (Monthly, Performance, Research).</p>
@@ -867,7 +945,7 @@ flowchart TD
     E -->|text| D
     D --> G[registry.select_parser\nfolder_name + first-page sniff]
     G -->|matched| H[Parser.parse pdf]
-    G -->|no match| I[GenericParser stub\nno-op — skip]
+    G -->|no match| I[skip\nrecord failed source_file]
     H -->|success| J[ParseResult\nlist of ParsedStatement]
     H -->|partial / error| K[quarantine_transactions\n+ partial commit]
     J --> L[ingest_one\nSQLite upserts]
@@ -876,15 +954,19 @@ flowchart TD
     L --> O[(position_snapshots\ncash_balances)]
     L --> P[(quarantine_transactions)]
 </div>
-<p>Entry point: <code>ledger ingest run</code> (see <a href="../src/ledger/ingest/pipeline.py">src/ledger/ingest/pipeline.py</a>).</p>
+<p>Entry point: <code>ledger ingest run</code> (see <a href="../src/ledger/ingest/pipeline.py">src/ledger/ingest/pipeline.py</a>).
+Use <code>uv run ledger ingest run --force</code> after parser-code changes when you
+want to re-parse PDFs whose bytes are unchanged.</p>
 <h3 id="42-idempotency">4.2 Idempotency</h3>
 <p>Re-running ingest on the same PDF is safe because:</p>
 <ol>
 <li><code>source_files</code> is keyed on <code>relpath</code> — the row is updated, not duplicated.</li>
-<li><code>sha256</code> is compared before re-parsing; an unchanged file is a no-op.</li>
+<li><code>sha256</code> is compared before text extraction and parsing; an unchanged
+  file is a no-op unless <code>--force</code> is passed.</li>
 <li>Every derived table (<code>statements</code>, <code>transactions</code>, <code>position_snapshots</code>,
-   <code>cash_balances</code>) upserts by its natural key, so stale rows are replaced,
-   not appended.</li>
+  <code>cash_balances</code>, <code>annual_performance_reports</code>, <code>quarantine_transactions</code>)
+  upserts or replaces by its natural key, so stale rows are replaced, not
+  appended.</li>
 </ol>
 <h3 id="43-the-parser-protocol">4.3 The Parser protocol</h3>
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Parser</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
@@ -939,6 +1021,7 @@ flowchart TD
     INST --> TXN[transactions\nbulk insert]
     INST --> SNAP[position_snapshots\nbulk upsert]
     INST --> CASH[cash_balances\nbulk upsert]
+    STM --> PERF[annual_performance_reports\nbulk upsert]
     TXN --> QUAR[quarantine_transactions\nfor unconfident rows]
 </div>
 <h3 id="46-per-institution-format-notes">4.6 Per-institution format notes</h3>
@@ -974,12 +1057,12 @@ flowchart TD
 <tr>
 <td>RBC Direct Investing</td>
 <td><code>RBC Invest Direct/</code></td>
-<td>One PDF holds CAD + USD statements → 2 <code>ParsedStatement</code> rows. Full month names. Trailing-hyphen negatives.</td>
+<td>One PDF holds CAD + USD statements → 2 <code>ParsedStatement</code> rows. Full month names. Trailing-hyphen negatives. Annual performance reports populate <code>annual_performance_reports</code> with money-weighted returns.</td>
 </tr>
 <tr>
 <td>TD WebBroker</td>
 <td><code>TD Webbroker/</code></td>
-<td>Two sub-accounts per PDF (<code>&lt;acct&gt;-CDN</code> / <code>&lt;acct&gt;-USD</code>). Option positions span two lines. Legacy 2016-2017 quarterly format.</td>
+<td>Two sub-accounts per PDF (<code>&lt;acct&gt;-CDN</code> / <code>&lt;acct&gt;-USD</code>). Option positions span two lines. Legacy bundled PDFs are split into one statement per month/currency.</td>
 </tr>
 </tbody>
 </table>
@@ -1009,7 +1092,7 @@ parens-ticker. The app's strategy, in order:</p>
 </ol>
 <p>This keeps the audit trail honest: the description always matches the
 PDF, even if the canonical ticker can't be inferred.</p>
-<p>See <a href="doc/extraction-corner-cases.md">doc/extraction-corner-cases.md</a> for
+<p>See <a href="EXTRACTION-CORNER-CASES.md">EXTRACTION-CORNER-CASES.md</a> for
 parser gotchas such as generic <code>DISTRIB.</code> labels, CIBC fund-code lookup
 requests, and DLR/DLR.U currency-transfer direction.</p>
 <h3 id="48-logs">4.8 Logs</h3>
@@ -1132,7 +1215,7 @@ corpus (redacted or synthetic) that covers:</p>
 </tbody>
 </table>
 <p><strong>Step 5 — Re-ingest and verify</strong></p>
-<div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">run</span>
+<div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">run</span> <span class="p">-</span><span class="n">-force</span>
 <span class="c"># check quarantine count didn&#39;t spike</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">python</span> <span class="n">-c</span> <span class="s2">&quot;</span>
 <span class="s2">import sqlite3; c=sqlite3.connect(&#39;data/ledger.sqlite&#39;)</span>
@@ -1242,13 +1325,15 @@ fallback colors.</p>
   ],
   &quot;active_portfolio&quot;: &quot;all&quot;,
   &quot;theme&quot;: &quot;dark&quot;,
-  &quot;display_currency&quot;: &quot;CAD&quot;,
   &quot;hide_money&quot;: false,
   &quot;language&quot;: &quot;en&quot;
 }
 </code></pre></div>
 <p>The frontend reads it via <code>GET /config</code> and writes via <code>PUT /config</code>.
-A portfolio with empty <code>account_ids</code> is implicitly "all accounts".</p>
+A portfolio with empty <code>account_ids</code> is implicitly "all accounts".
+The backend tolerates legacy <code>display_currency</code> keys in older config files by
+dropping them on read/write; the current frontend does not expose or use that
+preference.</p>
 <hr />
 <h2 id="8-workspace-profiles">8. Workspace profiles</h2>
 <p>Configured by env var, read on module load by
@@ -1283,6 +1368,12 @@ A portfolio with empty <code>account_ids</code> is implicitly "all accounts".</p
 <div class="highlight"><pre><span></span><code><span class="nv">$env:LEDGER_PROFILE</span> <span class="p">=</span> <span class="s2">&quot;example&quot;</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">build_example_data</span><span class="p">.</span><span class="n">py</span>
 </code></pre></div>
+<p>The builder recreates both example databases. SQLite gets synthetic accounts,
+transactions, cash balances, and multiple historical snapshots. DuckDB is
+seeded from the real market database for matching symbols and fills missing
+sample tickers with deterministic synthetic prices, FX rates, and profile
+metadata so the example profile can exercise Research, Performance, RRG,
+Treemap, and Correlation without pointing at real account data.</p>
 <hr />
 <h2 id="9-required-validation-after-structural-changes">9. Required validation after structural changes</h2>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">pytest</span> <span class="n">-q</span>
@@ -1328,6 +1419,11 @@ transaction must be defensible against the source.</p>
 </ul>
 <h2 id="footer-contamination">Footer Contamination</h2>
 <p>Statement page footers and continuation text can append unrelated holdings to an activity description. Resolver matches should prefer the leading transaction description and direct known-name matches before using broad same-statement holding correlation.</p>
+<h2 id="legacy-bundled-statements">Legacy Bundled Statements</h2>
+<ul>
+<li>TD WebBroker 2016-2017 PDFs bundle multiple monthly statements into one PDF. Split on each new <code>Statement for &lt;month&gt; ...</code> period before splitting CAD/USD sub-accounts, so later months do not overwrite the first month during ingest.</li>
+<li>RBC annual investment performance reports are annual statements with no holdings table. Parse their money-weighted return summaries into <code>annual_performance_reports</code>; do not fabricate monthly transactions or position snapshots from those summaries.</li>
+</ul>
 <h2 id="current-verified-examples">Current Verified Examples</h2>
 <ul>
 <li><code>AIRBNB INC CL-A</code> resolves to <code>ABNB</code>.</li>
@@ -1340,6 +1436,6 @@ transaction must be defensible against the source.</p>
 </div>
 
   </main>
-  <footer>Built by <code>scripts/build_docs.py</code> &mdash; 2026-05-18</footer>
+  <footer>Built by <code>scripts/build_docs.py</code> &mdash; 2026-05-20</footer>
 </body>
 </html>

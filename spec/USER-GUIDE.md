@@ -76,7 +76,11 @@ cd frontend ; npm run dev
 The example dataset has two accounts (TD Direct Investing and Interactive
 Brokers) with a current holdings snapshot mirroring the
 `portfolio_dashboard/sample_portfolio.xlsx` reference, plus ~37
-invented buy/sell/option events spread over 2021-2026.
+invented buy/sell/option events spread over 2021-2026. Option transaction
+quantities are contracts, not underlying shares. The builder also seeds an
+example DuckDB with market prices, FX rates, and sector/profile metadata for
+the sample symbols so Research, Performance, Correlation, and Treemap work
+without using your real database.
 
 Example-data screenshots:
 
@@ -156,7 +160,7 @@ Every event the parser produced, filterable by:
 - **Institution** (multi-select with search).
 - **Account** (multi-select with search; respects the active portfolio).
 - **Symbol** (multi-select with search; scrolls inside max 2/3 screen
-  width).
+  height).
 - **Type** (buy / sell / dividend / option_… etc., multi-select).
 - **Min |amount|** — 100 / 1k / 10k / 100k / 1M presets.
 - **Date range**.
@@ -176,6 +180,11 @@ database, across all accounts in the active portfolio.
   the position grew are tinted green, rows that shrank are tinted red,
   in git-diff style. Positions that disappeared between the two dates
   appear at the bottom.
+- **Sync compare to as of** — copies the current **As of** date into the
+  comparison date when you want to reset the diff.
+- Cash positions appear as `CAD Cash` / `USD Cash` rows per account. Totals
+  show native currency buckets plus combined CAD and USD totals using the
+  latest FX rate on or before the snapshot date.
 - Columns sortable; institution / account / profile are visible, and the
   filters can narrow the table to specific institutions or accounts.
 
@@ -201,7 +210,10 @@ forward-fill rationale.
 
 Per-symbol deep dive.
 
-- Type a ticker, press **Enter** (no Go button — it was useless).
+- Type a ticker, press **Enter** (no Go button — it was useless). When the
+  search box is empty it lists known tickers; typing narrows the list by
+  ticker, asset type, or currency. The list scrolls at a max 2/3 viewport
+  height so it stays usable on smaller screens.
 - **Period** buttons + daily/weekly/monthly resample.
 - Candlestick with **MA50 / MA200** toggles, volume sub-chart.
 - Your buy/sell marks overlay the chart. **Solid triangles** =
@@ -222,13 +234,14 @@ account filters inside the tab:
   Symbols in the same sector use related colors when profile metadata is
   available. Use the checkbox row below the chart to hide individual
   symbols.
-- **Treemap** — holdings grouped by asset type, sized by market value.
-  With sector metadata, holdings group by sector; otherwise they fall
-  back to asset type. Defaults to the latest snapshot date (so it's never
-  blank unless you actually have no holdings).
+- **Treemap** — holdings sized by market value. Use **Group by** to switch
+  between institution/account, type, and sector. Use **Performance** to pick
+  the period used for green/red coloring on the holding tiles. Defaults to
+  the latest snapshot date (so it's never blank unless you actually have no
+  holdings).
 - **Correlation matrix** — square heatmap using the same color scale as
-  `portfolio_dashboard`. **Sort-by** dropdown or clicking a ticker in the
-  chart reorders both axes by correlation against that symbol; checkboxes
+  `portfolio_dashboard`. **Sort-by** dropdown, top/left ticker labels, or
+  cells can reorder both axes by correlation against a symbol; checkboxes
   hide/show individual symbols and use sector-colored accents.
 
 ### 4.6 Settings
@@ -236,7 +249,6 @@ account filters inside the tab:
 - **Theme** — light / dark.
 - **Language** — English / 繁體 (HK) / 繁體 (TW) / 简体 (CN). Flag picker
   in the top right.
-- **Display currency** — CAD or USD.
 - **Hide $ values** — show percentages only (useful for screenshots).
 - **Portfolios** — add named groups of accounts. Example:
   - *Dad's TFSA* → CIBC TFSA only.

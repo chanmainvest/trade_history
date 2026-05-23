@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Plot from "react-plotly.js";
 import { api } from "../api";
 import { usePortfolio } from "../portfolio";
@@ -8,6 +8,21 @@ import { plotlyTheme } from "../theme";
 import { useI18n } from "../i18n";
 
 type View = "rrg" | "treemap" | "correlation";
+type TreemapGroupBy = "account" | "asset_type" | "sector";
+type TreemapPeriod = "1d" | "1w" | "1m" | "3m" | "6m" | "1y" | "ytd";
+type TreemapRow = {
+  account_id: number;
+  account_number: string;
+  institution_code: string;
+  institution_name: string;
+  symbol: string;
+  asset_type: string;
+  currency: string;
+  market_value: number;
+  sector?: string | null;
+  industry?: string | null;
+  performance_pct?: number | null;
+};
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 function isoMinusYears(years: number) {
@@ -15,14 +30,34 @@ function isoMinusYears(years: number) {
   return d.toISOString().slice(0, 10);
 }
 
-// Color scale matching portfolio_dashboard/build_portfolio_report.py::_corr_color
-const CORR_COLORSCALE: [number, string][] = [
-  [0.0,  "rgb(30,100,200)"],   // strong negative — deep blue
-  [0.25, "rgb(50,200,180)"],   // moderate negative — teal
-  [0.5,  "rgb(200,180,50)"],   // ~zero — warm/neutral
-  [0.7,  "rgb(225,120,50)"],
-  [1.0,  "rgb(200,50,50)"],    // strong positive — red
+const CORR_RGB_STOPS = [
+  { position: 0.0, red: 30, green: 100, blue: 200 },
+  { position: 0.25, red: 50, green: 200, blue: 180 },
+  { position: 0.5, red: 200, green: 180, blue: 50 },
+  { position: 0.7, red: 225, green: 120, blue: 50 },
+  { position: 1.0, red: 200, green: 50, blue: 50 },
 ];
+
+function corrColor(value: number) {
+  const position = Math.max(0, Math.min(1, (value + 1) / 2));
+  let lower = CORR_RGB_STOPS[0];
+  let upper = CORR_RGB_STOPS[CORR_RGB_STOPS.length - 1];
+  for (let index = 1; index < CORR_RGB_STOPS.length; index += 1) {
+    if (position <= CORR_RGB_STOPS[index].position) {
+      lower = CORR_RGB_STOPS[index - 1];
+      upper = CORR_RGB_STOPS[index];
+      break;
+    }
+  }
+  const span = upper.position - lower.position || 1;
+  const ratio = (position - lower.position) / span;
+  const blend = (start: number, finish: number) => Math.round(start + (finish - start) * ratio);
+  return `rgb(${blend(lower.red, upper.red)}, ${blend(lower.green, upper.green)}, ${blend(lower.blue, upper.blue)})`;
+}
+
+function corrTextColor(value: number) {
+  return Math.abs(value) > 0.55 ? "#ffffff" : "#07111f";
+}
 
 const SECTOR_COLORS: Record<string, string> = {
   "Technology": "#3A7BD5",
@@ -58,6 +93,22 @@ function sectorColor(symbol: string, sector: string | null | undefined, symbols:
   return shade(base, Math.round(offset));
 }
 
+function formatPerf(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return "Performance: n/a";
+  const sign = value > 0 ? "+" : "";
+  return `Performance: ${sign}${value.toFixed(2)}%`;
+}
+
+function performanceColor(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return SECTOR_COLORS.Unknown;
+  const clamped = Math.max(-10, Math.min(10, value));
+  if (Math.abs(clamped) < 0.05) return "#6b7280";
+  const intensity = Math.round(70 + Math.min(1, Math.abs(clamped) / 10) * 90);
+  return clamped > 0
+    ? `rgb(20, ${intensity + 80}, 85)`
+    : `rgb(${intensity + 80}, 55, 60)`;
+}
+
 export default function Viz() {
   const { activeAccountIds, activePortfolio, accounts } = usePortfolio();
   const { t } = useI18n();
@@ -70,6 +121,7 @@ export default function Viz() {
   const latestQ = useQuery({ queryKey: ["latest-date"], queryFn: api.latestDate });
   const latest = latestQ.data?.latest || todayISO();
   const [monthEnd, setMonthEnd] = useState<string>("");
+  const [treemapPeriod, setTreemapPeriod] = useState<TreemapPeriod>("1m");
 
   const effectiveMonthEnd = monthEnd || latest;
 
@@ -99,8 +151,8 @@ export default function Viz() {
   }, [accountIds, activeAccountIds, accounts, institutions]);
 
   const sectorQ = useQuery({
-    queryKey: ["sector", effectiveMonthEnd, acctFilter],
-    queryFn: () => api.vizSector({ month_end: effectiveMonthEnd, account_id: acctFilter }),
+    queryKey: ["sector", effectiveMonthEnd, treemapPeriod, acctFilter],
+    queryFn: () => api.vizSector({ month_end: effectiveMonthEnd, period: treemapPeriod, account_id: acctFilter }),
     enabled: view === "treemap",
   });
   const corrQ = useQuery({
@@ -134,6 +186,8 @@ export default function Viz() {
       {view === "treemap" && (
         <Treemap monthEnd={effectiveMonthEnd}
                  setMonthEnd={setMonthEnd}
+                 period={treemapPeriod}
+                 setPeriod={setTreemapPeriod}
                  actualDate={sectorQ.data?.as_of_date}
                  rows={sectorQ.data?.rows ?? []}
                  loading={sectorQ.isLoading} />
@@ -152,39 +206,106 @@ export default function Viz() {
   );
 }
 
-function Treemap({ monthEnd, setMonthEnd, actualDate, rows, loading }: {
+function Treemap({ monthEnd, setMonthEnd, period, setPeriod, actualDate, rows, loading }: {
   monthEnd: string;
   setMonthEnd: (s: string) => void;
+  period: TreemapPeriod;
+  setPeriod: (s: TreemapPeriod) => void;
   actualDate: string | null | undefined;
-  rows: { symbol: string; asset_type: string; market_value: number; sector?: string | null }[];
+  rows: TreemapRow[];
   loading: boolean;
 }) {
   const theme = plotlyTheme();
-  const { labels, parents, values, colors } = useMemo(() => {
+  const [groupBy, setGroupBy] = useState<TreemapGroupBy>("sector");
+  const { ids, labels, parents, values, colors, customdata } = useMemo(() => {
+    const ids: string[] = [];
     const labels: string[] = [];
     const parents: string[] = [];
     const values: number[] = [];
     const colors: string[] = [];
-    const groupTotals: Record<string, number> = {};
-    const symbolsByGroup: Record<string, string[]> = {};
-    for (const r of rows) {
-      const group = r.sector || r.asset_type;
-      groupTotals[group] = (groupTotals[group] || 0) + (r.market_value || 0);
-      symbolsByGroup[group] = [...(symbolsByGroup[group] || []), r.symbol].sort();
+    const customdata: string[] = [];
+    const totals = new Map<string, number>();
+    const leafTotals = new Map<string, { label: string; parent: string; group: string; symbol: string; value: number; detail: string }>();
+
+    function addNode(id: string, label: string, parent: string, value: number, color: string, detail: string) {
+      ids.push(id); labels.push(label); parents.push(parent); values.push(value); colors.push(color); customdata.push(detail);
     }
-    for (const g of Object.keys(groupTotals)) {
-      labels.push(g); parents.push(""); values.push(groupTotals[g]);
-      colors.push(SECTOR_COLORS[g] || SECTOR_COLORS.Unknown);
+    function addTotal(key: string, amount: number) {
+      totals.set(key, (totals.get(key) || 0) + amount);
     }
-    for (const r of rows) {
-      const group = r.sector || r.asset_type;
-      labels.push(r.symbol);
-      parents.push(group);
-      values.push(r.market_value || 0);
-      colors.push(sectorColor(r.symbol, group, symbolsByGroup[group] || [r.symbol]));
+    function addLeaf(key: string, label: string, parent: string, group: string, symbol: string, amount: number, detail: string) {
+      const current = leafTotals.get(key);
+      if (current) current.value += amount;
+      else leafTotals.set(key, { label, parent, group, symbol, value: amount, detail });
     }
-    return { labels, parents, values, colors };
-  }, [rows]);
+
+    for (const row of rows) {
+      const value = row.market_value || 0;
+      if (value <= 0) continue;
+      if (groupBy === "account") {
+        const institutionId = `institution:${row.institution_code}`;
+        const accountId = `account:${row.account_id}`;
+        const accountLabel = `${row.institution_code} • ${row.account_number}`;
+        addTotal(institutionId, value);
+        addTotal(accountId, value);
+        addLeaf(
+          `holding:${row.account_id}:${row.symbol}:${row.currency}`,
+          row.symbol,
+          accountId,
+          accountLabel,
+          row.symbol,
+          value,
+          `${accountLabel}<br>${row.asset_type} • ${row.currency}<br>${formatPerf(row.performance_pct)}`,
+        );
+      } else {
+        const group = groupBy === "sector" ? (row.sector || "Unknown") : row.asset_type;
+        const groupId = `${groupBy}:${group}`;
+        addTotal(groupId, value);
+        addLeaf(
+          `holding:${groupId}:${row.symbol}:${row.currency}`,
+          row.symbol,
+          groupId,
+          group,
+          row.symbol,
+          value,
+          `${group}<br>${row.asset_type} • ${row.currency}<br>${formatPerf(row.performance_pct)}`,
+        );
+      }
+    }
+
+    if (groupBy === "account") {
+      const institutions = Array.from(new Set(rows.map((row) => row.institution_code))).sort();
+      for (const institution of institutions) {
+        const id = `institution:${institution}`;
+        addNode(id, institution, "", totals.get(id) || 0, SECTOR_COLORS.Unknown, institution);
+        const accounts = Array.from(new Map(
+          rows.filter((row) => row.institution_code === institution)
+            .map((row) => [row.account_id, `${row.institution_code} • ${row.account_number}`]),
+        ).entries()).sort((a, b) => a[1].localeCompare(b[1]));
+        for (const [accountId, label] of accounts) {
+          const id = `account:${accountId}`;
+          addNode(id, label, `institution:${institution}`, totals.get(id) || 0, sectorColor(label, institution, accounts.map(([, accountLabel]) => accountLabel)), label);
+        }
+      }
+    } else {
+      const groups = Array.from(new Set(Array.from(leafTotals.values()).map((leaf) => leaf.group))).sort();
+      for (const group of groups) {
+        const id = `${groupBy}:${group}`;
+        addNode(id, group, "", totals.get(id) || 0, SECTOR_COLORS[group] || SECTOR_COLORS.Unknown, group);
+      }
+    }
+
+    const symbolsByParent: Record<string, string[]> = {};
+    for (const leaf of leafTotals.values()) {
+      symbolsByParent[leaf.parent] = [...(symbolsByParent[leaf.parent] || []), leaf.symbol].sort();
+    }
+    for (const [id, leaf] of Array.from(leafTotals.entries()).sort((a, b) => a[1].label.localeCompare(b[1].label))) {
+      const source = rows.find((row) => row.symbol === leaf.symbol);
+      addNode(id, leaf.label, leaf.parent, leaf.value,
+        performanceColor(source?.performance_pct), leaf.detail);
+    }
+    return { ids, labels, parents, values, colors, customdata };
+  }, [rows, groupBy]);
 
   return (
     <div className="card">
@@ -192,6 +313,24 @@ function Treemap({ monthEnd, setMonthEnd, actualDate, rows, loading }: {
         <h3 style={{ marginRight: 12 }}>Holdings treemap</h3>
         <label>As of:&nbsp;
           <input type="date" value={monthEnd} onChange={(e) => setMonthEnd(e.target.value)} />
+        </label>
+        <label>Group by:&nbsp;
+          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as TreemapGroupBy)}>
+            <option value="account">Institution / account</option>
+            <option value="asset_type">Type</option>
+            <option value="sector">Sector</option>
+          </select>
+        </label>
+        <label>Performance:&nbsp;
+          <select value={period} onChange={(e) => setPeriod(e.target.value as TreemapPeriod)}>
+            <option value="1d">1D</option>
+            <option value="1w">1W</option>
+            <option value="1m">1M</option>
+            <option value="3m">3M</option>
+            <option value="6m">6M</option>
+            <option value="1y">1Y</option>
+            <option value="ytd">YTD</option>
+          </select>
         </label>
         {actualDate && actualDate !== monthEnd && (
           <span className="muted">(snapshot from {actualDate})</span>
@@ -207,14 +346,14 @@ function Treemap({ monthEnd, setMonthEnd, actualDate, rows, loading }: {
       {rows.length > 0 && (
         <Plot
           data={[{
-            type: "treemap", labels, parents, values,
+            type: "treemap", ids, labels, parents, values, customdata,
             branchvalues: "total",
             textinfo: "label+value+percent parent",
             marker: {
               colors, showscale: false,
               line: { width: 1, color: theme.paper_bgcolor },
             },
-            hovertemplate: "<b>%{label}</b><br>%{value:$,.0f}<br>%{percentParent:.1%} of %{parent}<extra></extra>",
+            hovertemplate: "<b>%{label}</b><br>%{customdata}<br>%{value:$,.0f}<br>%{percentParent:.1%} of parent<extra></extra>",
           }]}
           layout={{
             paper_bgcolor: theme.paper_bgcolor, font: theme.font,
@@ -233,7 +372,6 @@ function CorrelationView({ start, end, setStart, setEnd, symbols, matrix, profil
   symbols: string[]; matrix: number[][];
   profiles: Record<string, { sector?: string | null; industry?: string | null }>;
 }) {
-  const theme = plotlyTheme();
   const [sortBy, setSortBy] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
 
@@ -255,6 +393,7 @@ function CorrelationView({ start, end, setStart, setEnd, symbols, matrix, profil
 
   const sortedSymbols = order.map((i) => symbols[i]);
   const sortedMatrix = order.map((i) => order.map((j) => matrix[i]?.[j] ?? 0));
+  const columnTemplate = `minmax(96px, max-content) repeat(${Math.max(sortedSymbols.length, 1)}, var(--corr-cell-size))`;
 
   return (
     <div className="card">
@@ -285,31 +424,50 @@ function CorrelationView({ start, end, setStart, setEnd, symbols, matrix, profil
       ) : sortedSymbols.length === 0 ? (
         <p className="muted">All symbols are hidden.</p>
       ) : (
-        <Plot
-          data={[{
-            type: "heatmap",
-            z: sortedMatrix, x: sortedSymbols, y: sortedSymbols,
-            colorscale: CORR_COLORSCALE, zmin: -1, zmax: 1,
-            hovertemplate: "%{y} vs %{x}<br>ρ = %{z:.2f}<extra></extra>",
-          }]}
-          layout={{
-            paper_bgcolor: theme.paper_bgcolor, plot_bgcolor: theme.plot_bgcolor,
-            font: theme.font,
-            // Square chart: tie height to a per-symbol pixel size so each cell
-            // is roughly square regardless of how many symbols are present.
-            height: Math.max(420, Math.min(1100, 22 * symbols.length + 140)),
-            width: Math.max(420, Math.min(1100, 22 * symbols.length + 140)),
-            margin: { t: 10, r: 10, b: 100, l: 100 },
-            xaxis: { tickangle: -60, scaleanchor: "y", scaleratio: 1 },
-            yaxis: { autorange: "reversed" },
-          }}
-          config={{ responsive: false }}
-          style={{ display: "block", margin: "0 auto" }}
-          onClick={(e) => {
-            const clicked = e?.points?.[0]?.x;
-            if (clicked) setSortBy(String(clicked));
-          }}
-        />
+        <div className="correlation-matrix-scroll">
+          <div className="correlation-grid" style={{ gridTemplateColumns: columnTemplate }}>
+            <div className="correlation-corner" />
+            {sortedSymbols.map((symbolName) => (
+              <button
+                key={`col-${symbolName}`}
+                type="button"
+                className={`correlation-label correlation-label-top${sortBy === symbolName ? " active" : ""}`}
+                title={`Sort correlations by ${symbolName}`}
+                onClick={() => setSortBy(symbolName)}
+              >
+                {symbolName}
+              </button>
+            ))}
+            {sortedSymbols.map((rowSymbol, rowIndex) => (
+              <Fragment key={`row-group-${rowSymbol}`}>
+                <button
+                  key={`row-${rowSymbol}`}
+                  type="button"
+                  className={`correlation-label correlation-label-side${sortBy === rowSymbol ? " active" : ""}`}
+                  title={`Sort correlations by ${rowSymbol}`}
+                  onClick={() => setSortBy(rowSymbol)}
+                >
+                  {rowSymbol}
+                </button>
+                {sortedSymbols.map((columnSymbol, columnIndex) => {
+                  const value = sortedMatrix[rowIndex]?.[columnIndex] ?? 0;
+                  return (
+                    <button
+                      key={`${rowSymbol}-${columnSymbol}`}
+                      type="button"
+                      className="correlation-cell"
+                      title={`${rowSymbol} vs ${columnSymbol}: ${value.toFixed(2)}`}
+                      style={{ background: corrColor(value), color: corrTextColor(value) }}
+                      onClick={() => setSortBy(columnSymbol)}
+                    >
+                      {value.toFixed(2)}
+                    </button>
+                  );
+                })}
+              </Fragment>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

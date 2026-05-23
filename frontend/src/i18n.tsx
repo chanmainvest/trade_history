@@ -85,7 +85,6 @@ const en: Dict = {
   "th.delta":      "Δ",
 
   // Currency display
-  "cfg.display_currency":  "Display currency",
   "cfg.hide_money":        "Hide $ values",
   "cfg.active_portfolio":  "Active portfolio",
   "cfg.theme":             "Theme",
@@ -154,7 +153,6 @@ const zhHK: Dict = {
   "th.market_value":"市值",
   "th.delta":      "變動",
 
-  "cfg.display_currency":  "顯示貨幣",
   "cfg.hide_money":        "隱藏金額",
   "cfg.active_portfolio":  "啟用組合",
   "cfg.theme":             "主題",
@@ -222,7 +220,6 @@ const zhTW: Dict = {
   "th.market_value":"市值",
   "th.delta":      "變動",
 
-  "cfg.display_currency":  "顯示幣別",
   "cfg.hide_money":        "隱藏金額",
   "cfg.active_portfolio":  "目前組合",
   "cfg.theme":             "主題",
@@ -290,7 +287,6 @@ const zhCN: Dict = {
   "th.market_value":"市值",
   "th.delta":      "变动",
 
-  "cfg.display_currency":  "显示币种",
   "cfg.hide_money":        "隐藏金额",
   "cfg.active_portfolio":  "当前组合",
   "cfg.theme":             "主题",

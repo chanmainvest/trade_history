@@ -13,7 +13,6 @@ used instead for more accurate CommonMark compliance.
 from __future__ import annotations
 
 import argparse
-import html as html_module
 import importlib.util
 import re
 import sys
@@ -210,7 +209,7 @@ def _convert_md_builtin(text: str) -> str:
     def flush_para() -> None:
         nonlocal in_para
         if in_para:
-            out.append(f"<p>{''.join(_inline(l) for l in in_para)}</p>")
+            out.append(f"<p>{''.join(_inline(line_part) for line_part in in_para)}</p>")
             in_para = []
 
     def close_lists(target_depth: int = 0) -> None:
@@ -230,7 +229,9 @@ def _convert_md_builtin(text: str) -> str:
         # ── Fenced code block ────────────────────────────────────────────
         m_fence = re.match(r"^(`{3,}|~{3,})(\w*)", line)
         if m_fence:
-            flush_para(); close_lists(); close_blockquote()
+            flush_para()
+            close_lists()
+            close_blockquote()
             fence_char = m_fence.group(1)
             lang = m_fence.group(2).lower()
             i += 1
@@ -249,7 +250,9 @@ def _convert_md_builtin(text: str) -> str:
         # ── Heading ──────────────────────────────────────────────────────
         m_h = re.match(r"^(#{1,6})\s+(.*)", line)
         if m_h:
-            flush_para(); close_lists(); close_blockquote()
+            flush_para()
+            close_lists()
+            close_blockquote()
             level = len(m_h.group(1))
             content = _inline(m_h.group(2).strip())
             slug = re.sub(r"[^\w\s-]", "", m_h.group(2).lower())
@@ -260,14 +263,18 @@ def _convert_md_builtin(text: str) -> str:
 
         # ── Horizontal rule ──────────────────────────────────────────────
         if re.match(r"^(-{3,}|\*{3,}|_{3,})\s*$", line):
-            flush_para(); close_lists(); close_blockquote()
+            flush_para()
+            close_lists()
+            close_blockquote()
             out.append("<hr>")
             i += 1
             continue
 
         # ── Table ────────────────────────────────────────────────────────
         if "|" in line and i + 1 < len(lines) and re.match(r"^\|?[\s\-:|]+\|", lines[i + 1]):
-            flush_para(); close_lists(); close_blockquote()
+            flush_para()
+            close_lists()
+            close_blockquote()
             header_cells = [c.strip() for c in line.strip().strip("|").split("|")]
             i += 1  # skip separator row
             i += 1
@@ -288,7 +295,8 @@ def _convert_md_builtin(text: str) -> str:
         # ── Blockquote ───────────────────────────────────────────────────
         m_bq = re.match(r"^>\s?(.*)", line)
         if m_bq:
-            flush_para(); close_lists()
+            flush_para()
+            close_lists()
             if not in_blockquote:
                 out.append("<blockquote>")
                 in_blockquote = True
@@ -302,7 +310,8 @@ def _convert_md_builtin(text: str) -> str:
         m_ul = re.match(r"^(\s*)[-*+]\s+(.*)", line)
         m_ol = re.match(r"^(\s*)\d+\.\s+(.*)", line)
         if m_ul or m_ol:
-            flush_para(); close_blockquote()
+            flush_para()
+            close_blockquote()
             m_li = m_ul or m_ol
             indent = len(m_li.group(1))
             tag = "ul" if m_ul else "ol"
