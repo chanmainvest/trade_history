@@ -29,6 +29,24 @@ async function putJSON<T>(path: string, body: any): Promise<T> {
   return r.json();
 }
 
+async function postJSON<T>(path: string, body: any): Promise<T> {
+  const url = new URL(API_BASE + path, window.location.origin);
+  const r = await fetch(url.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+async function postForm<T>(path: string, body: FormData): Promise<T> {
+  const url = new URL(API_BASE + path, window.location.origin);
+  const r = await fetch(url.toString(), { method: "POST", body });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+
 export const api = {
   transactions: (p: Record<string, any> = {}) =>
     getJSON<{ rows: TxnRow[]; count: number; total_count: number; has_more: boolean }>("/transactions", p),
@@ -69,6 +87,20 @@ export const api = {
 
   config: () => getJSON<UserConfig>("/config"),
   saveConfig: (cfg: Partial<UserConfig>) => putJSON<UserConfig>("/config", cfg),
+
+  statements: (limit = 200) => getJSON<{ rows: StatementRow[] }>("/statements", { limit }),
+  statementExplain: (statementId: number) => getJSON<StatementExplain>(`/statements/explain/${statementId}`),
+  uploadStatement: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return postForm<StatementUploadResult>("/statements/upload", form);
+  },
+  importStatement: (payload: { sha256: string; institution_folder: string; force?: boolean }) =>
+    postJSON<any>("/statements/import", payload),
+  draftParser: (payload: { sha256: string; institution_folder?: string; provider?: string; send_to_provider?: boolean; model?: string }) =>
+    postJSON<any>("/statements/draft-parser", payload),
+  reconciliationSummary: () => getJSON<any>("/statements/reconciliation/summary"),
+  rebuildReconciliation: () => postJSON<any>("/statements/reconciliation/rebuild", {}),
 };
 
 export type TxnRow = {
@@ -169,6 +201,48 @@ export type UserConfig = {
   hide_money: boolean;
   /** UI language: en, zh-HK (HK Trad.), zh-TW (TW Trad.), zh-CN (Simplified). */
   language?: "en" | "zh-HK" | "zh-TW" | "zh-CN";
-  /** Placeholder slots for LLM-assisted features. Stored locally only. */
+  /** Optional parser-draft provider keys. Stored locally only. */
   llm_keys?: { openai?: string; anthropic?: string; google?: string };
+};
+
+export type StatementRow = {
+  statement_id: number;
+  period_start: string;
+  period_end: string;
+  statement_type: string;
+  account_id: number;
+  account_number: string;
+  account_type: string | null;
+  nickname: string | null;
+  institution_code: string;
+  institution_name: string;
+  relpath: string;
+  parser_name: string | null;
+  parse_status: string;
+};
+
+export type StatementUploadResult = {
+  status: string;
+  path: string;
+  sha256: string;
+  already_ingested: boolean;
+  parse_status: string | null;
+  review: {
+    parser: { name: string; version: string } | null;
+    parse_status: string;
+    statements: any[];
+    errors: string[];
+  };
+  institutions: { folder: string; code: string }[];
+};
+
+export type StatementExplain = {
+  statement: any;
+  source_file: any;
+  pages: { page_number: number; lines: { line_number: number; text: string; refs: any[] }[] }[];
+  transactions: any[];
+  positions: any[];
+  cash_balances: any[];
+  annual_performance: any[];
+  quarantine: any[];
 };

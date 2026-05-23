@@ -149,7 +149,17 @@ just close the terminal.
     uv run ledger ingest repair-symbols
     ```
 
-6. Reload the browser. The Transactions tab should now have data.
+6. *(Optional after manual DB edits)* Rebuild automatic transfer and
+    position-to-transaction links:
+
+    ```powershell
+    uv run ledger ingest reconcile
+    ```
+
+    Normal `ingest run` already performs this after parsing and symbol
+    repair; the command is mainly for manual maintenance.
+
+7. Reload the browser. The Transactions tab should now have data.
 
 ## 4. The tabs
 
@@ -257,17 +267,47 @@ account filters inside the tab:
 
   The dropdown in the top right activates a portfolio across **every**
   tab.
+- **LLM API keys** — optional OpenAI / Anthropic / Google keys used only
+  when you explicitly send a parser-draft prompt to a provider.
+- **Upload a statement PDF** — save a PDF to `Statements/uploads/`, review
+  the parser preview, choose an institution folder, then import it.
+- **How each statement was extracted** — inspect PDF text lines annotated
+  with parsed transactions, holdings, cash rows, and quarantine entries.
+- **Transfer and position reconciliation** — view or rebuild automatic
+  transfer counterpart links and position-to-transaction attribution.
 
 ## 5. PDF upload (beta)
 
-A `POST /statements/upload` endpoint exists for in-browser PDF upload.
-Today it accepts only files named `.pdf` whose bytes start with PDF magic
-bytes, rejects empty files and files over 25 MiB, sanitizes the upload
-filename, saves the file under `Statements/uploads/`, and returns its
-SHA-256 fingerprint. It does not yet run a review/import workflow.
+The Settings tab can upload one PDF at a time. The backend accepts only
+`.pdf` filenames whose bytes start with PDF magic bytes, rejects empty
+files and files over 25 MiB, sanitizes the filename, saves the file under
+`Statements/uploads/`, and returns its SHA-256 fingerprint.
 
-LLM-driven parser drafting is **not implemented yet**; the API-key
-slots in Settings are placeholders. See `AGENTS.md` deferred items.
+After upload, the app extracts text and tries the registered parsers. If a
+parser recognizes the PDF, you see a review summary with account, period,
+transaction count, holdings count, cash count, and quarantine count. Choose
+the target institution folder, then click **Import parsed statements** to
+write the reviewed upload into SQLite. Import runs symbol repair and
+reconciliation afterwards, the same as command-line ingest.
+
+If no parser recognizes the PDF, click **Create parser draft**. This writes
+`data/parser_drafts/<sha>/prompt.md` plus metadata. Checking **Send prompt
+to provider** sends that prompt to the selected configured LLM provider and
+saves the response beside the prompt for review. Generated parser code is
+not installed automatically; review it, add tests, register the parser, then
+re-ingest.
+
+Useful endpoints for scripts and debugging:
+
+| Endpoint | What it does |
+|---|---|
+| `GET /statements` | Recent statement list for picking an explainer target. |
+| `POST /statements/upload` | Save and preview an uploaded PDF. |
+| `POST /statements/import` | Import a reviewed upload. |
+| `POST /statements/draft-parser` | Build a parser-draft prompt bundle, optionally with provider response. |
+| `GET /statements/explain/{id}` | Return annotated PDF text plus parsed/quarantined rows. |
+| `GET /statements/reconciliation/summary` | Summarize automatic transfer and position links. |
+| `POST /statements/reconciliation/rebuild` | Rebuild those links. |
 
 ## 6. MCP server for AI agents
 
@@ -295,8 +335,8 @@ this, with the working directory set to the repo root:
 
 The server provides tools for frontend routes/config, allowlisted API GET
 requests, and bounded CLI actions such as ingest, symbol repair,
-initial-position inference, and market-data refresh. It intentionally does not
-offer arbitrary shell access.
+initial-position inference, reconciliation rebuilds, and market-data refresh.
+It intentionally does not offer arbitrary shell access.
 
 ## 7. Troubleshooting
 

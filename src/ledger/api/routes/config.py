@@ -33,9 +33,8 @@ _DEFAULT: dict = {
     "theme": "dark",
     "hide_money": False,
     "language": "en",
-    # Placeholder slots for LLM-assisted features. NOT used yet — see
-    # AGENTS.md §8 "Deferred items". Stored locally in data/config.json,
-    # never sent anywhere by this app.
+    # Optional parser-draft provider keys. Stored locally in data/config.json;
+    # sent only when the user explicitly runs the provider-backed draft flow.
     "llm_keys": {
         "openai": "",
         "anthropic": "",

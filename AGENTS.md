@@ -156,8 +156,9 @@ Briefly:
    quarantine count doesn't spike unreasonably.
 
 When a new statement type appears that no parser handles, an LLM-assisted
-draft parser can be generated via the prompt skill in
-[prompts/new-parser.md](prompts/new-parser.md) (deferred — see §8).
+draft parser can be generated from the Settings upload workflow or via
+[prompts/new-parser.md](prompts/new-parser.md). Review generated code before
+installing it, then add tests and re-ingest.
 
 ## 7. Frontend conventions
 
@@ -173,12 +174,14 @@ draft parser can be generated via the prompt skill in
   colors from `plotlyTheme()` in
   [frontend/src/theme.ts](frontend/src/theme.ts).
 
-## 8. Deferred items (do not silently fabricate; document if you tackle)
+## 8. Deferred items — DONE
 
-These are explicit known gaps. If you implement one, update this list
-and the corresponding section in [spec/ARCHITECTURE.md](spec/ARCHITECTURE.md) / [spec/USER-GUIDE.md](spec/USER-GUIDE.md).
+All previously deferred items in this section are implemented. Maintain the
+same rule going forward: do not silently fabricate parsed data, and document
+any future gap or behavioral change in [spec/ARCHITECTURE.md](spec/ARCHITECTURE.md)
+and [spec/USER-GUIDE.md](spec/USER-GUIDE.md).
 
-- **Initial holdings inference** — implemented via
+- **DONE — Initial holdings inference** — implemented via
   `uv run ledger ingest infer-initials`. For each (account, instrument)
   it sets `initial_positions.quantity = first_snapshot_qty − Σ pre-snapshot transactions`
   and dates the row one day before the earliest snapshot. For each
@@ -187,39 +190,46 @@ and the corresponding section in [spec/ARCHITECTURE.md](spec/ARCHITECTURE.md) / 
   Inferred rows carry `notes LIKE 'inferred:%'` so user-curated rows are
   preserved on re-run; legacy untagged inferred cash rows are replaced with
   tagged rows.
-- **Daily holding reconstruction** — implemented in `/monthly/snapshot`.
+- **DONE — Daily holding reconstruction** — implemented in `/monthly/snapshot`.
   The API uses the latest `position_snapshots.as_of_date` per account as a
   checkpoint, then replays signed transactions after that checkpoint up to
   the requested day. Before the first snapshot, it uses `initial_positions`
   plus transactions. Broker snapshots remain the audit ground truth.
-- **Long-history fundamentals** — implemented for US-listed symbols via
+- **DONE — Long-history fundamentals** — implemented for US-listed symbols via
   SEC EDGAR Company Facts fallback in `ledger market scrape`. Non-US
   securities still depend on yfinance unless another free source is added.
-- **PDF upload + new-statement-type extraction via LLM.** API endpoint
+- **DONE — PDF upload + new-statement-type extraction via LLM.** API endpoint
   `POST /statements/upload` validates PDF magic bytes, caps uploads at
-  25 MiB, sanitizes filenames, saves to `Statements/uploads/`, and returns
-  a fingerprint. LLM-driven parser creation and upload-to-ingest review
-  flow are not implemented. The Config tab has placeholder slots for
-  OpenAI / Anthropic / Google API keys.
-- **Per-statement extraction explainer UI** (overlay of PDF → text dump →
-  parsed transactions). Backend route `/statements/explain/{id}` is
-  stubbed.
-- **Sector data for RRG / treemap / correlation** — implemented via
+  25 MiB, sanitizes filenames, saves to `Statements/uploads/`, returns a
+  fingerprint, and produces a parse preview. `POST /statements/import`
+  imports a reviewed upload with the selected institution folder, then runs
+  symbol repair and reconciliation. `POST /statements/draft-parser` writes
+  `data/parser_drafts/<sha>/prompt.md` and metadata; when explicitly
+  requested, it calls the configured OpenAI / Anthropic / Google provider
+  and saves the response for human review before any parser code is installed.
+- **DONE — Per-statement extraction explainer UI** — Settings can pick a
+  statement and render PDF text lines annotated with parsed transactions,
+  position snapshots, and quarantine rows from `GET /statements/explain/{id}`.
+- **DONE — Sector data for RRG / treemap / correlation** — implemented via
   `symbol_profiles` in DuckDB and `uv run ledger market refresh-profiles`
   (also included in `refresh-all`). Colors cluster by sector when profile
   metadata is available; unknown symbols fall back to neutral colors.
-- **TD legacy quarterly PDFs (2016-2017)** are split into one statement
+- **DONE — TD legacy quarterly PDFs (2016-2017)** are split into one statement
   per bundled month/currency, with legacy cash balances and clean holding
   rows parsed where defensible.
-- **RBC annual performance reports** populate `annual_performance_reports`
+- **DONE — RBC annual performance reports** populate `annual_performance_reports`
   with CAD/USD annual money-weighted return summaries. They remain annual
   statements and do not fabricate transactions or position snapshots.
-- **Screenshots** for the README/user guide are captured from the
+- **DONE — Screenshots** for the README/user guide are captured from the
   synthetic example profile under `docs/screenshots/`.
-- **Transfer-link and reconciliation workflows** remain schema scaffolding:
+- **DONE — Transfer-link and reconciliation workflows** populate
   `account_links`, transaction counterpart fields, and
-  `position_transaction_links` exist, but ingest/API code does not yet
-  populate those relationships automatically.
+  `position_transaction_links` automatically through
+  `ingest.reconcile.reconcile_after_ingest()`. `uv run ledger ingest run`
+  calls it after parsing and symbol repair; `uv run ledger ingest reconcile`
+  and the Settings reconciliation controls can rebuild links after manual
+  edits. Matching remains conservative: ambiguous transfer candidates are
+  skipped rather than guessed.
 
 ## 9. Ingestion summary (real profile, current state)
 

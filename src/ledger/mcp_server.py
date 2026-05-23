@@ -33,6 +33,8 @@ _ALLOWED_GET_PATHS = {
     "/viz/holdings_by_sector",
     "/viz/correlation",
     "/viz/rrg",
+    "/statements",
+    "/statements/reconciliation/summary",
     "/config",
 }
 
@@ -43,6 +45,7 @@ _ALLOWED_CLI_COMMANDS = {
     "ingest_run",
     "ingest_infer_initials",
     "ingest_repair_symbols",
+    "ingest_reconcile",
     "market_refresh",
     "market_refresh_profiles",
     "market_refresh_dividends",
@@ -134,6 +137,8 @@ def _build_cli_args(
         return ["ingest", "infer-initials"]
     if command == "ingest_repair_symbols":
         return ["ingest", "repair-symbols"]
+    if command == "ingest_reconcile":
+        return ["ingest", "reconcile"]
     if command == "market_refresh":
         args = ["market", "refresh", "--lookback-years", str(lookback_years)]
         for symbol in symbols or []:

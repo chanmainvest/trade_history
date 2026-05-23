@@ -57,6 +57,7 @@ def test_upload_sanitizes_filename_and_rejects_non_pdf_bytes(tmp_path, monkeypat
 
     statements_dir = tmp_path / "Statements"
     monkeypatch.setattr(statements_route, "STATEMENTS_DIR", statements_dir)
+    monkeypatch.setattr(statements_route, "PARSER_DRAFT_DIR", tmp_path / "parser_drafts")
     monkeypatch.setattr(statements_route.sqlite_db, "session", session)
 
     client = TestClient(app)
@@ -76,6 +77,15 @@ def test_upload_sanitizes_filename_and_rejects_non_pdf_bytes(tmp_path, monkeypat
     assert len(saved) == 1
     assert saved[0].is_relative_to(uploads_dir)
     assert saved[0].name.endswith("_escape.pdf")
+    assert ok.json()["review"]["parse_status"] == "image_only"
+
+    draft = client.post(
+        "/statements/draft-parser",
+        json={"sha256": ok.json()["sha256"], "institution_folder": "uploads"},
+    )
+    assert draft.status_code == 200
+    assert draft.json()["status"] == "prompt_created"
+    assert (tmp_path / "parser_drafts" / ok.json()["sha256"][:12] / "prompt.md").exists()
 
 
 def test_config_route_drops_legacy_display_currency(tmp_path, monkeypatch):

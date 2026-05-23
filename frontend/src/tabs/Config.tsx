@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePortfolio } from "../portfolio";
-import { Portfolio } from "../api";
+import { api, Portfolio, StatementExplain, StatementRow, StatementUploadResult } from "../api";
 import { LANGS, useI18n } from "../i18n";
 
 function makeId(name: string, existing: string[]): string {
@@ -187,13 +187,11 @@ export default function Config() {
       )}
 
       <div className="card">
-        <h3>LLM API keys <span className="muted">(beta — feature not wired up yet)</span></h3>
+        <h3>LLM API keys <span className="muted">(beta)</span></h3>
         <p className="muted" style={{ marginTop: 0 }}>
           Stored locally in <code>data/config.json</code>, never sent off
-          your machine by this app. These will be used to auto-draft a
-          parser when you upload a PDF from a broker we don't yet handle
-          — that runtime hook is <strong>not implemented yet</strong>
-          (see <code>AGENTS.md §8</code>).
+          your machine except when you explicitly ask the parser-draft
+          workflow to call a provider.
         </p>
         <ApiKeyRow label="OpenAI" field="openai" />
         <ApiKeyRow label="Anthropic" field="anthropic" />
@@ -203,25 +201,29 @@ export default function Config() {
       <div className="card">
         <h3>Upload a statement PDF <span className="muted">(beta)</span></h3>
         <p className="muted" style={{ marginTop: 0 }}>
-          Drops the file into <code>Statements/uploads/</code> and
-          fingerprints it. Auto-parse and LLM-assisted drafting of a new
-          parser for unfamiliar brokers are not implemented yet — you'll
-          still need to run <code>uv run ledger ingest run</code> from
-          the command line.
+          Uploads are saved under <code>Statements/uploads/</code>, parsed
+          into a review preview, then imported only after you choose the
+          target institution folder.
         </p>
-        <UploadStub />
+        <UploadWorkflow />
       </div>
 
       <div className="card">
-        <h3>How each statement was extracted <span className="muted">(beta)</span></h3>
+        <h3>How each statement was extracted</h3>
         <p className="muted" style={{ marginTop: 0 }}>
-          Pick a statement id to see the parsed transactions side-by-side
-          with the quarantined lines for that source PDF.
-          <br />A full PDF-text overlay UI is not built yet — for now
-          this just calls <code>GET /statements/explain/{"{id}"}</code>
-          and dumps the JSON below.
+          Pick a statement to see PDF text lines annotated with the parsed
+          transactions, holdings, and quarantined rows that came from them.
         </p>
-        <ExplainStub />
+        <StatementExplainer />
+      </div>
+
+      <div className="card">
+        <h3>Transfer and position reconciliation</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Ingest runs this automatically. You can rebuild the links here
+          after manual data edits.
+        </p>
+        <ReconciliationPanel />
       </div>
     </>
   );
@@ -253,57 +255,250 @@ function ApiKeyRow({ label, field }: { label: string; field: "openai" | "anthrop
   );
 }
 
-function UploadStub() {
-  const [result, setResult] = useState<any>(null);
+function UploadWorkflow() {
+  const [result, setResult] = useState<StatementUploadResult | null>(null);
+  const [institution, setInstitution] = useState("uploads");
+  const [force, setForce] = useState(false);
+  const [provider, setProvider] = useState("openai");
+  const [sendToProvider, setSendToProvider] = useState(false);
+  const [actionResult, setActionResult] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    setActionResult(null);
+    try {
+      const data = await api.uploadStatement(file);
+      setResult(data);
+      setInstitution(defaultInstitution(data));
+    } catch (err: any) {
+      setActionResult({ error: String(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function importIt() {
+    if (!result) return;
     setBusy(true);
     try {
-      const form = new FormData();
-      form.append("file", f);
-      const r = await fetch("/api/statements/upload", { method: "POST", body: form });
-      setResult(await r.json());
+      setActionResult(await api.importStatement({
+        sha256: result.sha256,
+        institution_folder: institution,
+        force,
+      }));
     } catch (err: any) {
-      setResult({ error: String(err) });
+      setActionResult({ error: String(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function draftIt() {
+    if (!result) return;
+    setBusy(true);
+    try {
+      setActionResult(await api.draftParser({
+        sha256: result.sha256,
+        institution_folder: institution,
+        provider,
+        send_to_provider: sendToProvider,
+      }));
+    } catch (err: any) {
+      setActionResult({ error: String(err) });
     } finally {
       setBusy(false);
     }
   }
   return (
-    <div className="filters">
-      <input type="file" accept="application/pdf" onChange={onUpload} disabled={busy} />
-      {busy && <span className="muted">Uploading…</span>}
+    <div className="workflow-stack">
+      <div className="filters">
+        <input type="file" accept="application/pdf" onChange={onUpload} disabled={busy} />
+        {busy && <span className="muted">Working…</span>}
+      </div>
       {result && (
-        <pre style={{ width: "100%", maxHeight: 200, overflow: "auto" }}>
-          {JSON.stringify(result, null, 2)}
-        </pre>
+        <>
+          <div className="kv">
+            <span className="tag">{result.review.parse_status}</span>
+            <span className="tag">{result.review.parser?.name || "no parser"}</span>
+            <span className="tag">{result.path}</span>
+            {result.already_ingested && <span className="tag accent">already ingested</span>}
+          </div>
+          {result.review.errors.length > 0 && (
+            <p className="inline-status status-error">{result.review.errors.join("; ")}</p>
+          )}
+          <table>
+            <thead>
+              <tr><th>Account</th><th>Period</th><th className="num">Txns</th><th className="num">Positions</th><th className="num">Quarantine</th></tr>
+            </thead>
+            <tbody>
+              {result.review.statements.map((statement) => (
+                <tr key={statement.index}>
+                  <td>{statement.account.account_number}</td>
+                  <td>{statement.period_start} to {statement.period_end}</td>
+                  <td className="num">{statement.transactions}</td>
+                  <td className="num">{statement.positions}</td>
+                  <td className="num">{statement.quarantine}</td>
+                </tr>
+              ))}
+              {result.review.statements.length === 0 && (
+                <tr><td colSpan={5} className="muted">No statements parsed from this PDF.</td></tr>
+              )}
+            </tbody>
+          </table>
+          <div className="filters">
+            <label>Institution folder:&nbsp;
+              <select value={institution} onChange={(e) => setInstitution(e.target.value)}>
+                <option value="uploads">uploads</option>
+                {result.institutions.map((item) => (
+                  <option key={item.folder} value={item.folder}>{item.folder} ({item.code})</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
+              &nbsp;Force re-import
+            </label>
+            <button onClick={importIt} disabled={busy || !result.review.parser}>Import parsed statements</button>
+          </div>
+          <div className="filters">
+            <label>Draft provider:&nbsp;
+              <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="google">Google</option>
+              </select>
+            </label>
+            <label>
+              <input type="checkbox" checked={sendToProvider} onChange={(e) => setSendToProvider(e.target.checked)} />
+              &nbsp;Send prompt to provider
+            </label>
+            <button onClick={draftIt} disabled={busy}>Create parser draft</button>
+          </div>
+        </>
+      )}
+      {actionResult && (
+        <pre className="json-output">{JSON.stringify(actionResult, null, 2)}</pre>
       )}
     </div>
   );
 }
 
-function ExplainStub() {
+function defaultInstitution(result: StatementUploadResult): string {
+  const parserName = result.review.parser?.name;
+  if (parserName === "td") return "TD Webbroker";
+  if (parserName === "rbc") return "RBC Invest Direct";
+  if (parserName === "hsbc") return "HSBC direct invest";
+  if (parserName === "cibc") return "CIBC Invest Direct";
+  return "uploads";
+}
+
+function StatementExplainer() {
+  const [statements, setStatements] = useState<StatementRow[]>([]);
   const [id, setId] = useState("");
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<StatementExplain | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api.statements(500).then((response) => {
+      setStatements(response.rows);
+      if (response.rows.length > 0) setId(String(response.rows[0].statement_id));
+    }).catch((err) => setError(String(err)));
+  }, []);
   async function fetchIt() {
     if (!id) return;
-    const r = await fetch(`/api/statements/explain/${id}`);
-    setData(await r.json());
+    setError("");
+    try {
+      setData(await api.statementExplain(Number(id)));
+    } catch (err: any) {
+      setError(String(err));
+    }
   }
   return (
     <>
       <div className="filters">
-        <input value={id} onChange={(e) => setId(e.target.value)}
-               placeholder="statement_id (integer)" style={{ minWidth: 200 }} />
+        <select value={id} onChange={(e) => setId(e.target.value)} style={{ minWidth: 360 }}>
+          {statements.map((statement) => (
+            <option key={statement.statement_id} value={statement.statement_id}>
+              #{statement.statement_id} {statement.period_end} {statement.institution_code} {statement.account_number}
+            </option>
+          ))}
+        </select>
         <button onClick={fetchIt}>Fetch</button>
       </div>
+      {error && <p className="inline-status status-error">{error}</p>}
       {data && (
-        <pre style={{ width: "100%", maxHeight: 320, overflow: "auto" }}>
-          {JSON.stringify(data, null, 2)}
-        </pre>
+        <div className="explainer-grid">
+          <div className="explainer-source">
+            {data.pages.length === 0 && <p className="muted">Source PDF text is not available on disk.</p>}
+            {data.pages.map((page) => (
+              <div key={page.page_number} className="explainer-page">
+                <h4>Page {page.page_number}</h4>
+                {page.lines.map((line) => (
+                  <div key={`${page.page_number}-${line.line_number}`}
+                       className={line.refs.length ? "explainer-line has-ref" : "explainer-line"}>
+                    <span className="line-no">{line.line_number}</span>
+                    <span className="line-text">{line.text || " "}</span>
+                    {line.refs.length > 0 && (
+                      <span className="line-refs">{line.refs.map((ref) => `${ref.kind} ${ref.id}`).join(", ")}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+          <div className="explainer-parsed">
+            <h4>Transactions</h4>
+            <MiniRows rows={data.transactions} cols={["trade_date", "txn_type", "symbol", "quantity", "net_amount", "currency"]} />
+            <h4>Positions</h4>
+            <MiniRows rows={data.positions} cols={["as_of_date", "symbol", "quantity", "market_value", "currency"]} />
+            <h4>Cash</h4>
+            <MiniRows rows={data.cash_balances} cols={["as_of_date", "currency", "closing_balance"]} />
+            <h4>Quarantine</h4>
+            <MiniRows rows={data.quarantine} cols={["reason", "raw_line"]} />
+          </div>
+        </div>
       )}
+    </>
+  );
+}
+
+function MiniRows({ rows, cols }: { rows: any[]; cols: string[] }) {
+  if (rows.length === 0) return <p className="muted">None</p>;
+  return (
+    <div className="table-scroll mini-table-scroll">
+      <table>
+        <thead><tr>{cols.map((col) => <th key={col}>{col}</th>)}</tr></thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={index}>{cols.map((col) => <td key={col}>{String(row[col] ?? "")}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ReconciliationPanel() {
+  const [summary, setSummary] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  async function refresh() {
+    setSummary(await api.reconciliationSummary());
+  }
+  async function rebuild() {
+    setBusy(true);
+    try {
+      setSummary(await api.rebuildReconciliation());
+    } finally {
+      setBusy(false);
+    }
+  }
+  useEffect(() => { refresh().catch(() => undefined); }, []);
+  return (
+    <>
+      <div className="filters">
+        <button onClick={rebuild} disabled={busy}>Rebuild links</button>
+        <button onClick={refresh} disabled={busy}>Refresh summary</button>
+      </div>
+      {summary && <pre className="json-output">{JSON.stringify(summary, null, 2)}</pre>}
     </>
   );
 }

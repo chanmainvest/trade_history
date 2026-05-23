@@ -222,6 +222,24 @@ def ingest_repair_symbols() -> None:
         click.echo(f"  txn {ex['transaction_id']}: {ex['old_type']} -> {ex['new_type']}")
 
 
+@ingest.command("reconcile")
+def ingest_reconcile() -> None:
+    """Link transfer counterparts and rebuild snapshot transaction links."""
+    from .ingest.reconcile import reconcile_after_ingest
+
+    out = reconcile_after_ingest()
+    transfers = out["transfers"]
+    positions = out["positions"]
+    click.echo(
+        f"Linked {transfers['matched']} transfer pairs "
+        f"({transfers['ambiguous']} ambiguous skipped)."
+    )
+    click.echo(
+        f"Rebuilt {positions['links']} position-to-transaction links "
+        f"across {positions['snapshots']} snapshots."
+    )
+
+
 # -------------------------------------------------------------------------- mcp
 @main.group("mcp")
 def mcp_group() -> None:

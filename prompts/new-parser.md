@@ -1,12 +1,15 @@
 # Prompt skill: draft a new institution parser
 
-> **Status:** Reference / aspirational. The runtime hook that calls the
-> LLM with this prompt and writes the result to disk is **not
-> implemented yet**. See AGENTS.md §8 "Deferred items".
+> **Status:** Runtime-supported draft workflow. `POST
+> /statements/draft-parser` writes a complete prompt bundle under
+> `data/parser_drafts/<sha>/` and, when explicitly requested, sends it to
+> the configured LLM provider and saves the response for review.
 
 When a statement type is encountered that no existing parser handles,
-this prompt is what should be sent to the configured LLM (OpenAI /
-Anthropic / Google — chosen in the Settings tab).
+this prompt is what the Settings upload workflow sends to the configured
+LLM (OpenAI / Anthropic / Google — chosen in the Settings tab) after the
+user explicitly enables provider sending. Without provider sending, the
+same endpoint creates a local prompt bundle only.
 
 ## Inputs the runtime should provide
 
@@ -32,7 +35,7 @@ broker's monthly PDF statement. You will produce a single file at
 
 Hard requirements:
 - Implement the Parser protocol: class attributes NAME, VERSION;
-  classmethods can_handle(folder_name, first_page_text) -> bool and
+  methods can_handle(folder_name, first_page_text) -> bool and
   parse(pdf: PdfText) -> ParseResult.
 - Return list[ParsedStatement] inside ParseResult — multi-account and
   multi-period PDFs are common.
@@ -41,7 +44,7 @@ Hard requirements:
 - Store all money in native currency. Set the currency field on every
   transaction, position, and cash balance.
 - Never fabricate a number. Lines you can't confidently parse go into
-  ParseResult.quarantine with (raw_line, reason).
+  ParsedStatement.quarantine with (raw_line, reason).
 - The parser must be deterministic and side-effect free (no DB writes,
   no network).
 
@@ -71,13 +74,14 @@ parser, DO NOT produce a new one — return the existing parser's name
 instead, in a comment at the top of the response.
 ```
 
-## Where the runtime should write
+## Where reviewed output should be installed
 
 * `src/ledger/parsers/<name>.py`
 * `tests/fixtures/<name>/<file>.txt`
 * `tests/test_<name>.py`
 
-After write, the runtime must:
+After a human reviews the LLM response and installs the files, the follow-up
+change must:
 
 1. Add the institution to `config.INSTITUTIONS`.
 2. Register the parser in `parsers/registry.py`.

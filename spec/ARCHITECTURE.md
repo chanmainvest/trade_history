@@ -130,15 +130,21 @@ position snapshots.
 ### 1.5 In-kind transfers between MY accounts
 
 When a holding moves from CIBC Investor's Edge to a CIBC TFSA, both
-statements show one half of the move. The schema has placeholders for
-capturing both:
+statements show one half of the move. The schema captures both:
 
 - `account_links` — date-level link (transfer_date, from, to, notes).
 - `transactions.counterpart_account_id` / `counterpart_txn_id` —
   event-level pairing.
 
-These tables are not yet populated by ingest or exposed in API workflows;
-they are scaffolding for future transfer chaining and reconciliation.
+`ledger ingest run` calls `ingest.reconcile.reconcile_after_ingest()` after
+symbol repair. It pairs only unambiguous transfer rows: same instrument and
+absolute quantity, or same cash currency and absolute amount, opposite
+direction, different accounts, and trade dates within seven days. Ambiguous
+matches are skipped rather than guessed. The same pass rebuilds
+`position_transaction_links` by attributing each position snapshot to the
+same-account/instrument transactions since the previous snapshot. The Settings
+tab and `/statements/reconciliation/*` endpoints can rebuild and inspect these
+links after manual edits.
 
 ### 1.6 The quarantine principle
 
@@ -382,13 +388,13 @@ erDiagram
 | `instrument_aliases` | `(alias, institution_id)` | — |
 | `source_files` | `relpath` | — |
 | `statements` | `(source_file_id, account_id, period_end)` | `idx_statements_account_period` |
-| `transactions` | — | `idx_txn_account_date`, `idx_txn_instrument`, `idx_txn_type`, `idx_txn_statement` |
+| `transactions` | — | `idx_txn_account_date`, `idx_txn_instrument`, `idx_txn_type`, `idx_txn_statement`, `idx_txn_counterpart` |
 | `position_snapshots` | `(statement_id, instrument_id)` | `idx_pos_account_date` |
 | `cash_balances` | `(statement_id, currency)` | `idx_cash_account_date` |
 | `initial_positions` | `(account_id, as_of_date, instrument_id)` | — |
 | `initial_cash` | `(account_id, as_of_date, currency)` | — |
 | `annual_performance_reports` | `(statement_id, currency)` | — |
-| `position_transaction_links` | `(snapshot_id, transaction_id)` | — |
+| `position_transaction_links` | `(snapshot_id, transaction_id)` | `idx_pos_txn_links_txn` |
 
 ### 2.2 Transaction type vocabulary
 
@@ -543,6 +549,8 @@ flowchart TD
     L --> N[(transactions\ninstruments)]
     L --> O[(position_snapshots\ncash_balances)]
     L --> P[(quarantine_transactions)]
+    P --> Q[repair_symbols]
+    Q --> R[reconcile_after_ingest\ntransfer pairs + snapshot links]
 ```
 
 Entry point: `ledger ingest run` (see [src/ledger/ingest/pipeline.py](../src/ledger/ingest/pipeline.py)).
@@ -560,6 +568,9 @@ Re-running ingest on the same PDF is safe because:
   `cash_balances`, `annual_performance_reports`, `quarantine_transactions`)
   upserts or replaces by its natural key, so stale rows are replaced, not
   appended.
+4. Automatic reconciliation rows are regenerated from current transactions:
+  `account_links.notes LIKE 'auto:%'` rows are replaced, and
+  `position_transaction_links` is rebuilt from scratch.
 
 ### 4.3 The Parser protocol
 
@@ -668,7 +679,26 @@ See [EXTRACTION-CORNER-CASES.md](EXTRACTION-CORNER-CASES.md) for
 parser gotchas such as generic `DISTRIB.` labels, CIBC fund-code lookup
 requests, and DLR/DLR.U currency-transfer direction.
 
-### 4.8 Logs
+### 4.8 Upload review, statement explainer, and reconciliation APIs
+
+The Settings tab uses the statements routes in
+[src/ledger/api/routes/statements.py](../src/ledger/api/routes/statements.py):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /statements` | Recent statement picker rows for the explainer UI. |
+| `POST /statements/upload` | Validate a PDF upload, save it under `Statements/uploads/`, fingerprint it, and return a parser preview without writing ledger rows. |
+| `POST /statements/import` | Import a reviewed upload with the selected institution folder; then run symbol repair and reconciliation. |
+| `POST /statements/draft-parser` | Create `data/parser_drafts/<sha>/prompt.md` and metadata for unfamiliar PDFs. With `send_to_provider=true`, calls the configured OpenAI / Anthropic / Google API and saves the response beside the prompt. |
+| `GET /statements/explain/{id}` | Return PDF text lines annotated with parsed transactions, positions, and quarantine rows for audit review. |
+| `GET /statements/reconciliation/summary` | Summarize account transfer links and position-link counts. |
+| `POST /statements/reconciliation/rebuild` | Re-run automatic transfer and snapshot reconciliation after manual edits. |
+
+Parser drafts are review artifacts, not silently installed code. A generated
+response must still be reviewed, adapted to the parser protocol, registered,
+tested, and re-ingested.
+
+### 4.9 Logs
 
 - `logs/ingest.log` — main run.
 - `logs/parser_<institution>.log` — per-parser detail.
@@ -683,18 +713,19 @@ requests, and DLR/DLR.U currency-transfer direction.
 
 When the ingestion pipeline encounters a PDF from an institution it has
 never seen before, `select_parser` returns `None` and the file is
-silently skipped. To add support for a new bank you implement the
-`Parser` protocol, register it, and register the folder mapping.
+recorded as a failed `source_files` row until parser support exists. To add
+support for a new bank you implement the `Parser` protocol, register it,
+and register the folder mapping.
 
 ```mermaid
 flowchart LR
-    A[New bank\nstatement PDF] -->|select_parser returns None| B[Skipped today]
+    A[New bank\nstatement PDF] -->|select_parser returns None| B[Recorded failed\nuntil parser exists]
     A -->|after you follow steps below| C[Parsed ✓]
 
     subgraph Steps
         S1[1. Add institution\nto config.INSTITUTIONS]
         S2[2. Create parsers/newbank.py\nimplementing Parser protocol]
-        S3[3. Register with @register]
+        S3[3. Register parser instance]
         S4[4. Write tests]
         S5[5. Re-ingest]
         S1 --> S2 --> S3 --> S4 --> S5
@@ -705,15 +736,15 @@ flowchart LR
 
 **Step 1 — Register the institution folder**
 
-In [src/ledger/config.py](../src/ledger/config.py), add the institution code
-and its `Statements/` subfolder name to `INSTITUTIONS`:
+In [src/ledger/config.py](../src/ledger/config.py), add the `Statements/`
+subfolder name and institution code to `INSTITUTIONS`:
 
 ```python
 INSTITUTIONS = {
-    "CIBC_IS":  "CIBC Imperial Service",
-    "CIBC_IE":  "CIBC Invest Direct",
+    "CIBC Imperial Service": "CIBC_IS",
+    "CIBC Invest Direct": "CIBC_ID",
     # ... existing entries ...
-    "NEWBANK":  "New Bank Direct",   # ← add this
+    "New Bank Direct": "NEWBANK",   # add this
 }
 ```
 
@@ -724,12 +755,11 @@ Create `src/ledger/parsers/newbank.py`:
 ```python
 from __future__ import annotations
 from ..pdf_text import PdfText
-from .types import ParseResult, ParsedStatement, ParsedTransaction, TxnType
 from .registry import register
+from .types import ParseResult, ParsedStatement
 
 FOLDER = "New Bank Direct"
 
-@register
 class NewBankParser:
     NAME = "newbank"
     VERSION = "1"
@@ -740,7 +770,14 @@ class NewBankParser:
     def parse(self, pdf: PdfText) -> ParseResult:
         statements: list[ParsedStatement] = []
         # ... parse logic ...
-        return ParseResult(statements=statements)
+        return ParseResult(
+            parser_name=self.NAME,
+            parser_version=self.VERSION,
+            statements=statements,
+        )
+
+
+register(NewBankParser())
 ```
 
 Key rules for the parser body:
@@ -748,7 +785,7 @@ Key rules for the parser body:
 - Extract `period_start` and `period_end` from the statement header.
 - Emit one `ParsedStatement` per `(account_number, period_end)`.
 - Every transaction must have `trade_date`, `txn_type` (from
-  `TxnType`), and either `instrument_id`/`symbol` or
+  `TxnType`), and either an `instrument`/`symbol` or
   `description`.
 - Rows you can't confidently parse go into `ParsedStatement.quarantine`
   with `raw_line` and a human-readable `reason` — **never fabricate**.
@@ -758,7 +795,7 @@ Key rules for the parser body:
 **Step 3 — Register at import time**
 
 Import the new module in [src/ledger/parsers/\_\_init\_\_.py](../src/ledger/parsers/__init__.py)
-so the `@register` decorator fires before `select_parser` is called:
+so the `register(NewBankParser())` call runs before `select_parser` is called:
 
 ```python
 from . import cibc, hsbc, rbc, td, newbank   # ← add newbank
@@ -795,9 +832,13 @@ uv run pytest -q
 
 For PDFs with an unfamiliar layout, the prompt skill in
 [prompts/new-parser.md](../prompts/new-parser.md) walks an LLM through
-producing a draft parser from a text dump of the PDF. Use
-`uv run python scripts/dump_sample.py <pdf_path>` to generate the text
-dump, then feed it to the prompt.
+producing a draft parser from a text dump of the PDF. The Settings upload
+workflow can now generate the full prompt bundle automatically via
+`POST /statements/draft-parser`; it writes under
+`data/parser_drafts/<sha>/`. If the user explicitly enables provider sending,
+the endpoint calls the configured LLM and saves the response as a reviewable
+markdown draft. Use `uv run python scripts/dump_sample.py <pdf_path>` only for
+manual/offline drafting.
 
 ### 5.4 Multi-account PDFs
 
@@ -911,7 +952,8 @@ Stored as `<DATA_DIR>/config.json`. Schema:
   "active_portfolio": "all",
   "theme": "dark",
   "hide_money": false,
-  "language": "en"
+  "language": "en",
+  "llm_keys": { "openai": "", "anthropic": "", "google": "" }
 }
 ```
 
@@ -920,6 +962,8 @@ A portfolio with empty `account_ids` is implicitly "all accounts".
 The backend tolerates legacy `display_currency` keys in older config files by
 dropping them on read/write; the current frontend does not expose or use that
 preference.
+LLM keys are optional and are used only by `POST /statements/draft-parser`
+when the user explicitly asks to send a parser-draft prompt to a provider.
 
 ---
 

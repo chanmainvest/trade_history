@@ -34,8 +34,8 @@ Two stores, deliberately separated:
    `cash_balances`, `initial_positions`, `initial_cash`,
    `annual_performance_reports`, `position_transaction_links`. Schema is in
    [src/ledger/db/schema.sql](src/ledger/db/schema.sql).
-   Transfer-link/reconciliation tables are schema scaffolding until the
-   matching workflows are wired.
+   Ingest automatically links unambiguous account transfers and rebuilds
+   position-to-transaction attribution after parsing.
 - **DuckDB — `data/market.duckdb`**: public market data scraped on demand.
   Tables: `daily_prices`, `dividends`, `splits`, `option_implied_vol`,
   `fx_rates`, `financials_quarterly`, `financials_annual`,
@@ -65,13 +65,16 @@ uv run ledger ingest run
 # 5. infer opening holdings before the first statement
 uv run ledger ingest infer-initials
 
-# 6. scrape market data for every held ticker
+# 6. optional after manual DB edits: rebuild transfer/reconciliation links
+uv run ledger ingest reconcile
+
+# 7. scrape market data for every held ticker
 uv run ledger market refresh
 
-# 7. start backend
+# 8. start backend
 uv run uvicorn ledger.api.app:app --reload
 
-# 8. start frontend
+# 9. start frontend
 cd frontend && npm install && npm run dev
 ```
 
@@ -106,7 +109,7 @@ uv run ledger mcp serve
 
 The MCP tools expose allowlisted frontend/API operations and bounded backend
 CLI operations such as ingest, symbol repair, initial-position inference, and
-market-data refresh. They do not provide arbitrary shell access.
+reconciliation rebuilds. They do not provide arbitrary shell access.
 
 ## Folder layout
 
@@ -154,6 +157,9 @@ trade_history_opus47/
    button, treemap grouped by institution/account, type, or sector with
    green/red period performance coloring, and a sortable correlation matrix
    with clickable ticker headers.
+6. **Settings** — portfolios/theme/language, statement upload review/import,
+   local parser-draft prompt bundles with optional LLM provider response,
+   statement extraction explainer, and reconciliation rebuild/summary.
 
 ## Data quality rule
 

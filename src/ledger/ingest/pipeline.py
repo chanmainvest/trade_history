@@ -89,6 +89,18 @@ def _write_statement(conn, *, source_file_id: int, institution_code: str,
     statement_id = cur.fetchone()[0]
 
     # Replace child rows (idempotent re-ingest).
+    conn.execute(
+        """
+        UPDATE transactions
+           SET counterpart_account_id = NULL,
+               counterpart_txn_id = NULL
+         WHERE statement_id = ?
+            OR counterpart_txn_id IN (
+                SELECT transaction_id FROM transactions WHERE statement_id = ?
+            )
+        """,
+        (statement_id, statement_id),
+    )
     conn.execute("DELETE FROM transactions WHERE statement_id = ?", (statement_id,))
     conn.execute("DELETE FROM position_snapshots WHERE statement_id = ?", (statement_id,))
     conn.execute("DELETE FROM cash_balances WHERE statement_id = ?", (statement_id,))
@@ -287,4 +299,8 @@ def run_ingest(*, institution: str | None = None, limit: int | None = None, forc
 
     repair_summary = repair_symbols()
     log.info("Symbol repair after ingest: %s", repair_summary)
+    from .reconcile import reconcile_after_ingest
+
+    reconcile_summary = reconcile_after_ingest()
+    log.info("Reconciliation after ingest: %s", reconcile_summary)
     log.info("Ingest finished. %d PDFs scanned.", seen)

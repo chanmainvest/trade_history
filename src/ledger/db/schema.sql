@@ -187,6 +187,7 @@ CREATE INDEX IF NOT EXISTS idx_txn_account_date  ON transactions(account_id, tra
 CREATE INDEX IF NOT EXISTS idx_txn_instrument    ON transactions(instrument_id);
 CREATE INDEX IF NOT EXISTS idx_txn_type          ON transactions(txn_type);
 CREATE INDEX IF NOT EXISTS idx_txn_statement     ON transactions(statement_id);
+CREATE INDEX IF NOT EXISTS idx_txn_counterpart   ON transactions(counterpart_txn_id);
 
 -- Quarantine: rows we couldn't confidently parse.
 CREATE TABLE IF NOT EXISTS quarantine_transactions (
@@ -297,6 +298,8 @@ CREATE TABLE IF NOT EXISTS position_transaction_links (
     UNIQUE(snapshot_id, transaction_id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_pos_txn_links_txn ON position_transaction_links(transaction_id);
+
 -- ---------------------------------------------------------------------------
 -- META
 -- ---------------------------------------------------------------------------
@@ -306,4 +309,4 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value            TEXT NOT NULL
 );
 
-INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '4');
+INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '5');
