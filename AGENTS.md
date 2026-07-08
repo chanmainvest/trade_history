@@ -68,6 +68,47 @@ This file is the operating manual for AI coding agents working on
 - Use the custom `grep_search`/`file_search`/`read_file` over terminal
   `grep`/`find`/`cat`.
 
+## 2a. Local dev servers — known environment quirks
+
+This workspace runs on a **shared, non-sandboxed machine** alongside other
+unrelated projects (e.g. `knowledge_base`). Learned the hard way while
+starting the backend/frontend for a user — keep this in mind next time:
+
+- **Don't trust default ports.** `5173`/`5174` are frequently already bound
+  by an unrelated project's Vite dev server on this machine. A `200 OK` on
+  the expected port is **not** proof it's this app. Verify identity first:
+  check the page `<title>` (should be "Trade History") or hit the backend's
+  `/openapi.json` and confirm `info.title == "Trade History API"`.
+- **Pick an explicit, free port** for the frontend rather than assuming
+  5173 is free, e.g. `npm run dev -- --host 127.0.0.1 --port 5175
+  --strictPort` (check first with `netstat -ano | Select-String LISTENING`).
+- **Vite may bind IPv6-only** (`[::1]:PORT`) if `--host` is omitted, so
+  `http://127.0.0.1:PORT` refuses the connection while `http://localhost:PORT`
+  silently succeeds via `::1`. Always pass `--host 127.0.0.1` explicitly to
+  force IPv4 and avoid a false "it's down" or false "it's up" reading.
+- **Node/Vite dev servers die when launched via the agent tool's own
+  "detach" flag, even though `uv run uvicorn` (Python) survives fine with
+  the same flag.** Root cause: on Windows, a Node.js process terminates by
+  default when its console is closed (`CTRL_CLOSE_EVENT`) unless it has its
+  *own* console — the agent's detach mechanism doesn't reliably break that
+  console association for Node's process tree (`npm.cmd` → `node` →
+  `vite.cmd` → `node`), so it dies when the launching shell/session goes
+  away, even though it logs "VITE ready" and briefly binds the port first.
+  Plain "attached" (non-detached) async processes are worse: they get
+  killed at the very next turn/session boundary, confirmed empirically.
+  **Fix that works:** spawn it with PowerShell's own `Start-Process
+  -WindowStyle Hidden` (redirecting stdout/stderr to files), which gives
+  the child its own console and truly detaches it from the tool's
+  process tree — verified the resulting process outlives its own spawning
+  shell and keeps serving:
+  ```powershell
+  Start-Process -FilePath node -WorkingDirectory 'frontend' -WindowStyle Hidden `
+    -ArgumentList '"node_modules\vite\bin\vite.js" --host 127.0.0.1 --port 5175 --strictPort' `
+    -RedirectStandardOutput logs\frontend.log -RedirectStandardError logs\frontend.err.log
+  ```
+  For anything that must outlive the whole coding session (not just one
+  turn), prefer the repo's `docker-compose.yml` over any of the above.
+
 ## 3. Workspace profiles
 
 Set **before** Python loads `ledger.config`:
