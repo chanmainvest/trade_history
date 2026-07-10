@@ -4,6 +4,7 @@ import Monthly from "./tabs/Monthly";
 import Performance from "./tabs/Performance";
 import Research from "./tabs/Research";
 import Viz from "./tabs/Viz";
+import Verify from "./tabs/Verify";
 import Config from "./tabs/Config";
 import { PortfolioPicker, LanguagePicker, usePortfolio } from "./portfolio";
 import { useI18n } from "./i18n";
@@ -39,6 +40,7 @@ export default function App() {
         <NavLink to="/performance"  className={({ isActive }) => isActive ? "active" : ""}>{t("nav.performance")}</NavLink>
         <NavLink to="/research"     className={({ isActive }) => isActive ? "active" : ""}>{t("nav.research")}</NavLink>
         <NavLink to="/viz"          className={({ isActive }) => isActive ? "active" : ""}>{t("nav.viz")}</NavLink>
+        <NavLink to="/verify"       className={({ isActive }) => isActive ? "active" : ""}>{t("nav.verify")}</NavLink>
         <NavLink to="/config"       className={({ isActive }) => isActive ? "active" : ""}>{t("nav.config")}</NavLink>
         <span className="spacer" />
         <span className="top-controls">
@@ -56,6 +58,7 @@ export default function App() {
           <Route path="/research" element={<Research />} />
           <Route path="/research/:symbol" element={<Research />} />
           <Route path="/viz" element={<Viz />} />
+          <Route path="/verify" element={<Verify />} />
           <Route path="/config" element={<Config />} />
         </Routes>
       </main>

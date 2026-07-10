@@ -90,6 +90,8 @@ export const api = {
 
   statements: (limit = 200) => getJSON<{ rows: StatementRow[] }>("/statements", { limit }),
   statementExplain: (statementId: number) => getJSON<StatementExplain>(`/statements/explain/${statementId}`),
+  statementBoxes: (statementId: number) => getJSON<StatementBoxes>(`/statements/${statementId}/boxes`),
+  statementPdfUrl: (statementId: number) => `${API_BASE}/statements/${statementId}/pdf`,
   uploadStatement: (file: File) => {
     const form = new FormData();
     form.append("file", file);
@@ -244,5 +246,31 @@ export type StatementExplain = {
   positions: any[];
   cash_balances: any[];
   annual_performance: any[];
+  quarantine: any[];
+};
+
+/** A matched reference linking a PDF line box to a parsed item. */
+export type BoxRef = {
+  kind: "transaction" | "position" | "quarantine";
+  id: number;
+  label: string;
+};
+
+/** A PDF text line with its bounding box (PDF user-space, top-left origin). */
+export type LineBox = {
+  /** [x0, top, x1, bottom] in PDF points. */
+  bbox: [number, number, number, number];
+  text: string;
+  refs: BoxRef[];
+};
+
+/** Per-page line boxes response from /statements/{id}/boxes. */
+export type StatementBoxes = {
+  statement: { statement_id: number; account_id: number; period_start: string; period_end: string; source_file_id: number };
+  source_file: { relpath: string; sha256: string | null; parser_name: string | null; parser_version: string | null; parse_status: string } | null;
+  pages: { page_number: number; width: number; height: number; lines: LineBox[] }[];
+  transactions: any[];
+  positions: any[];
+  cash_balances: any[];
   quarantine: any[];
 };

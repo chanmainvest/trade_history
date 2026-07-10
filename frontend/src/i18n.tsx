@@ -38,6 +38,7 @@ const en: Dict = {
   "nav.performance":    "Performance",
   "nav.research":       "Research",
   "nav.viz":            "Visualisations",
+  "nav.verify":         "Verify extraction",
   "nav.config":         "Settings",
   "nav.theme.light":    "Light",
   "nav.theme.dark":     "Dark",
@@ -51,6 +52,7 @@ const en: Dict = {
   "f.type":             "Type",
   "f.start":            "Start",
   "f.end":              "End",
+  "f.date":             "Date",
   "f.as_of":            "As of",
   "f.compare_to":       "Compare to",
   "f.min_abs_amount":   "Min |amount|",
@@ -102,6 +104,21 @@ const en: Dict = {
   "viz.correlation":   "Correlation",
   "viz.no_data":       "No data for this selection.",
   "viz.loading":       "Loading…",
+
+  // Verify-extraction tab
+  "verify.all":          "All",
+  "verify.next":         "Next statement",
+  "verify.prev":         "Previous statement",
+  "verify.statements":   "statements",
+  "verify.no_statements":"No statements match these filters.",
+  "verify.load_failed":  "Could not load extraction data",
+  "verify.no_pdf":       "The source PDF is not available on disk, so boxes can't be shown.",
+  "verify.pdf_failed":   "Could not open the PDF",
+  "verify.rendering":    "Rendering",
+  "verify.transactions": "Transactions",
+  "verify.positions":    "Positions",
+  "verify.cash":         "Cash",
+  "verify.quarantine":   "Quarantine",
 };
 
 const zhHK: Dict = {
@@ -110,6 +127,7 @@ const zhHK: Dict = {
   "nav.performance":    "表現",
   "nav.research":       "個股研究",
   "nav.viz":            "視覺化",
+  "nav.verify":         "核對擷取",
   "nav.config":         "設定",
   "nav.theme.light":    "淺色",
   "nav.theme.dark":     "深色",
@@ -122,6 +140,7 @@ const zhHK: Dict = {
   "f.type":             "類型",
   "f.start":            "起始",
   "f.end":              "結束",
+  "f.date":             "日期",
   "f.as_of":            "截至",
   "f.compare_to":       "對比",
   "f.min_abs_amount":   "最低金額",
@@ -169,6 +188,20 @@ const zhHK: Dict = {
   "viz.correlation":   "相關性",
   "viz.no_data":       "目前沒有可顯示的資料。",
   "viz.loading":       "載入中…",
+
+  "verify.all":          "全部",
+  "verify.next":         "下一份月結單",
+  "verify.prev":         "上一份月結單",
+  "verify.statements":   "份月結單",
+  "verify.no_statements":"沒有符合篩選條件的月結單。",
+  "verify.load_failed":  "無法載入擷取資料",
+  "verify.no_pdf":       "磁碟上找不到原始 PDF，無法顯示方框。",
+  "verify.pdf_failed":   "無法開啟 PDF",
+  "verify.rendering":    "渲染中",
+  "verify.transactions": "交易",
+  "verify.positions":    "持倉",
+  "verify.cash":         "現金",
+  "verify.quarantine":   "隔離",
 };
 
 const zhTW: Dict = {
@@ -177,6 +210,7 @@ const zhTW: Dict = {
   "nav.performance":    "績效",
   "nav.research":       "個股研究",
   "nav.viz":            "視覺化",
+  "nav.verify":         "核對擷取",
   "nav.config":         "設定",
   "nav.theme.light":    "淺色",
   "nav.theme.dark":     "深色",
@@ -189,6 +223,7 @@ const zhTW: Dict = {
   "f.type":             "類型",
   "f.start":            "起始",
   "f.end":              "結束",
+  "f.date":             "日期",
   "f.as_of":            "截至",
   "f.compare_to":       "比較",
   "f.min_abs_amount":   "最低金額",
@@ -236,6 +271,20 @@ const zhTW: Dict = {
   "viz.correlation":   "相關性矩陣",
   "viz.no_data":       "此區間沒有資料。",
   "viz.loading":       "載入中…",
+
+  "verify.all":          "全部",
+  "verify.next":         "下一份對帳單",
+  "verify.prev":         "上一份對帳單",
+  "verify.statements":   "份對帳單",
+  "verify.no_statements":"沒有符合篩選條件的對帳單。",
+  "verify.load_failed":  "無法載入擷取資料",
+  "verify.no_pdf":       "磁碟上找不到原始 PDF，無法顯示方框。",
+  "verify.pdf_failed":   "無法開啟 PDF",
+  "verify.rendering":    "渲染中",
+  "verify.transactions": "交易",
+  "verify.positions":    "持股",
+  "verify.cash":         "現金",
+  "verify.quarantine":   "隔離",
 };
 
 const zhCN: Dict = {
@@ -244,6 +293,7 @@ const zhCN: Dict = {
   "nav.performance":    "业绩",
   "nav.research":       "个股研究",
   "nav.viz":            "可视化",
+  "nav.verify":         "核对提取",
   "nav.config":         "设置",
   "nav.theme.light":    "浅色",
   "nav.theme.dark":     "深色",
@@ -256,6 +306,7 @@ const zhCN: Dict = {
   "f.type":             "类型",
   "f.start":            "起始",
   "f.end":              "结束",
+  "f.date":             "日期",
   "f.as_of":            "截至",
   "f.compare_to":       "对比",
   "f.min_abs_amount":   "最低金额",
@@ -303,6 +354,20 @@ const zhCN: Dict = {
   "viz.correlation":   "相关性矩阵",
   "viz.no_data":       "此区间没有数据。",
   "viz.loading":       "加载中…",
+
+  "verify.all":          "全部",
+  "verify.next":         "下一份对账单",
+  "verify.prev":         "上一份对账单",
+  "verify.statements":   "份对账单",
+  "verify.no_statements":"没有符合筛选条件的对账单。",
+  "verify.load_failed":  "无法加载提取数据",
+  "verify.no_pdf":       "磁盘上找不到原始 PDF，无法显示方框。",
+  "verify.pdf_failed":   "无法打开 PDF",
+  "verify.rendering":    "渲染中",
+  "verify.transactions": "交易",
+  "verify.positions":    "持仓",
+  "verify.cash":         "现金",
+  "verify.quarantine":   "隔离",
 };
 
 const DICTS: Record<Lang, Dict> = {
