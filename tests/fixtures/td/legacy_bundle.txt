@@ -1,0 +1,41 @@
+# Synthetic fixture: no real customer data.
+TD Waterhouse Canada
+Statement for January 1 to January 31, 2016
+Account number
+ZX90YU
+Direct Trading - CDN
+Holdings
+Canadian common shares
+10 Seg ALPHA CORP AAA 20.00 200.00 210.00 50.00
+Activities
+Cash-opening balance $100.00
+Jan 5 Dividend ALPHA CORP (AAA) 10.00 110.00
+Cash-closing balance $110.00
+Direct Trading - US
+Holdings
+US common shares
+5 Seg BETA CORP BBB 30.00 150.00 160.00 50.00
+Activities
+Cash-opening balance $50.00
+Jan 6 Dividend BETA CORP (BBB) 5.00 55.00
+Cash-closing balance $55.00
+
+Statement for February 1 to February 29, 2016
+Account number
+ZX90YU
+Direct Trading - CDN
+Holdings
+Canadian common shares
+10 Seg ALPHA CORP AAA 21.00 200.00 220.00 50.00
+Activities
+Cash-opening balance $110.00
+Feb 5 Dividend ALPHA CORP (AAA) 10.00 120.00
+Cash-closing balance $120.00
+Direct Trading - US
+Holdings
+US common shares
+5 Seg BETA CORP BBB 31.00 150.00 165.00 50.00
+Activities
+Cash-opening balance $55.00
+Feb 6 Dividend BETA CORP (BBB) 5.00 60.00
+Cash-closing balance $60.00

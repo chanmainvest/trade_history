@@ -181,6 +181,12 @@ just close the terminal.</p>
    schema version, so use <code>uv run ledger ingest run --force</code> after parser
    upgrades. Until the extraction refactor is complete, prefer a backup/shadow
    database and inspect Verify rather than overwriting a trusted ledger.</p>
+<p>Before ingesting, you can run the same parsers and contract checks without
+   opening SQLite:</p>
+<div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">audit</span> <span class="n">extraction</span> <span class="p">-</span><span class="n">-statements-dir</span> <span class="n">Statements</span>
+</code></pre></div>
+<p>The command writes <code>logs/extraction_audit.jsonl</code>. Add
+   <code>--fail-on-errors</code> when using it as a gate.</p>
 <ol>
 <li>
 <p>Pull market data for everything you hold:</p>
@@ -575,12 +581,12 @@ snapshot, not a release promise. Re-run the audit before relying on them.</p>
 </ul>
 <h2 id="validation-baseline">Validation baseline</h2>
 <ul>
-<li><code>uv run python -m pytest -q</code>: 27 tests passed, with three
-  <code>datetime.utcnow()</code> deprecation warnings in ingestion.</li>
+<li><code>uv run python -m pytest -q</code>: 30 tests passed and seven later-phase
+  acceptance requirements are recorded as strict xfails.</li>
 <li><code>uv run ruff check src tests</code>: passed.</li>
 <li><code>npm run build</code> in <code>frontend/</code>: passed with Vite's large-bundle warning.</li>
-<li>Parser tests currently depend on ignored private <code>data/text_dumps/</code>; a clean
-  checkout is therefore not yet a self-contained proof of parser correctness.</li>
+<li>Parser tests use ten committed synthetic fixtures and no ignored private
+  text dumps.</li>
 </ul>
 <h2 id="measured-live-ledger">Measured live ledger</h2>
 <table>
@@ -679,17 +685,29 @@ snapshot, not a release promise. Re-run the audit before relying on them.</p>
     4,620 exact duplicate quarantine rows under a coarse logical key.</li>
 </ol>
 <h2 id="corpus-evidence">Corpus evidence</h2>
-<p>The stored 324-file text corpus contains 71 RBC statement-key collisions and
-34 TD bundled files, totaling 171 overwritten statement segments. A direct
-338-PDF parse exceeded the 180-second audit window, so a full-PDF, read-only
-corpus audit remains an acceptance gate rather than a completed validation.</p>
+<p>Phase 1 added <code>ledger audit extraction</code>, which parses without opening SQLite
+and writes deterministic JSONL without raw statement text.</p>
+<ul>
+<li>The 324 stored text dumps emitted 593 statements: 171 duplicate statement
+  keys, 263 unbalanced calculable cash checks, 205 incomplete cash checks, and
+  519 unbalanced position intervals out of 5,585.</li>
+<li>All 338 source PDFs completed in about five minutes and emitted 617
+  statements: 178 duplicate statement keys, 270 unbalanced calculable cash
+  checks, 214 incomplete cash checks, and 533 unbalanced position intervals out
+  of 5,941.</li>
+<li>No source was unclaimed and no parser crashed in either run.</li>
+</ul>
+<p>The larger emitted counts are pre-persistence and expose segments that the
+current writer would overwrite. They are a defect baseline, not validated
+ledger rows.</p>
 <h2 id="operationaldocumentation-debt">Operational/documentation debt</h2>
 <ul>
-<li>The committed parser tests are not independent of private ignored data.</li>
 <li><code>quarantine.jsonl</code> and skipped-PDF logs are append-only, not mirrors of the
   active database.</li>
 <li>The current ingestion cache uses only source path/hash/status, not parser,
   resolver, or schema version.</li>
+<li>New fatal parser-contract errors are blocked before child-row writes, but the
+  current source row still lacks a separate last-good active run.</li>
 <li>The target repair and cutover are defined in
   <code>plan/EXTRACTION_RECONCILIATION_REFACTOR.md</code>; they are not implemented yet.</li>
 </ul>
@@ -988,6 +1006,7 @@ are derived artifacts.</p>
   -&gt; skip image-only / fail unclaimed
   -&gt; first registered parser whose can_handle() returns true
   -&gt; parser.parse(PdfText)
+  -&gt; validate the complete ParseResult
   -&gt; upsert source metadata
   -&gt; write each emitted statement immediately
   -&gt; repair symbols after the whole scan
@@ -1003,15 +1022,20 @@ unchanged and prior status is <code>ok</code>, <code>partial</code>, or <code>sk
 or output hash. Changing parser code without <code>--force</code> can therefore leave old
 rows active.</p>
 <h2 id="persistence-behavior">Persistence behavior</h2>
-<p>For each emitted <code>ParsedStatement</code>, the writer upserts institution/account and
+<p>Fatal validation issues record the source attempt as failed and skip every
+statement write from that parser result. Validation currently covers duplicate
+statement identities, parser errors, periods/transaction dates, transaction
+vocabulary, currencies, finite numerics, option identity, and available raw
+evidence. Scope/completeness limitations remain warnings until the data types
+can represent them.</p>
+<p>For each validated <code>ParsedStatement</code>, the writer upserts institution/account and
 the statement key <code>(source_file_id, account_id, period_end)</code>. It then deletes
 that statement's transactions, positions, cash, annual performance rows, and
 same-source/account quarantine before inserting replacements.</p>
 <p>This makes one statement write repeatable in isolation, but it does not make a
 source-file parse atomic:</p>
 <ul>
-<li>output is not validated as a whole before writes;</li>
-<li>repeated statement keys in one <code>ParseResult</code> overwrite earlier outputs;</li>
+<li>validation is in-memory, but active output is not staged/versioned;</li>
 <li>statements emitted by an older parse but omitted by a newer parse survive;</li>
 <li>a failed extraction/parse updates source status but does not activate a new
   coherent source version; and</li>
@@ -1033,16 +1057,24 @@ return caused by <code>--limit</code> occurs before these post-processing calls.
 </ul>
 <p>The text/JSONL files are append-only event records. They are not exact mirrors
 of active database rows and may contain duplicates across runs.</p>
-<h2 id="required-parser-boundary">Required parser boundary</h2>
-<p>The current pipeline trusts parser dataclasses and performs no contract
-validation before persistence. The required semantics and current violations
-are documented in <a href="#parser-contract">PARSER-CONTRACT.md</a>.</p>
+<h2 id="read-only-extraction-audit">Read-only extraction audit</h2>
+<p><code>ledger audit extraction</code> accepts a PDF tree or stored text-dump tree, selects
+and runs parsers without opening SQLite, applies the same validator, calculates
+cash and logical-instrument position residuals where possible, measures raw-line
+coverage, and overwrites a deterministic JSONL report. It excludes raw statement
+text from the report.</p>
+<p>The 2026-07-12 Phase 1 runs completed over all 324 stored text dumps and all 338
+source PDFs. The PDF run emitted 617 in-memory statements and reported 178
+duplicate statement keys, 270 unbalanced calculable cash checks, 214 incomplete
+cash checks, and 533 unbalanced position intervals out of 5,941. No source was
+unclaimed and no parser crashed. These are a defect baseline, not passing
+reconciliation results.</p>
 <h2 id="target-activation-model-not-implemented">Target activation model (not implemented)</h2>
-<p>The approved refactor is <code>discover -&gt; layout extract -&gt; select -&gt; parse -&gt;
-validate -&gt; resolve -&gt; stage -&gt; atomically activate -&gt; reconcile -&gt; audit</code>.
-A failed attempt must preserve the last successful active extraction, and the
-cache key must include source/parser/schema/resolver versions. See the plan for
-the full acceptance gates.</p>
+<p>Validation and the read-only audit now exist. The remaining approved activation
+path is <code>resolve -&gt; stage -&gt; atomically activate -&gt; reconcile</code>. A failed
+attempt must preserve the last successful active extraction, and the cache key
+must include source/parser/schema/resolver versions. See the plan for the full
+acceptance gates.</p>
 </div>
 
 <div class="doc-section" id="parser-contract">
@@ -1064,8 +1096,9 @@ objects, and string errors. A statement contains account, period, type,
 transactions, positions, cash balances, annual-performance rows, and
 <code>(raw_line, reason)</code> quarantine tuples.</p>
 <p>Exact fields and the <code>TxnType</code> literal vocabulary are defined in
-<code>src/ledger/parsers/types.py</code>. Runtime validation of the literal vocabulary is
-not currently performed.</p>
+<code>src/ledger/parsers/types.py</code>. <code>parsers/validation.py</code> enforces the runtime
+contract on the complete <code>ParseResult</code> before current ingestion writes any
+statement children.</p>
 <h2 id="required-semantics">Required semantics</h2>
 <ul>
 <li>Parsing is deterministic and side-effect free: no database writes or network.</li>
@@ -1080,8 +1113,10 @@ not currently performed.</p>
 <li>Output statement identities are unique within a source.</li>
 <li>A parser declares the scope and completeness of every holdings/cash section.</li>
 </ul>
-<p>The last three requirements are design contracts, not guarantees of the
-current dataclasses/pipeline.</p>
+<p>Unique output identity, date/type/currency/option validity, finite numbers, and
+available raw lines are enforced now. Correct economic signs cannot be proven
+from a dataclass alone. Section scope/completeness and occurrence-level
+provenance remain warnings because the current types cannot represent them.</p>
 <h2 id="transaction-vocabulary">Transaction vocabulary</h2>
 <p>The current literals cover buys/sells/shorts, four option open/close actions,
 assignment/exercise/expiration, income/interest, transfers/journals,
@@ -1093,6 +1128,10 @@ schema/docs, API, and tests updated together.</p>
 raw line and reason. Cash and annual rows lack raw evidence, and no common type
 stores page, occurrence, bounding box, or parser rule. Verify therefore
 fuzzy-matches normalized raw strings to freshly extracted PDF lines.</p>
+<p>The validator reports missing cash evidence and missing section completeness as
+explicit warnings. It treats malformed dates/currencies/numerics, invalid
+transaction vocabulary, incomplete options, duplicate statement identities,
+and parser-reported errors as fatal.</p>
 <p>Target evidence is a deterministic source-row key plus source fingerprint,
 page, occurrence, raw text, coordinates when available, and parser rule/version.</p>
 <h2 id="known-contract-violations">Known contract violations</h2>
@@ -1101,17 +1140,22 @@ page, occurrence, raw text, coordinates when available, and parser rule/version.
   also contain cash closing-balance fallbacks to zero.</li>
 <li>The parser type cannot express a child currency/section scope or whether a
   snapshot is complete.</li>
-<li>The pipeline accepts duplicate statement identities without preflight.</li>
-<li><code>TxnType</code> is type-checker-only and the database accepts arbitrary text.</li>
+<li>The database still accepts arbitrary transaction text, although new parser
+  output is checked against <code>TxnType</code> before persistence.</li>
 <li>Plain text extraction loses column geometry needed for defensible debit/
   credit signs in some layouts.</li>
 </ul>
 <h2 id="test-requirements">Test requirements</h2>
-<p>Tests must use committed redacted/synthetic fixtures under <code>tests/fixtures/</code>,
-not ignored private text dumps. Each materially distinct layout needs coverage
+<p>Tests use committed synthetic fixtures under <code>tests/fixtures/</code>, not ignored
+private text dumps. The initial corpus covers all four institutions, dual
+currencies/accounts, options, funds, annual reports, legacy TD splitting, and
+the known RBC/TD collision formats. Each materially distinct layout needs coverage
 for statement splitting, currencies, signs, instruments/options, positions,
 cash, quarantine, and source evidence. Real PDFs remain private and read-only;
 full-corpus audits are local acceptance checks.</p>
+<p><code>tests/test_refactor_acceptance.py</code> uses strict xfails for later-phase target
+behavior. An unexpected pass fails the suite until the marker is removed and
+the fixed behavior becomes a normal regression.</p>
 <p>See institution files under <code>spec/parsers/</code> and cross-cutting lessons in
 <a href="#extraction-corner-cases">EXTRACTION-CORNER-CASES.md</a>.</p>
 </div>
@@ -1321,6 +1365,8 @@ environment variable is the reliable choice.</p>
 <div class="highlight"><pre><span></span><code>ledger db init
 ledger pdf dump-all [--institution FOLDER]
 ledger pdf dump-samples [--per-folder N]
+ledger audit extraction [--statements-dir PATH] [--output PATH]
+                        [--institution FOLDER] [--limit N] [--fail-on-errors]
 ledger ingest run [--institution FOLDER] [--limit N] [--force]
 ledger ingest infer-initials
 ledger ingest repair-symbols
@@ -1340,6 +1386,11 @@ ledger serve [--host HOST] [--port PORT]
 <p><code>refresh-all</code> runs held-symbol prices, profiles, dividends, splits, financials,
 earnings, and FX. Benchmarks are a separate command. Market fetches primarily
 use yfinance; US financial history can fall back to SEC Company Facts.</p>
+<p>The extraction audit is read-only with respect to SQLite. It accepts either
+source PDFs or stored <code>.txt</code> dumps, overwrites a deterministic JSONL report
+(default <code>logs/extraction_audit.jsonl</code>), and omits raw statement text. Use
+<code>--fail-on-errors</code> in a gate where invalid/unclaimed/crashed outputs must
+return non-zero.</p>
 <h2 id="local-development">Local development</h2>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">sync</span> <span class="p">-</span><span class="n">-all-extras</span> <span class="p">-</span><span class="n">-dev</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">db</span> <span class="n">init</span>

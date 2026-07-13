@@ -1,0 +1,26 @@
+# Synthetic fixture: no real customer data.
+TD Direct Investing
+October 1, 2025 to October 31, 2025
+Account number: AB12CD
+Account type: Direct Trading - CDN
+Holdings in your account
+Canadian common shares
+ALPHA CORP (AAA) 10 SEG 20.00 200.00 210.00 10.00 50.00%
+Activity in your account this period
+Beginning cash balance $1,000.00
+Oct 5 Buy ALPHA CORP (AAA) 10 20.00 200.00 800.00
+Ending cash balance $800.00
+
+Account number: AB12CD
+Account type: Direct Trading - US
+Holdings in your account
+US common shares
+BETA CORP (BBB) 5 SEG 30.00 150.00 160.00 10.00 50.00%
+Options
+CALL -100 BBB'26-US 1 2.00 100.00 200.00
+20FE@35
+Activity in your account this period
+Beginning cash balance $500.00
+Oct 6 Sell BETA CORP (BBB) -2 30.00 60.00 560.00
+Oct 7 Buy CALL -100 BBB'26-US 20FE@35 1 2.00 -200.00 360.00
+Ending cash balance $360.00

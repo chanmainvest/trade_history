@@ -73,6 +73,9 @@ uv run ledger ingest repair-symbols
 uv run ledger ingest reconcile
 uv run ledger ingest infer-initials
 
+# read-only parser/contract audit (does not open SQLite)
+uv run ledger audit extraction --statements-dir Statements
+
 # public market data
 uv run ledger market refresh-all
 

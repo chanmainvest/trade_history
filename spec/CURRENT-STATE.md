@@ -15,12 +15,12 @@ snapshot, not a release promise. Re-run the audit before relying on them.
 
 ## Validation baseline
 
-- `uv run python -m pytest -q`: 27 tests passed, with three
-  `datetime.utcnow()` deprecation warnings in ingestion.
+- `uv run python -m pytest -q`: 30 tests passed and seven later-phase
+  acceptance requirements are recorded as strict xfails.
 - `uv run ruff check src tests`: passed.
 - `npm run build` in `frontend/`: passed with Vite's large-bundle warning.
-- Parser tests currently depend on ignored private `data/text_dumps/`; a clean
-  checkout is therefore not yet a self-contained proof of parser correctness.
+- Parser tests use ten committed synthetic fixtures and no ignored private
+  text dumps.
 
 ## Measured live ledger
 
@@ -75,17 +75,29 @@ snapshot, not a release promise. Re-run the audit before relying on them.
 
 ## Corpus evidence
 
-The stored 324-file text corpus contains 71 RBC statement-key collisions and
-34 TD bundled files, totaling 171 overwritten statement segments. A direct
-338-PDF parse exceeded the 180-second audit window, so a full-PDF, read-only
-corpus audit remains an acceptance gate rather than a completed validation.
+Phase 1 added `ledger audit extraction`, which parses without opening SQLite
+and writes deterministic JSONL without raw statement text.
+
+- The 324 stored text dumps emitted 593 statements: 171 duplicate statement
+  keys, 263 unbalanced calculable cash checks, 205 incomplete cash checks, and
+  519 unbalanced position intervals out of 5,585.
+- All 338 source PDFs completed in about five minutes and emitted 617
+  statements: 178 duplicate statement keys, 270 unbalanced calculable cash
+  checks, 214 incomplete cash checks, and 533 unbalanced position intervals out
+  of 5,941.
+- No source was unclaimed and no parser crashed in either run.
+
+The larger emitted counts are pre-persistence and expose segments that the
+current writer would overwrite. They are a defect baseline, not validated
+ledger rows.
 
 ## Operational/documentation debt
 
-- The committed parser tests are not independent of private ignored data.
 - `quarantine.jsonl` and skipped-PDF logs are append-only, not mirrors of the
   active database.
 - The current ingestion cache uses only source path/hash/status, not parser,
   resolver, or schema version.
+- New fatal parser-contract errors are blocked before child-row writes, but the
+  current source row still lacks a separate last-good active run.
 - The target repair and cutover are defined in
   `plan/EXTRACTION_RECONCILIATION_REFACTOR.md`; they are not implemented yet.

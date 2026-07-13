@@ -25,6 +25,8 @@ All Python commands use `uv run`:
 ledger db init
 ledger pdf dump-all [--institution FOLDER]
 ledger pdf dump-samples [--per-folder N]
+ledger audit extraction [--statements-dir PATH] [--output PATH]
+                        [--institution FOLDER] [--limit N] [--fail-on-errors]
 ledger ingest run [--institution FOLDER] [--limit N] [--force]
 ledger ingest infer-initials
 ledger ingest repair-symbols
@@ -45,6 +47,12 @@ ledger serve [--host HOST] [--port PORT]
 `refresh-all` runs held-symbol prices, profiles, dividends, splits, financials,
 earnings, and FX. Benchmarks are a separate command. Market fetches primarily
 use yfinance; US financial history can fall back to SEC Company Facts.
+
+The extraction audit is read-only with respect to SQLite. It accepts either
+source PDFs or stored `.txt` dumps, overwrites a deterministic JSONL report
+(default `logs/extraction_audit.jsonl`), and omits raw statement text. Use
+`--fail-on-errors` in a gate where invalid/unclaimed/crashed outputs must
+return non-zero.
 
 ## Local development
 

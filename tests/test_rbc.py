@@ -1,69 +1,71 @@
-"""Tests for RBC parser."""
+"""Self-contained tests for the RBC parser."""
 from ledger.parsers.rbc import RBCParser
+from ledger.parsers.validation import validate_parse_result
 
-from .test_cibc import _load
-
-
-def test_rbc_dual_currency_split():
-    pdf = _load("RBC Invest Direct/Statement-8036 2026-01-30.txt")
-    res = RBCParser().parse(pdf)
-    assert res.errors == []
-    assert len(res.statements) == 2
-    ccys = sorted(s.account.base_currency for s in res.statements)
-    assert ccys == ["CAD", "USD"]
-    for s in res.statements:
-        assert s.account.account_number == "669-28036-2-7"
-        assert s.period_start == "2026-01-01"
-        assert s.period_end == "2026-01-30"
+from .fixture_loader import load_fixture
 
 
-def test_rbc_holdings_and_dividend():
-    pdf = _load("RBC Invest Direct/Statement-8036 2026-01-30.txt")
-    res = RBCParser().parse(pdf)
-    cad = next(s for s in res.statements if s.account.base_currency == "CAD")
-    # Common shares + Mutual funds + Foreign Securities = 7 holdings
-    assert len(cad.positions) == 7
-    asset_types = {p.instrument.asset_type for p in cad.positions}
-    assert "equity" in asset_types
-    assert "mutual_fund" in asset_types
-    # Dividend transaction present
-    assert any(t.txn_type == "dividend" and t.net_amount == 1175.0
-               for t in cad.transactions)
-    assert cad.cash_balances[0].closing_balance == 3169.56
+def test_rbc_dual_currency_output_exposes_current_key_collision():
+    result = RBCParser().parse(load_fixture("rbc/monthly_dual_currency.txt"))
+    assert result.errors == []
+    assert len(result.statements) == 2
+    assert sorted(statement.account.base_currency for statement in result.statements) == [
+        "CAD",
+        "USD",
+    ]
+    for statement in result.statements:
+        assert statement.account.account_number == "111-22222-3-4"
+        assert statement.period_start == "2026-01-01"
+        assert statement.period_end == "2026-01-30"
+
+    report = validate_parse_result(result)
+    assert not report.is_valid
+    assert any(issue.code == "duplicate_statement_key" for issue in report.errors)
 
 
-def test_rbc_options_classification():
-    pdf = _load("RBC Invest Direct/67027469-2024Aug30-2024Aug30.txt")
-    res = RBCParser().parse(pdf)
-    usd = next(s for s in res.statements if s.account.base_currency == "USD")
-    opt_txns = [t for t in usd.transactions
-                if t.instrument and t.instrument.asset_type == "option"]
-    assert len(opt_txns) >= 4
-    # Each option txn must carry strike + expiry + type
-    for t in opt_txns:
-        assert t.instrument.option_strike is not None
-        assert t.instrument.option_expiry is not None
-        assert t.instrument.option_type in {"CALL", "PUT"}
-        assert t.txn_type.startswith("option_")
+def test_rbc_holdings_dividend_option_and_cash():
+    result = RBCParser().parse(load_fixture("rbc/monthly_dual_currency.txt"))
+    cad = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "CAD"
+    )
+    usd = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "USD"
+    )
+    assert {row.instrument.asset_type for row in cad.positions} == {
+        "equity",
+        "mutual_fund",
+    }
+    dividend = next(row for row in cad.transactions if row.txn_type == "dividend")
+    assert dividend.net_amount == 50.0
+    assert cad.cash_balances[0].closing_balance == 1055.0
+
+    option_transactions = [
+        row
+        for row in usd.transactions
+        if row.instrument and row.instrument.asset_type == "option"
+    ]
+    assert option_transactions
+    option = option_transactions[0].instrument
+    assert option.option_expiry == "2026-02-20"
+    assert option.option_strike == 35.0
+    assert option.option_type == "CALL"
 
 
-def test_rbc_annual_performance_report_parses_money_weighted_returns():
-    pdf = _load("RBC Invest Direct/66844715-2022_annual_report.txt")
-    res = RBCParser().parse(pdf)
-    assert res.errors == []
-    assert len(res.statements) == 1
-    statement = res.statements[0]
+def test_rbc_annual_performance_report():
+    result = RBCParser().parse(load_fixture("rbc/2022_annual_report.txt"))
+    assert result.errors == []
+    assert len(result.statements) == 1
+    statement = result.statements[0]
     assert statement.statement_type == "annual"
     assert statement.period_start == "2022-01-01"
     assert statement.period_end == "2022-12-31"
     rows = {row.currency: row for row in statement.annual_performance}
-    assert rows["CAD"].ending_market_value == 504398.5
-    assert rows["CAD"].money_weighted_1y == -10.63
-    assert rows["CAD"].money_weighted_since == 5.99
+    assert rows["CAD"].ending_market_value == 103000.0
+    assert rows["CAD"].money_weighted_1y == -2.0
     assert rows["USD"].since_date == "2022-03-28"
-    assert rows["USD"].beginning_market_value == 0.0
-    assert rows["USD"].deposits_transfers_in == 70214.83
-    assert rows["USD"].withdrawals_transfers_out == -209.09
-    assert rows["USD"].net_investment_return == -22423.89
-    assert rows["USD"].ending_market_value == 47581.85
-    assert rows["USD"].money_weighted_since == -48.03
+    assert rows["USD"].ending_market_value == 15900.0
+    assert rows["USD"].money_weighted_since == -20.0

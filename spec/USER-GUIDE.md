@@ -115,6 +115,16 @@ just close the terminal.
    upgrades. Until the extraction refactor is complete, prefer a backup/shadow
    database and inspect Verify rather than overwriting a trusted ledger.
 
+   Before ingesting, you can run the same parsers and contract checks without
+   opening SQLite:
+
+   ```powershell
+   uv run ledger audit extraction --statements-dir Statements
+   ```
+
+   The command writes `logs/extraction_audit.jsonl`. Add
+   `--fail-on-errors` when using it as a gate.
+
 3. Pull market data for everything you hold:
 
     ```powershell

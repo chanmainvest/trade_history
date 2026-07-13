@@ -1,0 +1,27 @@
+# Synthetic fixture: no real customer data.
+Investor's Edge Investment Account
+Account # 111-22222
+November 1-November 30, 2023
+
+Account Activity — Canadian Dollars
+Nov 1 Opening Cash Balance $1,000.00
+Nov 2 Bought ALPHA CORP (AAA/TSX) 10 20.00 -200.00
+Nov 3 Sold BETA CORP (BBB/TSX) -5 30.00 150.00
+Nov 4 Dividend ALPHA CORP (AAA/TSX) 10 5.00 50.00
+Account Activity — Canadian Dollars (continued)
+Nov 30 Closing Cash Balance $1,000.00
+
+Account Activity — U.S. Dollars
+Nov 1 Opening Cash Balance $500.00
+Nov 5 Bought CALL .XYZ DEC 15 2023 100 2 1.500 -$300.00
+Nov 30 Closing Cash Balance $200.00
+
+Portfolio Assets — Canadian Dollars
+Equities
+ALPHA CORP (AAA/TSX) 10 200.00 20.00 200.00 —
+Mutual Funds
+SYNTHETIC BALANCED FUND CLASS A 100 1,000.00 10.00 1,000.00 —
+
+Portfolio Assets — U.S. Dollars
+Other
+CALL .XYZ DEC 15 2023 100 2 $300.00 1.500 $300.00 —

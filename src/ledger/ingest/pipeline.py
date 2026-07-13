@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import config
@@ -12,6 +12,7 @@ from ..logging_setup import get_logger, jsonl_path
 from ..parsers import registry  # noqa: F401  (ensures parsers register)
 from ..parsers.registry import select_parser
 from ..parsers.types import ParsedStatement, ParseResult
+from ..parsers.validation import validate_parse_result
 from ..pdf_text import PdfText, extract_pdf
 
 log = get_logger("ingest")
@@ -59,7 +60,7 @@ def _record_source_file(conn, pdf: PdfText, *, parser_name: str | None,
         (
             pdf.relpath, pdf.sha256, pdf.size_bytes, pdf.page_count,
             int(pdf.is_image_only), parser_name, parser_version,
-            datetime.utcnow().isoformat(timespec="seconds"), parse_status,
+            datetime.now(UTC).isoformat(timespec="seconds"), parse_status,
         ),
     )
     return cur.fetchone()[0]
@@ -276,6 +277,31 @@ def run_ingest(*, institution: str | None = None, limit: int | None = None, forc
                                         parser_version=parser.VERSION,
                                         parse_status="failed")
                     continue
+
+                validation = validate_parse_result(result)
+                if not validation.is_valid:
+                    _record_source_file(
+                        conn,
+                        pdf,
+                        parser_name=parser.NAME,
+                        parser_version=parser.VERSION,
+                        parse_status="failed",
+                    )
+                    log.error(
+                        "parser output validation failed for %s: %d error(s), %d warning(s)",
+                        pdf.relpath,
+                        len(validation.errors),
+                        len(validation.warnings),
+                    )
+                    for issue in validation.errors:
+                        log.error("%s: %s", issue.code, issue.message)
+                    continue
+                if validation.warnings:
+                    log.warning(
+                        "parser output for %s has %d contract warning(s)",
+                        pdf.relpath,
+                        len(validation.warnings),
+                    )
 
                 status = "ok" if result.statements and not result.errors else (
                     "partial" if result.statements else "failed"

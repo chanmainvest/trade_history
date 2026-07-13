@@ -23,8 +23,9 @@ transactions, positions, cash balances, annual-performance rows, and
 `(raw_line, reason)` quarantine tuples.
 
 Exact fields and the `TxnType` literal vocabulary are defined in
-`src/ledger/parsers/types.py`. Runtime validation of the literal vocabulary is
-not currently performed.
+`src/ledger/parsers/types.py`. `parsers/validation.py` enforces the runtime
+contract on the complete `ParseResult` before current ingestion writes any
+statement children.
 
 ## Required semantics
 
@@ -40,8 +41,10 @@ not currently performed.
 - Output statement identities are unique within a source.
 - A parser declares the scope and completeness of every holdings/cash section.
 
-The last three requirements are design contracts, not guarantees of the
-current dataclasses/pipeline.
+Unique output identity, date/type/currency/option validity, finite numbers, and
+available raw lines are enforced now. Correct economic signs cannot be proven
+from a dataclass alone. Section scope/completeness and occurrence-level
+provenance remain warnings because the current types cannot represent them.
 
 ## Transaction vocabulary
 
@@ -58,6 +61,11 @@ raw line and reason. Cash and annual rows lack raw evidence, and no common type
 stores page, occurrence, bounding box, or parser rule. Verify therefore
 fuzzy-matches normalized raw strings to freshly extracted PDF lines.
 
+The validator reports missing cash evidence and missing section completeness as
+explicit warnings. It treats malformed dates/currencies/numerics, invalid
+transaction vocabulary, incomplete options, duplicate statement identities,
+and parser-reported errors as fatal.
+
 Target evidence is a deterministic source-row key plus source fingerprint,
 page, occurrence, raw text, coordinates when available, and parser rule/version.
 
@@ -67,18 +75,24 @@ page, occurrence, raw text, coordinates when available, and parser rule/version.
   also contain cash closing-balance fallbacks to zero.
 - The parser type cannot express a child currency/section scope or whether a
   snapshot is complete.
-- The pipeline accepts duplicate statement identities without preflight.
-- `TxnType` is type-checker-only and the database accepts arbitrary text.
+- The database still accepts arbitrary transaction text, although new parser
+  output is checked against `TxnType` before persistence.
 - Plain text extraction loses column geometry needed for defensible debit/
   credit signs in some layouts.
 
 ## Test requirements
 
-Tests must use committed redacted/synthetic fixtures under `tests/fixtures/`,
-not ignored private text dumps. Each materially distinct layout needs coverage
+Tests use committed synthetic fixtures under `tests/fixtures/`, not ignored
+private text dumps. The initial corpus covers all four institutions, dual
+currencies/accounts, options, funds, annual reports, legacy TD splitting, and
+the known RBC/TD collision formats. Each materially distinct layout needs coverage
 for statement splitting, currencies, signs, instruments/options, positions,
 cash, quarantine, and source evidence. Real PDFs remain private and read-only;
 full-corpus audits are local acceptance checks.
+
+`tests/test_refactor_acceptance.py` uses strict xfails for later-phase target
+behavior. An unexpected pass fails the suite until the marker is removed and
+the fixed behavior becomes a normal regression.
 
 See institution files under `spec/parsers/` and cross-cutting lessons in
 [EXTRACTION-CORNER-CASES.md](EXTRACTION-CORNER-CASES.md).

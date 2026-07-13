@@ -1,0 +1,23 @@
+# Synthetic fixture reproducing the 2018-2022 bundled-header defect.
+TD Direct Investing
+January 1, 2020 to January 31, 2020
+Account number: GH34JK
+Account type: Direct Trading - CDN
+Holdings in your account
+Canadian common shares
+ALPHA CORP (AAA) 10 SEG 20.00 200.00 210.00 10.00 100.00%
+Activity in your account this period
+Beginning cash balance $100.00
+Jan 5 Dividend ALPHA CORP (AAA) 10.00 110.00
+Ending cash balance $110.00
+
+February 1, 2020 to February 29, 2020
+Account number: GH34JK
+Account type: Direct Trading - CDN
+Holdings in your account
+Canadian common shares
+ALPHA CORP (AAA) 10 SEG 21.00 200.00 220.00 20.00 100.00%
+Activity in your account this period
+Beginning cash balance $110.00
+Feb 5 Dividend ALPHA CORP (AAA) 10.00 120.00
+Ending cash balance $120.00

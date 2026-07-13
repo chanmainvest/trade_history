@@ -125,6 +125,73 @@ def pdf_dump_samples(per_folder: int) -> None:
             log.info("Dumped %s (%d pages, image_only=%s)", t.relpath, t.page_count, t.is_image_only)
 
 
+# ------------------------------------------------------------------------ audit
+@main.group()
+def audit() -> None:
+    """Read-only extraction and data-quality audits."""
+
+
+@audit.command("extraction")
+@click.option(
+    "--statements-dir",
+    type=click.Path(path_type=Path, exists=True),
+    default=None,
+    help="PDF or text-dump corpus root. Defaults to the active Statements directory.",
+)
+@click.option(
+    "--output",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="JSONL report path. Defaults to logs/extraction_audit.jsonl.",
+)
+@click.option("--institution", default=None, help="Restrict to one immediate folder name.")
+@click.option("--limit", type=click.IntRange(min=1), default=None, help="Audit at most N files.")
+@click.option(
+    "--fail-on-errors",
+    is_flag=True,
+    help="Exit non-zero for unclaimed, failed, or contract-invalid parser output.",
+)
+def audit_extraction_command(
+    statements_dir: Path | None,
+    output: Path | None,
+    institution: str | None,
+    limit: int | None,
+    fail_on_errors: bool,
+) -> None:
+    """Parse PDFs/text dumps without writing SQLite and report contract failures."""
+    from .ingest.audit import audit_extraction
+
+    corpus_root = statements_dir or config.STATEMENTS_DIR
+    report_path = output or (config.LOG_DIR / "extraction_audit.jsonl")
+    summary = audit_extraction(
+        statements_dir=corpus_root,
+        output=report_path,
+        institution=institution,
+        limit=limit,
+    )
+    click.echo(
+        f"Audited {summary['files']} files: {summary['parsed_files']} valid, "
+        f"{summary['invalid_files']} invalid, {summary['unclaimed_files']} unclaimed, "
+        f"{summary['failed_files']} failed."
+    )
+    click.echo(
+        f"Contract issues: {summary['validation_errors']} errors, "
+        f"{summary['validation_warnings']} warnings; "
+        f"duplicate statement keys: {summary['duplicate_statement_keys']}."
+    )
+    click.echo(f"Report: {report_path}")
+    if fail_on_errors and any(
+        summary[name]
+        for name in (
+            "invalid_files",
+            "unclaimed_files",
+            "failed_files",
+            "validation_errors",
+        )
+    ):
+        raise click.ClickException("extraction audit found fatal issues")
+
+
 # ----------------------------------------------------------------------- ingest
 @main.group()
 def ingest() -> None:

@@ -1,0 +1,12 @@
+# Synthetic fixture: no real customer data.
+Investor's Edge Self-Directed Tax Free Savings Account
+Account # 333-44444
+August 1-August 31, 2022
+
+Account Activity — Canadian Dollars
+Aug 1 Opening Cash Balance $100.00
+Aug 31 Closing Cash Balance $100.00
+
+Portfolio Assets — Canadian Dollars
+Other
+CALL .BCE SEP 16 2022 65 1 $50.00 0.500 $50.00 —

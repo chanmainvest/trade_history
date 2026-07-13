@@ -1,0 +1,18 @@
+# Synthetic fixture: no real customer data.
+HSBC InvestDirect
+Statement period October 1, 2023 to October 31, 2023
+
+Your Canadian Margin Account
+Account# 2B-3CDE-E
+Details of holdings in your account
+Equities
+GAMMA CORP (GGG) 20 10.00 200.00 220.00 10.00
+
+----- PAGE BREAK -----
+
+Your Canadian Margin Account (continued)
+Account# 2B-3CDE-E
+Account activity since your last statement
+OpeningBalance $300.00
+Oct5 Bought GAMMA 10 10.00 (100.00)
+ClosingBalance $200.00

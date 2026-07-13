@@ -1,6 +1,6 @@
 # Extraction, Reconciliation, and Month-End Refactor Plan
 
-Status: in progress — Phase 0 completed and validated 2026-07-12
+Status: in progress — Phases 0–1 completed and validated 2026-07-13
 Audit date: 2026-07-12
 Scope: documentation truth reset, statement extraction, ingestion, security/cash reconciliation, and the Monthly/Performance read models
 

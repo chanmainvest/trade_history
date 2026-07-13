@@ -1,0 +1,26 @@
+# Synthetic fixture: no real customer data.
+HSBC InvestDirect
+Statement period September 1, 2023 to September 30, 2023
+
+Your Canadian Margin Account
+Account# 1A-2BCD-E
+Details of holdings in your account
+Equities
+ALPHA CORP (AAA) 10 20.00 200.00 210.00 5.00
+Options/Rights/Warrants
+CALL-100AAA'2419JA@25 1 2.00 100.00 200.00 0.10
+Account activity since your last statement
+OpeningBalance $1,000.00
+Sep5 Bought ALPHA 10 20.00 (200.00)
+Sep6 Dividend ALPHA 10 5.00
+Sep30 ClosingBalance $805.00
+
+Your USD Margin Account
+Account# 1A-2BCD-F
+Details of holdings in your account
+Equities
+BETA CORP (BBB) 5 30.00 150.00 160.00 6.00
+Account activity since your last statement
+OpeningBalance $500.00
+Sep7 Sold BETA -2 30.00 60.00
+Sep30 ClosingBalance $560.00

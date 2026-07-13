@@ -1,0 +1,2 @@
+# Synthetic fixture: filename drives annual-summary recognition.
+TD Direct Investing annual summary placeholder

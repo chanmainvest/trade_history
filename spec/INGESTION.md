@@ -25,6 +25,7 @@ discover path
   -> skip image-only / fail unclaimed
   -> first registered parser whose can_handle() returns true
   -> parser.parse(PdfText)
+  -> validate the complete ParseResult
   -> upsert source metadata
   -> write each emitted statement immediately
   -> repair symbols after the whole scan
@@ -46,7 +47,14 @@ rows active.
 
 ## Persistence behavior
 
-For each emitted `ParsedStatement`, the writer upserts institution/account and
+Fatal validation issues record the source attempt as failed and skip every
+statement write from that parser result. Validation currently covers duplicate
+statement identities, parser errors, periods/transaction dates, transaction
+vocabulary, currencies, finite numerics, option identity, and available raw
+evidence. Scope/completeness limitations remain warnings until the data types
+can represent them.
+
+For each validated `ParsedStatement`, the writer upserts institution/account and
 the statement key `(source_file_id, account_id, period_end)`. It then deletes
 that statement's transactions, positions, cash, annual performance rows, and
 same-source/account quarantine before inserting replacements.
@@ -54,8 +62,7 @@ same-source/account quarantine before inserting replacements.
 This makes one statement write repeatable in isolation, but it does not make a
 source-file parse atomic:
 
-- output is not validated as a whole before writes;
-- repeated statement keys in one `ParseResult` overwrite earlier outputs;
+- validation is in-memory, but active output is not staged/versioned;
 - statements emitted by an older parse but omitted by a newer parse survive;
 - a failed extraction/parse updates source status but does not activate a new
   coherent source version; and
@@ -81,16 +88,25 @@ return caused by `--limit` occurs before these post-processing calls.
 The text/JSONL files are append-only event records. They are not exact mirrors
 of active database rows and may contain duplicates across runs.
 
-## Required parser boundary
+## Read-only extraction audit
 
-The current pipeline trusts parser dataclasses and performs no contract
-validation before persistence. The required semantics and current violations
-are documented in [PARSER-CONTRACT.md](PARSER-CONTRACT.md).
+`ledger audit extraction` accepts a PDF tree or stored text-dump tree, selects
+and runs parsers without opening SQLite, applies the same validator, calculates
+cash and logical-instrument position residuals where possible, measures raw-line
+coverage, and overwrites a deterministic JSONL report. It excludes raw statement
+text from the report.
+
+The 2026-07-12 Phase 1 runs completed over all 324 stored text dumps and all 338
+source PDFs. The PDF run emitted 617 in-memory statements and reported 178
+duplicate statement keys, 270 unbalanced calculable cash checks, 214 incomplete
+cash checks, and 533 unbalanced position intervals out of 5,941. No source was
+unclaimed and no parser crashed. These are a defect baseline, not passing
+reconciliation results.
 
 ## Target activation model (not implemented)
 
-The approved refactor is `discover -> layout extract -> select -> parse ->
-validate -> resolve -> stage -> atomically activate -> reconcile -> audit`.
-A failed attempt must preserve the last successful active extraction, and the
-cache key must include source/parser/schema/resolver versions. See the plan for
-the full acceptance gates.
+Validation and the read-only audit now exist. The remaining approved activation
+path is `resolve -> stage -> atomically activate -> reconcile`. A failed
+attempt must preserve the last successful active extraction, and the cache key
+must include source/parser/schema/resolver versions. See the plan for the full
+acceptance gates.
