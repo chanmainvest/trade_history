@@ -9,10 +9,5 @@
   "active_portfolio": "all",
   "theme": "dark",
   "hide_money": false,
-  "language": "en",
-  "llm_keys": {
-    "openai": "",
-    "anthropic": "",
-    "google": ""
-  }
+  "language": "en"
 }

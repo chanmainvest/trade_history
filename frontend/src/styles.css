@@ -224,6 +224,46 @@ nav.tabs .spacer { flex: 1; }
 }
 .theme-switch.is-dark .theme-switch-knob { transform: translateX(44px); }
 
+/* Hide-$ toggle in the top bar */
+.hide-money-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--fg-dim);
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.hide-money-toggle:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+.hide-money-toggle.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.hide-money-glyph {
+  position: relative;
+}
+/* strike-through when hide-$ is active */
+.hide-money-toggle.is-on .hide-money-glyph::after {
+  content: "";
+  position: absolute;
+  left: -3px;
+  right: -3px;
+  top: 50%;
+  height: 2px;
+  background: white;
+  transform: rotate(-20deg);
+}
+
 main { padding: 16px; }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }

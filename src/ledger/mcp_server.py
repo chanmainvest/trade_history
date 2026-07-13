@@ -34,7 +34,6 @@ _ALLOWED_GET_PATHS = {
     "/viz/correlation",
     "/viz/rrg",
     "/statements",
-    "/statements/reconciliation/summary",
     "/config",
 }
 
@@ -66,7 +65,7 @@ def _normalize_api_path(path: str) -> str:
 
 
 def _api_path_allowed(path: str) -> bool:
-    return path in _ALLOWED_GET_PATHS or path.startswith("/statements/explain/")
+    return path in _ALLOWED_GET_PATHS
 
 
 def _truncate(text: str, limit: int = 12000) -> str:

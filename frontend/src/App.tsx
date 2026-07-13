@@ -30,6 +30,23 @@ function ThemeToggle() {
   );
 }
 
+function HideMoneyToggle() {
+  const { config, saveConfig } = usePortfolio();
+  const { t } = useI18n();
+  const on = !!config?.hide_money;
+  return (
+    <button
+      className={`hide-money-toggle${on ? " is-on" : ""}`}
+      title={t("nav.hide_money")}
+      aria-pressed={on}
+      aria-label={t("nav.hide_money")}
+      onClick={() => saveConfig({ hide_money: !on })}
+    >
+      <span className="hide-money-glyph" aria-hidden="true">$</span>
+    </button>
+  );
+}
+
 export default function App() {
   const { t } = useI18n();
   return (
@@ -46,6 +63,7 @@ export default function App() {
         <span className="top-controls">
           <span className="portfolio-control"><span className="muted">{t("nav.portfolio")}:</span><PortfolioPicker /></span>
           <LanguagePicker />
+          <HideMoneyToggle />
           <ThemeToggle />
         </span>
       </nav>

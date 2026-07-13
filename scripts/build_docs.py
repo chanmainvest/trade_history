@@ -3,6 +3,7 @@
 
 Usage:
     uv run python scripts/build_docs.py [--version TAG]
+    uv run python scripts/build_docs.py --check
 
 Output: docs/index.html  (standalone — no external assets except Mermaid CDN)
 
@@ -14,9 +15,9 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import posixpath
 import re
 import sys
-from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,13 +25,27 @@ SPEC_DIR = ROOT / "spec"
 DOC_DIR = ROOT / "docs"
 
 # ---------------------------------------------------------------------------
-# Ordered list of spec files → User Guide first (landing page), then arch
+# Ordered focused specs. User Guide remains first for the human landing page.
 # ---------------------------------------------------------------------------
-SPEC_ORDER = [
-    "USER-GUIDE.md",
-    "ARCHITECTURE.md",
-    "EXTRACTION-CORNER-CASES.md",
+DOC_SECTIONS = [
+    ("USER-GUIDE.md", "user-guide", "User Guide"),
+    ("INDEX.md", "spec-index", "Specification Index"),
+    ("CURRENT-STATE.md", "current-state", "Current State"),
+    ("ARCHITECTURE.md", "architecture", "Architecture"),
+    ("DATA-MODEL.md", "data-model", "Data Model"),
+    ("INGESTION.md", "ingestion", "Ingestion"),
+    ("PARSER-CONTRACT.md", "parser-contract", "Parser Contract"),
+    ("RECONCILIATION.md", "reconciliation", "Reconciliation"),
+    ("API-UI.md", "api-ui", "API and UI"),
+    ("OPERATIONS.md", "operations", "Operations"),
+    ("EXTRACTION-CORNER-CASES.md", "extraction-corner-cases", "Cross-parser Notes"),
+    ("parsers/CIBC.md", "parser-cibc", "Parser: CIBC"),
+    ("parsers/HSBC.md", "parser-hsbc", "Parser: HSBC"),
+    ("parsers/RBC.md", "parser-rbc", "Parser: RBC"),
+    ("parsers/TD.md", "parser-td", "Parser: TD"),
 ]
+
+SECTION_IDS = {filename: section_id for filename, section_id, _ in DOC_SECTIONS}
 
 # ---------------------------------------------------------------------------
 # HTML template
@@ -123,32 +138,22 @@ HTML_TEMPLATE = """\
   <nav>
     <span class="brand">Trade History</span>
     <a href="#user-guide">User Guide</a>
+    <a href="#current-state">Current State</a>
     <a href="#architecture">Architecture</a>
-    <a href="#extraction-corner-cases">Parser Notes</a>
+    <a href="#reconciliation">Reconciliation</a>
+    <a href="#operations">Operations</a>
     {version_nav}
   </nav>
   <main>
     <h1>Trade History — Documentation{version_suffix}</h1>
-    <p>Generated {today} from <code>spec/*.md</code> &mdash;
+    <p>Generated from the focused Markdown sources under <code>spec/</code> &mdash;
        <a href="https://github.com/chanmainvest/trade_history">chanmainvest/trade_history</a>.</p>
 {body}
   </main>
-  <footer>Built by <code>scripts/build_docs.py</code>{version_suffix} &mdash; {today}</footer>
+  <footer>Built reproducibly by <code>scripts/build_docs.py</code>{version_suffix}</footer>
 </body>
 </html>
 """
-
-SECTION_IDS = {
-    "USER-GUIDE.md": "user-guide",
-    "ARCHITECTURE.md": "architecture",
-    "EXTRACTION-CORNER-CASES.md": "extraction-corner-cases",
-}
-
-SECTION_LABELS = {
-    "USER-GUIDE.md": "User Guide",
-    "ARCHITECTURE.md": "Architecture Reference",
-    "EXTRACTION-CORNER-CASES.md": "Parser Notes & Corner Cases",
-}
 
 
 # ---------------------------------------------------------------------------
@@ -375,9 +380,26 @@ def _convert_md(text: str) -> str:
     return _convert_md_builtin(text)
 
 
-def build(version: str | None = None) -> None:
-    DOC_DIR.mkdir(exist_ok=True)
+def _rewrite_spec_links(text: str, source_name: str) -> str:
+    """Point bundled-spec links at their section in the generated page."""
+    source_dir = posixpath.dirname(source_name)
 
+    def replace(match: re.Match[str]) -> str:
+        label, destination = match.group(1), match.group(2)
+        path, _, _fragment = destination.partition("#")
+        if not path.lower().endswith(".md"):
+            return match.group(0)
+        normalized = posixpath.normpath(posixpath.join(source_dir, path))
+        section_id = SECTION_IDS.get(normalized)
+        if section_id is None:
+            return match.group(0)
+        return f"[{label}](#{section_id})"
+
+    return re.sub(r"\[([^\]]+)\]\(([^)]+)\)", replace, text)
+
+
+def render(version: str | None = None) -> str:
+    """Render deterministic HTML for the focused specification set."""
     version_suffix = f" \u2014 {version}" if version else ""
     version_nav = (
         f'<span style="margin-left:auto;opacity:0.6;font-size:0.85rem">{version}</span>'
@@ -385,14 +407,12 @@ def build(version: str | None = None) -> None:
     )
 
     sections_html: list[str] = []
-    for filename in SPEC_ORDER:
+    for filename, section_id, label in DOC_SECTIONS:
         path = SPEC_DIR / filename
         if not path.exists():
-            print(f"  WARNING: {path} not found \u2014 skipping", file=sys.stderr)
-            continue
-        section_id = SECTION_IDS[filename]
-        label = SECTION_LABELS[filename]
+            raise FileNotFoundError(f"required documentation source is missing: {path}")
         raw = path.read_text(encoding="utf-8")
+        raw = _rewrite_spec_links(raw, filename)
         body_html = _convert_md(raw)
         sections_html.append(
             f'<div class="doc-section" id="{section_id}">\n'
@@ -401,24 +421,45 @@ def build(version: str | None = None) -> None:
             f"</div>\n"
         )
 
-    html = HTML_TEMPLATE.format(
+    return HTML_TEMPLATE.format(
         version_suffix=version_suffix,
         version_nav=version_nav,
-        today=date.today().isoformat(),
         body="\n".join(sections_html),
     )
 
+
+def build(version: str | None = None, *, check: bool = False) -> bool:
+    """Write docs, or return whether the committed output is current."""
+    html = render(version=version)
     out = DOC_DIR / "index.html"
+    if check:
+        current = out.read_text(encoding="utf-8") if out.exists() else None
+        if current != html:
+            print(
+                "docs/index.html is stale; run "
+                "uv run python scripts/build_docs.py and commit the result.",
+                file=sys.stderr,
+            )
+            return False
+        print("docs/index.html is current")
+        return True
+
+    DOC_DIR.mkdir(exist_ok=True)
     out.write_text(html, encoding="utf-8")
     size_kb = out.stat().st_size // 1024
     print(f"Written {out} ({size_kb} KB)")
+    return True
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build docs/index.html from spec/*.md")
     parser.add_argument("--version", metavar="TAG", help="Release tag, e.g. v1.2.0")
+    parser.add_argument("--check", action="store_true", help="Fail when docs/index.html is stale")
     args = parser.parse_args()
-    build(version=args.version)
+    if args.check and args.version:
+        parser.error("--check and --version cannot be combined")
+    if not build(version=args.version, check=args.check):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

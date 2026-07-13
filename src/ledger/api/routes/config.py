@@ -33,13 +33,6 @@ _DEFAULT: dict = {
     "theme": "dark",
     "hide_money": False,
     "language": "en",
-    # Optional parser-draft provider keys. Stored locally in data/config.json;
-    # sent only when the user explicitly runs the provider-backed draft flow.
-    "llm_keys": {
-        "openai": "",
-        "anthropic": "",
-        "google": "",
-    },
 }
 
 
@@ -55,6 +48,7 @@ def _read() -> dict:
     out = dict(_DEFAULT)
     out.update(data or {})
     out.pop("display_currency", None)
+    out.pop("llm_keys", None)  # legacy: parser-draft LLM keys, removed with the upload/draft UI
     if not isinstance(out.get("portfolios"), list) or not out["portfolios"]:
         out["portfolios"] = list(_DEFAULT["portfolios"])
     return out
@@ -79,6 +73,7 @@ def put_config(payload: dict) -> dict:
         raise HTTPException(status_code=400, detail="config payload must be a JSON object")
     payload = dict(payload)
     payload.pop("display_currency", None)
+    payload.pop("llm_keys", None)  # legacy: parser-draft LLM keys, removed with the upload/draft UI
     # Light validation.
     portfolios = payload.get("portfolios")
     if portfolios is not None:
@@ -95,5 +90,6 @@ def put_config(payload: dict) -> dict:
     cur = _read()
     cur.update(payload)
     cur.pop("display_currency", None)
+    cur.pop("llm_keys", None)  # legacy: parser-draft LLM keys, removed with the upload/draft UI
     _write(cur)
     return cur

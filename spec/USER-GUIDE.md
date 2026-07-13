@@ -5,9 +5,15 @@ monthly PDF statements from CIBC, HSBC, RBC, and TD, joins them against
 free market data, and gives you a single dashboard for your whole
 family's accounts.
 
-This guide is written for **humans**. The companion AI-operation rules
-live in [AGENTS.md](../AGENTS.md), and the deep technical reference is
-[ARCHITECTURE.md](ARCHITECTURE.md).
+This guide is written for **humans**. Technical context starts at
+[INDEX.md](INDEX.md), while coding-agent rules live in
+[AGENTS.md](../AGENTS.md).
+
+> **Current data-quality notice (2026-07-12):** the GUI is operational, but
+> extraction, instrument identity, and month-end reconciliation have confirmed
+> defects. In particular, RBC currency sections and some TD bundled periods can
+> be overwritten. Review [CURRENT-STATE.md](CURRENT-STATE.md) before rebuilding
+> or relying on the ledger as reconciled.
 
 ---
 
@@ -15,7 +21,7 @@ live in [AGENTS.md](../AGENTS.md), and the deep technical reference is
 
 ```powershell
 # clone, then from the repo root:
-uv sync
+uv sync --all-extras --dev
 cd frontend ; npm install ; cd ..
 ```
 
@@ -32,7 +38,7 @@ Two terminals.
 **Terminal 1 — backend** (default profile uses your real statements):
 
 ```powershell
-uv run ledger serve
+uv run ledger serve --host 127.0.0.1 --port 8000
 ```
 
 The API binds to `http://127.0.0.1:8000`. Auto-reloads on file change.
@@ -41,11 +47,12 @@ The API binds to `http://127.0.0.1:8000`. Auto-reloads on file change.
 
 ```powershell
 cd frontend
-npm run dev
+npm run dev -- --host 127.0.0.1 --port 5175 --strictPort
 ```
 
-Open <http://localhost:5173>. The Vite dev server proxies `/api` to
-port 8000.
+Open <http://127.0.0.1:5175>. The Vite dev server proxies `/api` to port 8000.
+Do not trust a default port on a shared machine; confirm `/openapi.json` reports
+`Trade History API`.
 
 ### 2.1 Docker start
 
@@ -102,10 +109,11 @@ just close the terminal.
    uv run ledger ingest run
    ```
 
-  Re-running is fast when PDFs are unchanged because the ingester compares
-  `source_files.sha256` before parsing. Use `uv run ledger ingest run --force`
-  after parser upgrades when you intentionally want to re-parse unchanged
-  PDFs.
+   Re-running is fast when PDFs are unchanged because the ingester compares
+   `source_files.sha256` before parsing. The cache does not include parser or
+   schema version, so use `uv run ledger ingest run --force` after parser
+   upgrades. Until the extraction refactor is complete, prefer a backup/shadow
+   database and inspect Verify rather than overwriting a trusted ledger.
 
 3. Pull market data for everything you hold:
 
@@ -115,7 +123,7 @@ just close the terminal.
 
     This calls yfinance and, for US-listed fundamentals, the free SEC
     EDGAR Company Facts API. Be patient and don't run it on a flaky link.
-    Re-running is safe; it's an upsert.
+    Refresh replaces/upserts the relevant public market rows by symbol/date.
 
     To fetch sector/profile metadata used by Visualization colors, run:
 
@@ -156,8 +164,10 @@ just close the terminal.
     uv run ledger ingest reconcile
     ```
 
-    Normal `ingest run` already performs this after parsing and symbol
-    repair; the command is mainly for manual maintenance.
+    Normal `ingest run` already performs this after parsing and symbol repair;
+    the command is mainly for manual maintenance. Despite its name, it only
+    pairs transfers and attributes transactions to snapshots today. It does not
+    compute expected-versus-reported month-end residuals.
 
 7. Reload the browser. The Transactions tab should now have data.
 
@@ -210,11 +220,10 @@ Total portfolio value over time, including cash.
 - The separate cash chart remains available as a cash-only breakdown and
   toggles off automatically when "Hide $ values" is on.
 
-The chart no longer zig-zags between accounts whose statement dates
-don't line up, and sold-out holdings are cleared when later broker
-snapshots omit them — see
-[ARCHITECTURE.md §1.4](ARCHITECTURE.md#14-transactions-snapshots-and-the-reconciliation-gap) for the
-forward-fill rationale.
+The chart forward-fills accounts whose statement dates do not line up and
+clears an account's prior holdings when a later checkpoint omits them. The
+current schema cannot prove checkpoint completeness, so partial extraction can
+incorrectly clear holdings. See [RECONCILIATION.md](RECONCILIATION.md).
 
 ### 4.4 Research
 
@@ -254,60 +263,82 @@ account filters inside the tab:
   cells can reorder both axes by correlation against a symbol; checkboxes
   hide/show individual symbols and use sector-colored accents.
 
-### 4.6 Settings
+### 4.6 Verify extraction
 
-- **Theme** — light / dark.
-- **Language** — English / 繁體 (HK) / 繁體 (TW) / 简体 (CN). Flag picker
-  in the top right.
-- **Hide $ values** — show percentages only (useful for screenshots).
-- **Portfolios** — add named groups of accounts. Example:
-  - *Dad's TFSA* → CIBC TFSA only.
-  - *Kids' RESPs* → TD WB only.
-  - *Household* → all accounts (the default `all` portfolio).
+Visually double-check that the parser extracted each statement correctly.
+The screen has two sides:
 
-  The dropdown in the top right activates a portfolio across **every**
-  tab.
-- **LLM API keys** — optional OpenAI / Anthropic / Google keys used only
-  when you explicitly send a parser-draft prompt to a provider.
-- **Upload a statement PDF** — save a PDF to `Statements/uploads/`, review
-  the parser preview, choose an institution folder, then import it.
-- **How each statement was extracted** — inspect PDF text lines annotated
-  with parsed transactions, holdings, cash rows, and quarantine entries.
-- **Transfer and position reconciliation** — view or rebuild automatic
-  transfer counterpart links and position-to-transaction attribution.
+- **Left** renders the actual PDF (via PDF.js), with a box drawn over every
+  text line that a parsed item came from. Boxes are colored by state: green
+  = a matched line, amber = the currently selected item, gray = a related
+  line belonging to another item on the same selection.
+- **Right** lists the parsed items grouped into Transactions, Positions,
+  Cash, and Quarantine.
 
-## 5. PDF upload (beta)
+Click a box on the left to highlight its item on the right; click an item on
+the right to highlight its box(es) on the left and scroll the PDF to the
+first match. Items with no matching PDF line are dimmed and marked with a
+dot.
 
-The Settings tab can upload one PDF at a time. The backend accepts only
-`.pdf` filenames whose bytes start with PDF magic bytes, rejects empty
-files and files over 25 MiB, sanitizes the filename, saves the file under
-`Statements/uploads/`, and returns its SHA-256 fingerprint.
+Pick which statement to view with the dropdown filters — **Date**,
+**Institution**, and **Account** — which narrow the statement list. The list
+defaults to the latest statement. **Prev / next** chevron buttons next to
+the date step through statements within the current filtered set (prev =
+older, next = newer).
 
-After upload, the app extracts text and tries the registered parsers. If a
-parser recognizes the PDF, you see a review summary with account, period,
-transaction count, holdings count, cash count, and quarantine count. Choose
-the target institution folder, then click **Import parsed statements** to
-write the reviewed upload into SQLite. Import runs symbol repair and
-reconciliation afterwards, the same as command-line ingest.
+### 4.7 Settings
 
-If no parser recognizes the PDF, click **Create parser draft**. This writes
-`data/parser_drafts/<sha>/prompt.md` plus metadata. Checking **Send prompt
-to provider** sends that prompt to the selected configured LLM provider and
-saves the response beside the prompt for review. Generated parser code is
-not installed automatically; review it, add tests, register the parser, then
-re-ingest.
+The Settings tab manages **portfolios** — named groups of accounts. Example:
 
-Useful endpoints for scripts and debugging:
+- *Dad's TFSA* → CIBC TFSA only.
+- *Kids' RESPs* → TD WB only.
+- *Household* → all accounts (the default `all` portfolio).
+
+Add, edit, or delete portfolios here; the dropdown in the top bar activates
+one across **every** tab.
+
+Theme, language, and hide-$ live in the **top bar**, not on this tab:
+
+- **Theme** — light / dark (sun/moon toggle).
+- **Language** — English / 繁體 (HK) / 繁體 (TW) / 简体 (CN) (flag picker).
+- **Hide $ values** — `$` toggle; show percentages only (useful for
+  screenshots).
+
+Updating the database (ingesting statements, reconciling transfers, repairing
+symbols) is **CLI-only** — see §5.
+
+## 5. Updating the database (CLI only)
+
+The web app is **read-only** — it never writes to the database. All ingestion
+and maintenance happens through the `ledger` CLI (or, for AI agents, the
+MCP server's allowlisted CLI commands):
+
+```powershell
+# ingest every PDF under Statements/<Institution>/
+uv run ledger ingest run
+
+# infer opening holdings before the first statement
+uv run ledger ingest infer-initials
+
+# rebuild transfer counterpart + position-to-transaction links after manual edits
+uv run ledger ingest reconcile
+
+# repair symbols (resolve aliases, fund-code lookups, etc.)
+uv run ledger ingest repair-symbols
+```
+
+`ingest run` already runs symbol repair and reconciliation after parsing, so
+the last two commands are only needed after manual DB edits.
+
+To **visually verify** how a statement was extracted, use the Verify-extraction
+tab (§4.6) — it renders the PDF and draws boxes over the lines each parsed item
+came from. The HTTP endpoints backing that tab are read-only:
 
 | Endpoint | What it does |
 |---|---|
-| `GET /statements` | Recent statement list for picking an explainer target. |
-| `POST /statements/upload` | Save and preview an uploaded PDF. |
-| `POST /statements/import` | Import a reviewed upload. |
-| `POST /statements/draft-parser` | Build a parser-draft prompt bundle, optionally with provider response. |
-| `GET /statements/explain/{id}` | Return annotated PDF text plus parsed/quarantined rows. |
-| `GET /statements/reconciliation/summary` | Summarize automatic transfer and position links. |
-| `POST /statements/reconciliation/rebuild` | Rebuild those links. |
+| `GET /statements` | Statement picker rows for the Verify-extraction tab. |
+| `GET /statements/{id}/pdf` | Serve the raw PDF for a statement (read-only). |
+| `GET /statements/{id}/boxes` | Per-page line bounding boxes with matched parsed-item refs. |
 
 ## 6. MCP server for AI agents
 
@@ -344,13 +375,14 @@ It intentionally does not offer arbitrary shell access.
 |---|---|---|
 | Vite crashes with `Failed to resolve` on Windows | Vite realpath'd the workspace onto another drive | Already fixed via `resolve.preserveSymlinks: true` in `frontend/vite.config.ts` |
 | Treemap is blank | Picked a date with no snapshot | Pick a date ≥ your earliest statement; the API falls back to the latest available |
-| Performance chart drops to zero | All filtered holdings were sold or omitted by the latest broker checkpoint | Broaden the account/symbol filters, or pass `forward_fill=false` to `/api/performance/total` if you want raw checkpoint sums |
+| Performance chart drops to zero | Holdings were sold, filtered, or omitted by a checkpoint currently assumed complete | Check Verify/current-state warnings; broaden filters, or pass `forward_fill=false` to `/api/performance/total` for raw sums |
 | `BOUGHT` appears as a symbol in RBC rows | Pre-fix bug | Run `uv run ledger ingest repair-symbols` or re-ingest after pulling. The parser now strips leading verbs and applies a small name-to-ticker map (e.g. iShares 20+ → TLT) |
 | Empty option symbol on a CIBC `option_expiration` row | Pre-fix bug | Run `uv run ledger ingest repair-symbols` or re-ingest. The parser now recognizes `CALL ROOT MON DD YYYY STRIKE` shapes |
 
 ## 8. Data privacy
 
-- The SQLite DB and the source PDFs **never leave your machine**.
+- The app does not upload SQLite or source PDFs. Market refresh sends ticker
+  symbols to yfinance and, for eligible fundamentals, SEC endpoints.
 - The DuckDB market DB contains only public market data and is safe to
   share or commit.
 - The browser app talks only to `127.0.0.1` by default.
@@ -358,8 +390,8 @@ It intentionally does not offer arbitrary shell access.
 
 ## 9. Where to learn more
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — schemas,
-  ingestion design, market-data pipeline, parser quirks.
+- [INDEX.md](INDEX.md) — route to the focused technical specification.
+- [CURRENT-STATE.md](CURRENT-STATE.md) — dated measurements and known defects.
 - [AGENTS.md](../AGENTS.md) — rules for AI agents editing this repo.
 - [example_data/README.md](../example_data/README.md) — what's in the
   synthetic dataset and how to rebuild it.

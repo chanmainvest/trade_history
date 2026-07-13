@@ -44,6 +44,7 @@ const en: Dict = {
   "nav.theme.dark":     "Dark",
   "nav.portfolio":      "Portfolio",
   "nav.language":       "Language",
+  "nav.hide_money":     "Hide $ values",
 
   // Common filters
   "f.institution":      "Institution",
@@ -133,6 +134,7 @@ const zhHK: Dict = {
   "nav.theme.dark":     "深色",
   "nav.portfolio":      "投資組合",
   "nav.language":       "語言",
+  "nav.hide_money":     "隱藏金額",
 
   "f.institution":      "金融機構",
   "f.account":          "戶口",
@@ -216,6 +218,7 @@ const zhTW: Dict = {
   "nav.theme.dark":     "深色",
   "nav.portfolio":      "投資組合",
   "nav.language":       "語言",
+  "nav.hide_money":     "隱藏金額",
 
   "f.institution":      "金融機構",
   "f.account":          "帳戶",
@@ -299,6 +302,7 @@ const zhCN: Dict = {
   "nav.theme.dark":     "深色",
   "nav.portfolio":      "投资组合",
   "nav.language":       "语言",
+  "nav.hide_money":     "隐藏金额",
 
   "f.institution":      "金融机构",
   "f.account":          "账户",
