@@ -221,7 +221,7 @@ def ingest_infer_initials() -> None:
 
 @ingest.command("repair-symbols")
 def ingest_repair_symbols() -> None:
-    """Repair stale synthetic instruments where resolvable."""
+    """Legacy/manual repair for already-derived synthetic instruments."""
     from .ingest.repair_symbols import repair_symbols
 
     out = repair_symbols()

@@ -2,6 +2,9 @@
 
 Audit date: **2026-07-12**. The live counts below are a dated diagnostic
 snapshot, not a release promise. Re-run the audit before relying on them.
+The implementation-status notes below include the Phase 3 source-activation
+change completed on 2026-07-13; they do not claim that the dated live ledger
+has been rebuilt.
 
 ## Product surface
 
@@ -12,10 +15,14 @@ snapshot, not a release promise. Re-run the audit before relying on them.
   `data/config.json`; ledger mutation is CLI-only.
 - The intended data model is native-currency ledger data in SQLite plus public
   market/fundamental data in DuckDB.
+- Ingestion now stages one validated PDF source in a savepoint and activates it
+  atomically. A failed parse, validation, or staged write retains the prior
+  active extraction. This protects new ingests; it does not repair the dated
+  live derived rows.
 
 ## Validation baseline
 
-- `uv run python -m pytest -q`: 38 tests passed and five later-phase
+- `uv run python -m pytest -q`: 45 tests passed and three later-phase
   acceptance requirements are recorded as strict xfails.
 - `uv run ruff check src tests`: passed.
 - `npm run build` in `frontend/`: passed with Vite's large-bundle warning.
@@ -47,35 +54,34 @@ snapshot, not a release promise. Re-run the audit before relying on them.
    references, but the 2026-07-12 live snapshot has not been migrated or
    shadow-rebuilt. That snapshot contains 803 duplicate logical groups, 31,567
    excess IDs, and 28,587 unreferenced instrument rows.
-2. **RBC CAD and USD blocks overwrite each other.** Both parser outputs use the
-   same statement key. Writing the later block deletes the earlier children.
+2. **RBC CAD and USD blocks are not yet represented correctly.** Both parser
+   outputs use the same logical statement key. Phase 3 now rejects that source
+   before persistence and retains any prior active run, rather than overwriting
+   one block with the other; Phase 4 must emit one statement with both scopes.
 3. **TD 2018–2022 bundled months are not split correctly.** Repeated statement
-   keys overwrite segments; 470 audited TD transactions fall outside the
-   stored statement period.
-4. **Source replacement is not atomic.** Duplicate parser output keys are now
-   rejected before writes and failed attempts retain the active-run pointer,
-   but statements are still activated one at a time and obsolete prior output
-   is not removed.
-5. **“Reconciliation” is still link attribution only.** Schema v6 can persist
+   keys are rejected before persistence rather than silently overwriting
+   segments; 470 audited TD transactions fall outside their assigned statement
+   period.
+4. **“Reconciliation” is still link attribution only.** Schema v6 can persist
    expected/actual close, residual, tolerance, and status, but no engine
    computes or stores those results yet.
-6. **Cash does not reliably roll forward.** Using
+5. **Cash does not reliably roll forward.** Using
    `closing = opening + SUM(net_amount)`, 198 of 459 live rows differ by more
    than one cent; the text-corpus check fails 316 statement/currency cases.
-7. **Positions do not reliably roll forward.** Grouped by logical instrument,
+6. **Positions do not reliably roll forward.** Grouped by logical instrument,
    492 of 5,517 consecutive snapshot intervals have a quantity residual.
-8. **Holdings consumers are only partly aligned.** Monthly now keys movements
+7. **Holdings consumers are only partly aligned.** Monthly now keys movements
    and diff rows by canonical identity/currency; Performance respects complete
    scoped checkpoints. Visualisations and the broader shared-holdings refactor
    remain pending, and post-checkpoint rows can still be unpriced.
-9. **Parser completeness is still unproven.** Schema v6 represents scoped
+8. **Parser completeness is still unproven.** Schema v6 represents scoped
    completeness and Monthly/Performance refuse to clear from partial/unknown
    scopes, but current parser outputs are stored as `unknown` until Phase 4
    can prove their sections complete.
-10. **Unknown numbers can become zero.** Parsers contain `parsed or 0.0`
+9. **Unknown numbers can become zero.** Parsers contain `parsed or 0.0`
     fallbacks for quantities and cash, making parse failure indistinguishable
     from a reported zero.
-11. **Legacy/live provenance remains weak.** New rows carry deterministic
+10. **Legacy/live provenance remains weak.** New rows carry deterministic
     evidence records and cash raw lines; parser v1 still lacks page/word
     coordinates and the live snapshot retains 4,620 exact duplicate quarantine
     rows under its old coarse identity.
@@ -100,11 +106,14 @@ ledger rows.
 
 ## Operational/documentation debt
 
-- `quarantine.jsonl` and skipped-PDF logs are append-only, not mirrors of the
-  active database.
-- The current ingestion cache uses only source path/hash/status, not parser,
-  resolver, or schema version.
-- `ingestion_runs` and active-run pointers exist, but source-wide staged
-  activation, content hashes, and truthful cache invalidation remain pending.
+- `ingestion_attempts.jsonl`, `quarantine.jsonl`, and `skipped_pdfs.log` are
+  now regenerated attempt/active-row indexes; none contains raw statement text.
+  Existing historical files may still need local cleanup.
+- The current cache includes source hash, parser/contract/schema versions, and
+  a reviewed-identity resolver fingerprint. A parser implementation that
+  changes without bumping its declared version can still evade invalidation.
+- The current source activation code has content hashes/counts and rollback
+  coverage, but it has not yet been used as the approved shadow rebuild/cutover
+  for the dated live ledger.
 - The target repair and cutover are defined in
   `plan/EXTRACTION_RECONCILIATION_REFACTOR.md`; they are not implemented yet.

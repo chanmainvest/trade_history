@@ -55,6 +55,12 @@ class ParsedInstrument:
     option_strike: float | None = None
     option_type: str | None = None      # CALL/PUT
     option_multiplier: int = 100
+    # The parser preserves the printed identity.  The staged ingest resolver
+    # records whether that identity was explicit, matched a reviewed alias, or
+    # intentionally left unresolved before persistence.
+    resolution_method: str | None = None
+    resolution_confidence: float | None = None
+    resolution_evidence: SourceSpan | None = None
 
 
 @dataclass

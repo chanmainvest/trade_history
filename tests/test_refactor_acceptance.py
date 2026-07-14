@@ -6,15 +6,14 @@ the requirement is accepted as a normal regression test.
 """
 from __future__ import annotations
 
-from copy import deepcopy
-
 import pytest
 
 from ledger.db import sqlite as sqlite_db
-from ledger.ingest.pipeline import _record_source_file, _write_statement
+from ledger.ingest.pipeline import _record_source_file, _write_statement, activate_source_result
 from ledger.parsers.cibc import CIBCParser
 from ledger.parsers.rbc import RBCParser
 from ledger.parsers.td import TDParser
+from ledger.parsers.types import ParsedAccount, ParsedStatement, ParseResult
 from ledger.pdf_text import PdfText
 
 from .fixture_loader import load_fixture
@@ -95,37 +94,53 @@ def test_td_full_header_bundle_emits_every_month():
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Phase 3: source activation does not delete obsolete prior statements",
-)
 def test_source_reparse_removes_obsolete_statement_outputs(tmp_path):
-    result = TDParser().parse(load_fixture("td/legacy_bundle.txt"))
-    assert len(result.statements) == 4
     db_path = tmp_path / "ledger.sqlite"
     sqlite_db.init_db(db_path)
-    pdf = load_fixture("td/legacy_bundle.txt")
-    with sqlite_db.session(db_path) as conn:
-        source_file_id = _record_source_file(
-            conn,
-            pdf,
-            parser_name="td",
-            parser_version="1.0.0",
-            parse_status="ok",
-        )
-        for statement in result.statements:
-            _write_statement(
-                conn,
-                source_file_id=source_file_id,
-                institution_code="TD_WB",
-                stmt=statement,
+    pdf = PdfText(
+        relpath="Statements/Test/source.pdf",
+        page_count=1,
+        pages=["synthetic statement text"],
+        sha256="source-sha",
+        size_bytes=24,
+    )
+    account = ParsedAccount(account_number="A-1", account_type="Margin")
+    first = ParseResult(
+        parser_name="synthetic",
+        parser_version="1",
+        statements=[
+            ParsedStatement(account=account, period_start="2024-01-01", period_end="2024-01-31"),
+            ParsedStatement(account=account, period_start="2024-02-01", period_end="2024-02-29"),
+        ],
+    )
+    replacement = ParseResult(
+        parser_name="synthetic",
+        parser_version="2",
+        statements=[
+            ParsedStatement(
+                account=ParsedAccount(account_number="A-1", account_type="Margin"),
+                period_start="2024-01-01",
+                period_end="2024-01-31",
             )
-        retained = deepcopy(result.statements[0])
-        _write_statement(
+        ],
+    )
+    with sqlite_db.session(db_path) as conn:
+        first_activation = activate_source_result(
             conn,
-            source_file_id=source_file_id,
-            institution_code="TD_WB",
-            stmt=retained,
+            pdf=pdf,
+            institution_code="TST",
+            parser_name="synthetic",
+            parser_version="1",
+            result=first,
+        )
+        source_file_id = first_activation["source_file_id"]
+        activate_source_result(
+            conn,
+            pdf=pdf,
+            institution_code="TST",
+            parser_name="synthetic",
+            parser_version="2",
+            result=replacement,
         )
         count = conn.execute(
             "SELECT COUNT(*) FROM statements WHERE source_file_id = ?",
@@ -134,10 +149,6 @@ def test_source_reparse_removes_obsolete_statement_outputs(tmp_path):
     assert count == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Phase 3: failed attempts overwrite source status instead of preserving active run",
-)
 def test_failed_attempt_preserves_last_good_source_activation(tmp_path):
     db_path = tmp_path / "ledger.sqlite"
     sqlite_db.init_db(db_path)
@@ -149,13 +160,39 @@ def test_failed_attempt_preserves_last_good_source_activation(tmp_path):
         size_bytes=24,
     )
     with sqlite_db.session(db_path) as conn:
-        source_file_id = _record_source_file(
+        activation = activate_source_result(
             conn,
-            pdf,
+            pdf=pdf,
+            institution_code="TST",
             parser_name="synthetic",
             parser_version="1",
-            parse_status="ok",
+            result=ParseResult(
+                parser_name="synthetic",
+                parser_version="1",
+                statements=[
+                    ParsedStatement(
+                        account=ParsedAccount(account_number="A-1", account_type="Margin"),
+                        period_start="2024-01-01",
+                        period_end="2024-01-31",
+                    )
+                ],
+            ),
         )
+        source_file_id = activation["source_file_id"]
+        active_before = sqlite_db.active_ingestion_run_id(conn, source_file_id)
+        with pytest.raises(ValueError, match="cannot activate invalid parser result"):
+            activate_source_result(
+                conn,
+                pdf=pdf,
+                institution_code="TST",
+                parser_name="synthetic",
+                parser_version="2",
+                result=ParseResult(
+                    parser_name="synthetic",
+                    parser_version="2",
+                    errors=["fatal parser output"],
+                ),
+            )
         _record_source_file(
             conn,
             pdf,
@@ -167,7 +204,14 @@ def test_failed_attempt_preserves_last_good_source_activation(tmp_path):
             "SELECT parse_status, parser_version FROM source_files WHERE source_file_id = ?",
             (source_file_id,),
         ).fetchone()
+        active_after = sqlite_db.active_ingestion_run_id(conn, source_file_id)
+        statement_count = conn.execute(
+            "SELECT COUNT(*) FROM statements WHERE source_file_id = ?",
+            (source_file_id,),
+        ).fetchone()[0]
     assert (row["parse_status"], row["parser_version"]) == ("ok", "1")
+    assert active_after == active_before
+    assert statement_count == 1
 
 
 @pytest.mark.xfail(

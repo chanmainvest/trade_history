@@ -69,10 +69,10 @@ uv run python scripts/build_example_data.py
 # parse statement PDFs (current extraction limitations apply)
 uv run ledger ingest run
 
-# force parser code changes to be applied to unchanged PDFs
+# deliberately bypass the contract-aware ingest cache
 uv run ledger ingest run --force
 
-# post-ingest maintenance
+# legacy/manual derived-data repair, then link maintenance
 uv run ledger ingest repair-symbols
 uv run ledger ingest reconcile
 uv run ledger ingest infer-initials

@@ -37,8 +37,9 @@ src/ledger/
     duckdb_store.py          canonical market-data DDL
   parsers/                  common types, registry, four bank parsers
   ingest/
-    pipeline.py             discovery, parse, persistence, post-processing
-    repair_symbols.py       conservative post-parse identity repair
+    pipeline.py             discovery, validate, staged source activation, audit export
+    identity_resolution.py  conservative in-stage printed/alias/holding resolution
+    repair_symbols.py       legacy/manual post-parse identity repair
     fund_lookup.py          reviewed fund-code lookup workflow
     initials.py             inferred pre-history anchors
     reconcile.py            transfer and movement-link attribution

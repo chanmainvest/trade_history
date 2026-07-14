@@ -106,11 +106,13 @@ family's accounts.</p>
 <a href="#spec-index">INDEX.md</a>, while coding-agent rules live in
 <a href="../AGENTS.md">AGENTS.md</a>.</p>
 <blockquote>
-<p><strong>Current data-quality notice (2026-07-12):</strong> the GUI is operational, but
-extraction, instrument identity, and month-end reconciliation have confirmed
-defects. In particular, RBC currency sections and some TD bundled periods can
-be overwritten. Review <a href="#current-state">CURRENT-STATE.md</a> before rebuilding
-or relying on the ledger as reconciled.</p>
+<p><strong>Current data-quality notice (2026-07-13):</strong> the GUI is operational and
+source ingestion now preserves the prior active extraction if parsing or
+staging fails. Extraction, instrument identity, and month-end reconciliation
+still have confirmed defects: RBC dual-currency and some TD bundled layouts
+are rejected/unsupported rather than safe reconciled output. Review
+<a href="#current-state">CURRENT-STATE.md</a> before rebuilding or relying on the
+ledger as reconciled.</p>
 </blockquote>
 <hr />
 <h2 id="1-install">1. Install</h2>
@@ -176,11 +178,13 @@ just close the terminal.</p>
 </ol>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">run</span>
 </code></pre></div>
-<p>Re-running is fast when PDFs are unchanged because the ingester compares
-   <code>source_files.sha256</code> before parsing. The cache does not include parser or
-   schema version, so use <code>uv run ledger ingest run --force</code> after parser
-   upgrades. Until the extraction refactor is complete, prefer a backup/shadow
-   database and inspect Verify rather than overwriting a trusted ledger.</p>
+<p>Re-running is fast when the active extraction matches the PDF SHA-256,
+   parser version, parser contract/schema version, and reviewed identity data.
+   Parser or reviewed-alias changes reparse automatically; <code>--force</code> is only
+   needed when you deliberately want to bypass that cache. Each PDF activates
+   as one unit, so a parser/validation/write failure keeps its previous active
+   output. The remaining parser/reconciliation work still warrants a
+   backup/shadow database and Verify review before relying on totals.</p>
 <p>Before ingesting, you can run the same parsers and contract checks without
    opening SQLite:</p>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">audit</span> <span class="n">extraction</span> <span class="p">-</span><span class="n">-statements-dir</span> <span class="n">Statements</span>
@@ -214,10 +218,11 @@ note prefix are preserved on re-run. Cash rows are inferred from the
 first monthly cash snapshot for each account/currency.</p>
 </li>
 <li>
-<p><em>(Optional after parser upgrades)</em> Repair already-ingested legacy
-    symbols without deleting PDFs or re-ingesting everything. The repair
-    uses known ticker mappings first, then matches transactions to holdings
-    from the same statement where the PDF only printed a security name:</p>
+<p><em>(Optional, legacy data only)</em> Repair already-ingested historical symbols
+   without deleting PDFs or re-ingesting everything. New ingestion resolves
+   only explicit/reviewed identities while staging and does not run this broad
+   mutation pass automatically. The legacy repair uses known ticker mappings
+   and holding matches, so review its results before relying on them:</p>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="nb">repair-symbols</span>
 </code></pre></div>
 </li>
@@ -226,14 +231,14 @@ first monthly cash snapshot for each account/currency.</p>
     position-to-transaction links:</p>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">reconcile</span>
 </code></pre></div>
-<p>Normal <code>ingest run</code> already performs this after parsing and symbol repair;
-the command is mainly for manual maintenance. Despite its name, it only
-pairs transfers and attributes transactions to snapshots today. It does not
-compute expected-versus-reported month-end residuals.</p>
 </li>
-<li>
-<p>Reload the browser. The Transactions tab should now have data.</p>
-</li>
+</ol>
+<p>Normal <code>ingest run</code> performs this after active source activation; the command
+   is mainly for manual maintenance. Despite its name, it only
+    pairs transfers and attributes transactions to snapshots today. It does not
+    compute expected-versus-reported month-end residuals.</p>
+<ol>
+<li>Reload the browser. The Transactions tab should now have data.</li>
 </ol>
 <h2 id="4-the-tabs">4. The tabs</h2>
 <h3 id="41-transactions">4.1 Transactions</h3>
@@ -374,8 +379,9 @@ MCP server's allowlisted CLI commands):</p>
 <span class="c"># repair symbols (resolve aliases, fund-code lookups, etc.)</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="nb">repair-symbols</span>
 </code></pre></div>
-<p><code>ingest run</code> already runs symbol repair and reconciliation after parsing, so
-the last two commands are only needed after manual DB edits.</p>
+<p><code>ingest run</code> performs conservative staged identity resolution and reconciliation
+after source activation. <code>repair-symbols</code> is for legacy/manual data; the
+reconcile command is mainly needed after manual DB edits.</p>
 <p>To <strong>visually verify</strong> how a statement was extracted, use the Verify-extraction
 tab (§4.6) — it renders the PDF and draws boxes over the lines each parsed item
 came from. The HTTP endpoints backing that tab are read-only:</p>
@@ -569,7 +575,10 @@ the owner rather than copy it.</p>
   <div class="section-banner">Current State</div>
   <h1 id="current-state">Current state</h1>
 <p>Audit date: <strong>2026-07-12</strong>. The live counts below are a dated diagnostic
-snapshot, not a release promise. Re-run the audit before relying on them.</p>
+snapshot, not a release promise. Re-run the audit before relying on them.
+The implementation-status notes below include the Phase 3 source-activation
+change completed on 2026-07-13; they do not claim that the dated live ledger
+has been rebuilt.</p>
 <h2 id="product-surface">Product surface</h2>
 <ul>
 <li>The FastAPI backend and React GUI build and run.</li>
@@ -579,10 +588,14 @@ snapshot, not a release promise. Re-run the audit before relying on them.</p>
   <code>data/config.json</code>; ledger mutation is CLI-only.</li>
 <li>The intended data model is native-currency ledger data in SQLite plus public
   market/fundamental data in DuckDB.</li>
+<li>Ingestion now stages one validated PDF source in a savepoint and activates it
+  atomically. A failed parse, validation, or staged write retains the prior
+  active extraction. This protects new ingests; it does not repair the dated
+  live derived rows.</li>
 </ul>
 <h2 id="validation-baseline">Validation baseline</h2>
 <ul>
-<li><code>uv run python -m pytest -q</code>: 38 tests passed and five later-phase
+<li><code>uv run python -m pytest -q</code>: 45 tests passed and three later-phase
   acceptance requirements are recorded as strict xfails.</li>
 <li><code>uv run ruff check src tests</code>: passed.</li>
 <li><code>npm run build</code> in <code>frontend/</code>: passed with Vite's large-bundle warning.</li>
@@ -659,15 +672,14 @@ snapshot, not a release promise. Re-run the audit before relying on them.</p>
    references, but the 2026-07-12 live snapshot has not been migrated or
    shadow-rebuilt. That snapshot contains 803 duplicate logical groups, 31,567
    excess IDs, and 28,587 unreferenced instrument rows.</li>
-<li><strong>RBC CAD and USD blocks overwrite each other.</strong> Both parser outputs use the
-   same statement key. Writing the later block deletes the earlier children.</li>
+<li><strong>RBC CAD and USD blocks are not yet represented correctly.</strong> Both parser
+   outputs use the same logical statement key. Phase 3 now rejects that source
+   before persistence and retains any prior active run, rather than overwriting
+   one block with the other; Phase 4 must emit one statement with both scopes.</li>
 <li><strong>TD 2018–2022 bundled months are not split correctly.</strong> Repeated statement
-   keys overwrite segments; 470 audited TD transactions fall outside the
-   stored statement period.</li>
-<li><strong>Source replacement is not atomic.</strong> Duplicate parser output keys are now
-   rejected before writes and failed attempts retain the active-run pointer,
-   but statements are still activated one at a time and obsolete prior output
-   is not removed.</li>
+   keys are rejected before persistence rather than silently overwriting
+   segments; 470 audited TD transactions fall outside their assigned statement
+   period.</li>
 <li><strong>“Reconciliation” is still link attribution only.</strong> Schema v6 can persist
    expected/actual close, residual, tolerance, and status, but no engine
    computes or stores those results yet.</li>
@@ -710,12 +722,15 @@ current writer would overwrite. They are a defect baseline, not validated
 ledger rows.</p>
 <h2 id="operationaldocumentation-debt">Operational/documentation debt</h2>
 <ul>
-<li><code>quarantine.jsonl</code> and skipped-PDF logs are append-only, not mirrors of the
-  active database.</li>
-<li>The current ingestion cache uses only source path/hash/status, not parser,
-  resolver, or schema version.</li>
-<li><code>ingestion_runs</code> and active-run pointers exist, but source-wide staged
-  activation, content hashes, and truthful cache invalidation remain pending.</li>
+<li><code>ingestion_attempts.jsonl</code>, <code>quarantine.jsonl</code>, and <code>skipped_pdfs.log</code> are
+  now regenerated attempt/active-row indexes; none contains raw statement text.
+  Existing historical files may still need local cleanup.</li>
+<li>The current cache includes source hash, parser/contract/schema versions, and
+  a reviewed-identity resolver fingerprint. A parser implementation that
+  changes without bumping its declared version can still evade invalidation.</li>
+<li>The current source activation code has content hashes/counts and rollback
+  coverage, but it has not yet been used as the approved shadow rebuild/cutover
+  for the dated live ledger.</li>
 <li>The target repair and cutover are defined in
   <code>plan/EXTRACTION_RECONCILIATION_REFACTOR.md</code>; they are not implemented yet.</li>
 </ul>
@@ -754,8 +769,9 @@ not mutate the ledger.</p>
     duckdb_store.py          canonical market-data DDL
   parsers/                  common types, registry, four bank parsers
   ingest/
-    pipeline.py             discovery, parse, persistence, post-processing
-    repair_symbols.py       conservative post-parse identity repair
+    pipeline.py             discovery, validate, staged source activation, audit export
+    identity_resolution.py  conservative in-stage printed/alias/holding resolution
+    repair_symbols.py       legacy/manual post-parse identity repair
     fund_lookup.py          reviewed fund-code lookup workflow
     initials.py             inferred pre-history anchors
     reconcile.py            transfer and movement-link attribution
@@ -905,9 +921,16 @@ the plan remains the authoritative repair/cutover route for live derived data.</
 <p><code>statements</code> is unique on
 <code>(source_file_id, account_id, period_start, period_end, statement_type)</code> and
 has a deterministic <code>sk1</code> <code>statement_key</code>. A statement belongs to an
-<code>ingestion_run</code>; source metadata points at at most one active successful run.
-The current incremental writer creates run records but is not yet a staged,
-source-atomic activation pipeline.</p>
+<code>ingestion_run</code>; source metadata points at at most one active successful run.</p>
+<p>The ingest pipeline creates a <code>validated</code> run, writes every child inside one
+source savepoint, writes its deterministic <code>content_counts_json</code> and
+<code>content_hash</code>, then switches <code>source_files.active_ingestion_run_id</code>. Failed
+attempts retain their own run/status/error while leaving the previous active
+pointer and active metadata intact. Successful replacements remove the prior
+derived run and its source children in that transaction. Schema v6's global
+statement/evidence uniqueness prevents old/new copies from coexisting, so this
+replacement is uncommitted until activation; readers only see the prior or new
+complete source output.</p>
 <p><code>source_evidence</code> has a deterministic non-content-revealing key, source/run,
 row occurrence, raw text, optional page/line/coordinates/words, and parser
 rule/version. New transactions, holdings, cash balances, and quarantine rows
@@ -919,8 +942,11 @@ than a fabricated line.</p>
 <code>position_delta</code>, <code>cash_delta</code>, and <code>cash_effective_date</code> hold the normalized
 effects used by new consumers; <code>net_amount</code> remains a compatibility field.
 Resolution method/confidence and an optional resolution-evidence link are also
-available. The database does not constrain <code>txn_type</code>; the Python literal
-vocabulary and validator own it.</p>
+available. Phase 3 writes these through its conservative staged resolver:
+explicit printed identities, reviewed aliases/fund lookups, and unambiguous
+same-statement holdings are distinguishable from unresolved printed names. The
+database does not constrain <code>txn_type</code>; the Python literal vocabulary and
+validator own it.</p>
 <h3 id="scoped-checkpoints">Scoped checkpoints</h3>
 <p><code>snapshot_sets</code> declares a statement/account/date/currency/section scope with
 <code>complete</code>, <code>partial</code>, <code>absent</code>, or <code>unknown</code> completeness. Position snapshots
@@ -1008,10 +1034,10 @@ creates legacy source runs/evidence, and marks migrated snapshot scopes
 <code>unknown</code>. It is not a replacement for the planned shadow rebuild; do not use
 it as a live-data correctness cutover.</p>
 <h2 id="still-pending">Still pending</h2>
-<p>The remaining phases make source activation atomic, populate layout coordinates
-and proved-complete scopes, repair broker parsers, calculate and persist
-reconciliation results, unify all holdings consumers, and rebuild/cut over a
-shadow ledger. See the plan for sequencing.</p>
+<p>The remaining phases populate layout coordinates and proved-complete scopes,
+repair broker parsers, calculate and persist reconciliation results, unify all
+holdings consumers, and rebuild/cut over a shadow ledger. See the plan for
+sequencing.</p>
 </div>
 
 <div class="doc-section" id="ingestion">
@@ -1030,69 +1056,91 @@ fewer than 20 extracted characters as image-only. OCR is not implemented.</p>
 are derived artifacts.</p>
 <h2 id="current-flow">Current flow</h2>
 <div class="highlight"><pre><span></span><code>discover path
-  -&gt; hash (unless --force)
+  -&gt; hash and contract-aware cache check (unless --force)
   -&gt; extract text
   -&gt; skip image-only / fail unclaimed
   -&gt; first registered parser whose can_handle() returns true
   -&gt; parser.parse(PdfText)
   -&gt; validate the complete ParseResult
-  -&gt; record ingestion attempt / select active run for successful output
-  -&gt; write each emitted statement immediately
-  -&gt; repair symbols after the whole scan
+  -&gt; conservatively resolve printed identities
+  -&gt; stage one source in a SQLite savepoint
+  -&gt; atomically activate the fully written source run
   -&gt; pair transfers and rebuild position/transaction links
+  -&gt; regenerate derived ingestion audit indexes
 </code></pre></div>
 <p>The registered parsers are CIBC, HSBC, RBC, and TD, all currently reporting
 version <code>1.0.0</code>.</p>
 <h2 id="status-and-cache-behavior">Status and cache behavior</h2>
-<p><code>source_files.parse_status</code> is <code>pending</code>, <code>ok</code>, <code>partial</code>, <code>failed</code>, or
-<code>skipped</code>. A source is skipped on a later normal run when path and SHA-256 are
-unchanged and prior status is <code>ok</code>, <code>partial</code>, or <code>skipped</code>.</p>
-<p>The cache does <strong>not</strong> include parser version, schema version, resolver version,
-or output hash. Changing parser code without <code>--force</code> can therefore leave old
-rows active.</p>
+<p><code>source_files.parse_status</code> is a compatibility summary of the active
+extraction. It is <code>pending</code>, <code>ok</code>, <code>partial</code>, <code>failed</code>, or <code>skipped</code>. A failed
+or skipped attempt is recorded in <code>ingestion_runs</code>; if a source already has an
+active extraction, its active metadata and pointer remain unchanged.</p>
+<p>An unchanged source skips only when its active run matches all of the
+following: source SHA-256, current registered parser name/version, parser
+contract version, SQLite schema version, and the resolver version. The resolver
+version includes a deterministic fingerprint of reviewed aliases and resolved
+fund-code lookups, so changing reviewed identity data makes source output stale
+without requiring <code>--force</code>. <code>--force</code> remains an explicit override.</p>
 <h2 id="persistence-behavior">Persistence behavior</h2>
-<p>Fatal validation issues record the source attempt as failed and skip every
-statement write from that parser result. Validation currently covers duplicate
-statement identities, parser errors, periods/transaction dates, transaction
-vocabulary, currencies, finite numerics, option identity, and source-span/
-scope declarations. An undeclared scope remains a visible warning and becomes
-an <code>unknown</code> persisted set rather than a clearing checkpoint.</p>
-<p>For each validated <code>ParsedStatement</code>, the writer upserts institution/account and
-the full statement identity <code>(source_file_id, account_id, period_start,
-period_end, statement_type)</code> plus its deterministic <code>statement_key</code>. It writes
-source evidence, normalized deltas, and declared/inferred snapshot sets before
-inserting row children. It then replaces that statement's transactions,
-positions, cash, annual performance rows, and quarantine items.</p>
-<p>This makes one statement write repeatable in isolation, but it does not make a
-source-file parse atomic:</p>
+<p>Fatal validation issues record a failed source attempt and skip every statement
+write from that parser result. The same applies to parser crashes and activation
+errors. The previous active extraction remains visible. Validation covers
+duplicate statement identities, parser errors, periods/transaction dates,
+transaction vocabulary, currencies, finite numerics, option identity, and
+source-span/scope declarations. An undeclared scope remains a visible warning
+and becomes an <code>unknown</code> persisted set rather than a clearing checkpoint.</p>
+<p>For one valid source, the pipeline first checks every emitted statement/source
+row key in memory, then opens one SQLite savepoint. It creates a <code>validated</code>
+run; resolves identities; replaces the source's old <em>derived</em> run only inside
+that uncommitted savepoint; writes every statement, evidence row, normalized
+delta, scope, and child row under the new run; records a deterministic content
+count/hash; switches the source pointer; and commits. SQLite's v6 global
+statement/evidence identities mean the old derived rows are deleted just before
+new child writes rather than held side-by-side, but no reader can observe that
+intermediate state. Any exception rolls back to the prior committed source.</p>
+<p>The result is source-wide replacement rather than statement-by-statement
+replacement:</p>
 <ul>
-<li>validation is in-memory, but active output is not staged/versioned;</li>
-<li>statements emitted by an older parse but omitted by a newer parse survive;</li>
-<li>a successful incremental statement write can become visible before all of
-  the source's statements are ready; and</li>
-<li>the persisted <code>ingestion_runs</code> record and active-run pointer do not yet have
-  content hashes/counts or a source-wide activation transaction.</li>
+<li>statements omitted by a newer successful parse are removed with the old run;</li>
+<li>repeated forced ingest of the same resolved output keeps active counts and
+  content hash stable; and</li>
+<li>a parser/validation/write failure cannot partially fan out into active rows.</li>
 </ul>
-<p>A failed attempt creates a failed run and does not replace the active-run
-pointer, but the legacy <code>source_files.parse_status</code> compatibility field still
-tracks the latest attempt. Phase 3 will make the active source view and cache
-semantics authoritative.</p>
-<p>SQLite session commit/rollback covers the outer command, but the semantic unit
-is still the incremental scan rather than a staged source activation.</p>
+<p><code>ingestion_runs</code> retains failed attempts for audit. Successful replaced runs are
+derived output and are removed with their source children; active run content
+hash/counts are the authoritative current-extraction record.</p>
+<h2 id="identity-resolution">Identity resolution</h2>
+<p>Resolution runs inside the same source savepoint, after parser validation and
+before persistence. It preserves the parser's printed identity and applies only
+these deterministic steps:</p>
+<ol>
+<li>retain an explicit printed ticker or complete option contract;</li>
+<li>match an exact reviewed user alias or resolved reviewed fund lookup;</li>
+<li>match one unambiguous exact identity in the same statement's holdings; or</li>
+<li>retain an <code>unresolved_printed_identity</code> with zero confidence.</li>
+</ol>
+<p>It does not use the broad free-form name-to-ticker repair map. Transaction rows
+store the selected method/confidence and a resolution evidence link when a
+source span is available; instrument rows retain their identity provenance.
+<code>ledger ingest repair-symbols</code> remains a legacy/manual maintenance command for
+old derived data, but normal ingest no longer invokes it.</p>
 <h2 id="post-processing">Post-processing</h2>
-<p>After a full scan, <code>repair_symbols()</code> performs conservative name/holding/tax
-and reviewed-fund repairs. <code>reconcile_after_ingest()</code> then pairs unambiguous
-transfers and recreates position/transaction attribution links. An early
-return caused by <code>--limit</code> occurs before these post-processing calls.</p>
+<p>After a scan, <code>reconcile_after_ingest()</code> pairs unambiguous transfers and
+recreates position/transaction attribution links for the active output. It
+does not yet calculate cash/position/statement residuals. A limited scan still
+finishes this active-output maintenance rather than returning mid-command.</p>
 <h2 id="logs">Logs</h2>
 <ul>
 <li>standard logs are configured under <code>logs/</code>;</li>
-<li>image-only relpaths append to <code>logs/skipped_pdfs.log</code>;</li>
-<li>quarantine items append to <code>logs/quarantine.jsonl</code>;</li>
+<li><code>logs/ingestion_attempts.jsonl</code> is regenerated from persisted run metadata;</li>
+<li><code>logs/skipped_pdfs.log</code> is regenerated from latest skipped attempts;</li>
+<li><code>logs/quarantine.jsonl</code> is regenerated from active quarantine rows;</li>
 <li>market commands append to <code>logs/market_scrape.jsonl</code>.</li>
 </ul>
-<p>The text/JSONL files are append-only event records. They are not exact mirrors
-of active database rows and may contain duplicates across runs.</p>
+<p>The regenerated ingestion indexes are deterministic JSONL and contain source,
+run, row/evidence IDs, and reason/status but no raw statement text. Standard
+application logs and market scrape events retain their separate logging
+contracts.</p>
 <h2 id="read-only-extraction-audit">Read-only extraction audit</h2>
 <p><code>ledger audit extraction</code> accepts a PDF tree or stored text-dump tree, selects
 and runs parsers without opening SQLite, applies the same validator, calculates
@@ -1105,12 +1153,12 @@ duplicate statement keys, 270 unbalanced calculable cash checks, 214 incomplete
 cash checks, and 533 unbalanced position intervals out of 5,941. No source was
 unclaimed and no parser crashed. These are a defect baseline, not passing
 reconciliation results.</p>
-<h2 id="target-activation-model-not-implemented">Target activation model (not implemented)</h2>
-<p>Validation and the read-only audit now exist. The remaining approved activation
-path is <code>resolve -&gt; stage -&gt; atomically activate -&gt; reconcile</code>. A failed
-attempt must preserve the last successful active extraction, and the cache key
-must include source/parser/schema/resolver versions. See the plan for the full
-acceptance gates.</p>
+<h2 id="remaining-work">Remaining work</h2>
+<p>The Phase 3 source activation boundary is implemented. Parser v1 still emits
+known duplicate/missing/ambiguous broker data, and the current reconciliation
+command remains link attribution only. See the plan for layout-aware parser
+work, residual computation, shared holdings reconstruction, and the shadow
+rebuild/cutover.</p>
 </div>
 
 <div class="doc-section" id="parser-contract">
@@ -1134,7 +1182,7 @@ items, and optional <code>ParsedSnapshotSet</code> declarations. Legacy <code>(r
 reason)</code> quarantine tuples remain accepted during the parser migration.</p>
 <p>Exact fields and the <code>TxnType</code> literal vocabulary are defined in
 <code>src/ledger/parsers/types.py</code>. <code>parsers/validation.py</code> enforces the runtime
-contract on the complete <code>ParseResult</code> before current ingestion writes any
+contract on the complete <code>ParseResult</code> before staged ingestion writes any
 statement children.</p>
 <h2 id="required-semantics">Required semantics</h2>
 <ul>
@@ -1149,6 +1197,8 @@ statement children.</p>
   consumer should need institution-specific sign guesses.</li>
 <li>Output statement identities are unique within a source.</li>
 <li>A parser declares the scope and completeness of every holdings/cash section.</li>
+<li>A parser preserves its printed instrument identity; it does not need to guess
+  a public ticker from an uncertain free-form name.</li>
 </ul>
 <p>Unique output identity, date/type/currency/option validity, finite numbers,
 declared scope validity, and source-span shape are enforced now. Correct
@@ -1175,6 +1225,20 @@ invalid snapshot declarations, and parser-reported errors as fatal.</p>
 <p>Parser v1 implementations currently mostly supply raw lines and deterministic
 occurrences; Phase 4 must supply page/column coordinates and explicit
 complete/partial section declarations from layout-aware state machines.</p>
+<h2 id="staged-identity-resolution">Staged identity resolution</h2>
+<p><code>ParsedInstrument</code> can carry a resolution method/confidence/evidence in
+addition to its parsed identity. During Phase 3 ingestion, the resolver records
+one of these outcomes without calling the broad name-to-ticker repair map:</p>
+<ol>
+<li>a complete option contract or explicit printed symbol is retained;</li>
+<li>an exact reviewed alias or resolved reviewed fund lookup is applied;</li>
+<li>one exact same-statement holding identity is applied; or</li>
+<li>the printed identity remains unresolved with confidence <code>0.0</code>.</li>
+</ol>
+<p>For transactions the selected method, confidence, and available source-span
+evidence are persisted in <code>transactions</code>. Holdings retain regular source
+evidence and instrument-level provenance. An uncertain parser output must stay
+unresolved/audited, never become a guessed ticker.</p>
 <h2 id="known-contract-violations">Known contract violations</h2>
 <ul>
 <li>All four bank parsers contain quantity <code>parsed or 0.0</code> paths; CIBC/RBC/HSBC
@@ -1439,7 +1503,7 @@ source PDFs or stored <code>.txt</code> dumps, overwrites a deterministic JSONL 
 (default <code>logs/extraction_audit.jsonl</code>), and omits raw statement text. Use
 <code>--fail-on-errors</code> in a gate where invalid/unclaimed/crashed outputs must
 return non-zero.</p>
-<p><code>ledger db init</code> now creates or upgrades schema version 6. For a real existing
+<p><code>ledger db init</code> creates or upgrades schema version 6. For a real existing
 ledger, do <strong>not</strong> treat that compatibility migration as the refactor cutover:
 first copy the database to a shadow data directory and run the command against
 that copy. The API/server does not silently migrate a database at startup; run
@@ -1466,10 +1530,14 @@ session.</p>
 on 5173. It mounts <code>data/</code>, <code>logs/</code>, and <code>Statements/</code> into the backend. The
 profile defaults to <code>real</code> and can be overridden via <code>LEDGER_PROFILE</code>.</p>
 <h2 id="logging-and-privacy">Logging and privacy</h2>
-<p>Application logs live under <code>logs/</code>; structured scrape/quarantine events use
-JSONL. Do not commit private statements, text dumps, credentials, database
-files, or logs containing statement text. Append-only logs are historical
-events, not active-state snapshots.</p>
+<p>Application logs live under <code>logs/</code>; structured market scrape events use
+JSONL. At the end of <code>ledger ingest run</code>, <code>ingestion_attempts.jsonl</code>,
+<code>quarantine.jsonl</code>, and <code>skipped_pdfs.log</code> are regenerated deterministic
+indexes of persisted attempts, active quarantine rows, and latest skipped
+attempts. They contain source/run/evidence IDs and reasons/statuses, not raw
+statement text. Do not commit private statements, text dumps, credentials,
+database files, or logs containing statement text. Standard logs and market
+scrape events retain their own historical-event semantics.</p>
 <h2 id="validation">Validation</h2>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">pytest</span> <span class="n">-q</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ruff</span> <span class="n">check</span> <span class="n">src</span> <span class="n">tests</span>

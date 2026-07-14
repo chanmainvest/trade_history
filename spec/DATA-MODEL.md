@@ -42,8 +42,16 @@ the plan remains the authoritative repair/cutover route for live derived data.
 `(source_file_id, account_id, period_start, period_end, statement_type)` and
 has a deterministic `sk1` `statement_key`. A statement belongs to an
 `ingestion_run`; source metadata points at at most one active successful run.
-The current incremental writer creates run records but is not yet a staged,
-source-atomic activation pipeline.
+
+The ingest pipeline creates a `validated` run, writes every child inside one
+source savepoint, writes its deterministic `content_counts_json` and
+`content_hash`, then switches `source_files.active_ingestion_run_id`. Failed
+attempts retain their own run/status/error while leaving the previous active
+pointer and active metadata intact. Successful replacements remove the prior
+derived run and its source children in that transaction. Schema v6's global
+statement/evidence uniqueness prevents old/new copies from coexisting, so this
+replacement is uncommitted until activation; readers only see the prior or new
+complete source output.
 
 `source_evidence` has a deterministic non-content-revealing key, source/run,
 row occurrence, raw text, optional page/line/coordinates/words, and parser
@@ -58,8 +66,11 @@ than a fabricated line.
 `position_delta`, `cash_delta`, and `cash_effective_date` hold the normalized
 effects used by new consumers; `net_amount` remains a compatibility field.
 Resolution method/confidence and an optional resolution-evidence link are also
-available. The database does not constrain `txn_type`; the Python literal
-vocabulary and validator own it.
+available. Phase 3 writes these through its conservative staged resolver:
+explicit printed identities, reviewed aliases/fund lookups, and unambiguous
+same-statement holdings are distinguishable from unresolved printed names. The
+database does not constrain `txn_type`; the Python literal vocabulary and
+validator own it.
 
 ### Scoped checkpoints
 
@@ -110,7 +121,7 @@ it as a live-data correctness cutover.
 
 ## Still pending
 
-The remaining phases make source activation atomic, populate layout coordinates
-and proved-complete scopes, repair broker parsers, calculate and persist
-reconciliation results, unify all holdings consumers, and rebuild/cut over a
-shadow ledger. See the plan for sequencing.
+The remaining phases populate layout coordinates and proved-complete scopes,
+repair broker parsers, calculate and persist reconciliation results, unify all
+holdings consumers, and rebuild/cut over a shadow ledger. See the plan for
+sequencing.

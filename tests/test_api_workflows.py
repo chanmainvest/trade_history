@@ -78,8 +78,8 @@ def test_quarantine_rows_are_replaced_on_reingest(tmp_path):
         source_file_id = _record_source_file(
             conn,
             pdf,
-            parser_name="TestParser",
-            parser_version="1",
+            parser_name="td",
+            parser_version="1.0.0",
             parse_status="partial",
         )
         _write_statement(conn, source_file_id=source_file_id, institution_code="TST", stmt=statement)
@@ -102,19 +102,19 @@ def test_unchanged_source_file_is_skippable_only_after_successful_parse(tmp_path
         source_file_id = _record_source_file(
             conn,
             pdf,
-            parser_name="TestParser",
-            parser_version="1",
+            parser_name="td",
+            parser_version="1.0.0",
             parse_status="ok",
         )
         assert _unchanged_source_file_id(conn, relpath=pdf.relpath, sha256="abc") == source_file_id
         _record_source_file(
             conn,
             pdf,
-            parser_name="TestParser",
-            parser_version="1",
+            parser_name="td",
+            parser_version="2.0.0",
             parse_status="failed",
         )
-        assert _unchanged_source_file_id(conn, relpath=pdf.relpath, sha256="abc") is None
+        assert _unchanged_source_file_id(conn, relpath=pdf.relpath, sha256="abc") == source_file_id
 
 
 def test_performance_total_clears_omitted_sold_out_positions_and_includes_cash(tmp_path):

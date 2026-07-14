@@ -54,7 +54,7 @@ source PDFs or stored `.txt` dumps, overwrites a deterministic JSONL report
 `--fail-on-errors` in a gate where invalid/unclaimed/crashed outputs must
 return non-zero.
 
-`ledger db init` now creates or upgrades schema version 6. For a real existing
+`ledger db init` creates or upgrades schema version 6. For a real existing
 ledger, do **not** treat that compatibility migration as the refactor cutover:
 first copy the database to a shadow data directory and run the command against
 that copy. The API/server does not silently migrate a database at startup; run
@@ -90,10 +90,14 @@ profile defaults to `real` and can be overridden via `LEDGER_PROFILE`.
 
 ## Logging and privacy
 
-Application logs live under `logs/`; structured scrape/quarantine events use
-JSONL. Do not commit private statements, text dumps, credentials, database
-files, or logs containing statement text. Append-only logs are historical
-events, not active-state snapshots.
+Application logs live under `logs/`; structured market scrape events use
+JSONL. At the end of `ledger ingest run`, `ingestion_attempts.jsonl`,
+`quarantine.jsonl`, and `skipped_pdfs.log` are regenerated deterministic
+indexes of persisted attempts, active quarantine rows, and latest skipped
+attempts. They contain source/run/evidence IDs and reasons/statuses, not raw
+statement text. Do not commit private statements, text dumps, credentials,
+database files, or logs containing statement text. Standard logs and market
+scrape events retain their own historical-event semantics.
 
 ## Validation
 

@@ -25,7 +25,7 @@ reason)` quarantine tuples remain accepted during the parser migration.
 
 Exact fields and the `TxnType` literal vocabulary are defined in
 `src/ledger/parsers/types.py`. `parsers/validation.py` enforces the runtime
-contract on the complete `ParseResult` before current ingestion writes any
+contract on the complete `ParseResult` before staged ingestion writes any
 statement children.
 
 ## Required semantics
@@ -41,6 +41,8 @@ statement children.
   consumer should need institution-specific sign guesses.
 - Output statement identities are unique within a source.
 - A parser declares the scope and completeness of every holdings/cash section.
+- A parser preserves its printed instrument identity; it does not need to guess
+  a public ticker from an uncertain free-form name.
 
 Unique output identity, date/type/currency/option validity, finite numbers,
 declared scope validity, and source-span shape are enforced now. Correct
@@ -73,6 +75,22 @@ invalid snapshot declarations, and parser-reported errors as fatal.
 Parser v1 implementations currently mostly supply raw lines and deterministic
 occurrences; Phase 4 must supply page/column coordinates and explicit
 complete/partial section declarations from layout-aware state machines.
+
+## Staged identity resolution
+
+`ParsedInstrument` can carry a resolution method/confidence/evidence in
+addition to its parsed identity. During Phase 3 ingestion, the resolver records
+one of these outcomes without calling the broad name-to-ticker repair map:
+
+1. a complete option contract or explicit printed symbol is retained;
+2. an exact reviewed alias or resolved reviewed fund lookup is applied;
+3. one exact same-statement holding identity is applied; or
+4. the printed identity remains unresolved with confidence `0.0`.
+
+For transactions the selected method, confidence, and available source-span
+evidence are persisted in `transactions`. Holdings retain regular source
+evidence and instrument-level provenance. An uncertain parser output must stay
+unresolved/audited, never become a guessed ticker.
 
 ## Known contract violations
 

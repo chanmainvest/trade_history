@@ -9,11 +9,13 @@ This guide is written for **humans**. Technical context starts at
 [INDEX.md](INDEX.md), while coding-agent rules live in
 [AGENTS.md](../AGENTS.md).
 
-> **Current data-quality notice (2026-07-12):** the GUI is operational, but
-> extraction, instrument identity, and month-end reconciliation have confirmed
-> defects. In particular, RBC currency sections and some TD bundled periods can
-> be overwritten. Review [CURRENT-STATE.md](CURRENT-STATE.md) before rebuilding
-> or relying on the ledger as reconciled.
+> **Current data-quality notice (2026-07-13):** the GUI is operational and
+> source ingestion now preserves the prior active extraction if parsing or
+> staging fails. Extraction, instrument identity, and month-end reconciliation
+> still have confirmed defects: RBC dual-currency and some TD bundled layouts
+> are rejected/unsupported rather than safe reconciled output. Review
+> [CURRENT-STATE.md](CURRENT-STATE.md) before rebuilding or relying on the
+> ledger as reconciled.
 
 ---
 
@@ -109,11 +111,13 @@ just close the terminal.
    uv run ledger ingest run
    ```
 
-   Re-running is fast when PDFs are unchanged because the ingester compares
-   `source_files.sha256` before parsing. The cache does not include parser or
-   schema version, so use `uv run ledger ingest run --force` after parser
-   upgrades. Until the extraction refactor is complete, prefer a backup/shadow
-   database and inspect Verify rather than overwriting a trusted ledger.
+   Re-running is fast when the active extraction matches the PDF SHA-256,
+   parser version, parser contract/schema version, and reviewed identity data.
+   Parser or reviewed-alias changes reparse automatically; `--force` is only
+   needed when you deliberately want to bypass that cache. Each PDF activates
+   as one unit, so a parser/validation/write failure keeps its previous active
+   output. The remaining parser/reconciliation work still warrants a
+   backup/shadow database and Verify review before relying on totals.
 
    Before ingesting, you can run the same parsers and contract checks without
    opening SQLite:
@@ -158,10 +162,11 @@ just close the terminal.
     note prefix are preserved on re-run. Cash rows are inferred from the
     first monthly cash snapshot for each account/currency.
 
-5. *(Optional after parser upgrades)* Repair already-ingested legacy
-    symbols without deleting PDFs or re-ingesting everything. The repair
-    uses known ticker mappings first, then matches transactions to holdings
-    from the same statement where the PDF only printed a security name:
+5. *(Optional, legacy data only)* Repair already-ingested historical symbols
+   without deleting PDFs or re-ingesting everything. New ingestion resolves
+   only explicit/reviewed identities while staging and does not run this broad
+   mutation pass automatically. The legacy repair uses known ticker mappings
+   and holding matches, so review its results before relying on them:
 
     ```powershell
     uv run ledger ingest repair-symbols
@@ -174,8 +179,8 @@ just close the terminal.
     uv run ledger ingest reconcile
     ```
 
-    Normal `ingest run` already performs this after parsing and symbol repair;
-    the command is mainly for manual maintenance. Despite its name, it only
+   Normal `ingest run` performs this after active source activation; the command
+   is mainly for manual maintenance. Despite its name, it only
     pairs transfers and attributes transactions to snapshots today. It does not
     compute expected-versus-reported month-end residuals.
 
@@ -338,8 +343,9 @@ uv run ledger ingest reconcile
 uv run ledger ingest repair-symbols
 ```
 
-`ingest run` already runs symbol repair and reconciliation after parsing, so
-the last two commands are only needed after manual DB edits.
+`ingest run` performs conservative staged identity resolution and reconciliation
+after source activation. `repair-symbols` is for legacy/manual data; the
+reconcile command is mainly needed after manual DB edits.
 
 To **visually verify** how a statement was extracted, use the Verify-extraction
 tab (§4.6) — it renders the PDF and draws boxes over the lines each parsed item

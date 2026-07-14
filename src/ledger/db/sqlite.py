@@ -968,6 +968,166 @@ def active_ingestion_run_id(conn: sqlite3.Connection, source_file_id: int) -> in
     return int(row["active_ingestion_run_id"])
 
 
+def begin_ingestion_run(
+    conn: sqlite3.Connection,
+    *,
+    source_file_id: int,
+    source_sha256: str | None,
+    parser_name: str | None,
+    parser_version: str | None,
+    contract_version: str,
+    status: str = "validated",
+    error_summary: str | None = None,
+    resolver_version: str | None = None,
+) -> int:
+    """Create an auditable ingestion attempt without changing active output.
+
+    Call :func:`activate_ingestion_run` only after every derived child row for
+    the source has been written successfully.  Keeping this operation separate
+    from activation is what lets the ingest pipeline roll a failed source back
+    to its previous active extraction.
+    """
+    allowed = {
+        "pending",
+        "parsing",
+        "validated",
+        "failed",
+        "skipped",
+        "superseded",
+    }
+    if status not in allowed:
+        raise ValueError(f"unsupported pending ingestion run status: {status!r}")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    terminal = status in {"failed", "skipped", "superseded"}
+    return int(
+        conn.execute(
+            """
+            INSERT INTO ingestion_runs(
+                source_file_id, source_sha256, parser_name, parser_version,
+                contract_version, schema_version, resolver_version, status,
+                error_summary, started_at, finished_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING ingestion_run_id
+            """,
+            (
+                source_file_id,
+                source_sha256,
+                parser_name,
+                parser_version,
+                contract_version,
+                SCHEMA_VERSION,
+                resolver_version,
+                status,
+                error_summary,
+                now,
+                now if terminal else None,
+            ),
+        ).fetchone()[0]
+    )
+
+
+def activate_ingestion_run(
+    conn: sqlite3.Connection,
+    *,
+    source_file_id: int,
+    ingestion_run_id: int,
+    content_counts: dict[str, int],
+    content_hash: str,
+) -> int | None:
+    """Select a fully written validated run as a source's active extraction.
+
+    The caller owns the surrounding transaction and may remove the old run
+    after this switch.  Returning that old run ID keeps the deletion explicit
+    and makes the operation safe to use in a savepoint.
+    """
+    run = conn.execute(
+        "SELECT source_file_id, status FROM ingestion_runs WHERE ingestion_run_id = ?",
+        (ingestion_run_id,),
+    ).fetchone()
+    if run is None or int(run["source_file_id"]) != source_file_id:
+        raise sqlite3.IntegrityError(
+            f"ingestion run {ingestion_run_id} does not belong to source {source_file_id}"
+        )
+    if run["status"] not in {"validated", "pending"}:
+        raise sqlite3.IntegrityError(
+            f"ingestion run {ingestion_run_id} cannot be activated from {run['status']!r}"
+        )
+
+    row = conn.execute(
+        "SELECT active_ingestion_run_id FROM source_files WHERE source_file_id = ?",
+        (source_file_id,),
+    ).fetchone()
+    if row is None:
+        raise sqlite3.IntegrityError(f"missing source file {source_file_id}")
+    previous = row["active_ingestion_run_id"]
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    if previous is not None and int(previous) != ingestion_run_id:
+        conn.execute(
+            "UPDATE ingestion_runs SET status = 'superseded', finished_at = ? "
+            "WHERE ingestion_run_id = ?",
+            (now, previous),
+        )
+    conn.execute(
+        """
+        UPDATE ingestion_runs
+           SET status = 'active', finished_at = ?, activated_at = ?,
+               content_counts_json = ?, content_hash = ?
+         WHERE ingestion_run_id = ?
+        """,
+        (
+            now,
+            now,
+            json.dumps(content_counts, sort_keys=True, separators=(",", ":")),
+            content_hash,
+            ingestion_run_id,
+        ),
+    )
+    conn.execute(
+        "UPDATE source_files SET active_ingestion_run_id = ? WHERE source_file_id = ?",
+        (ingestion_run_id, source_file_id),
+    )
+    return int(previous) if previous is not None else None
+
+
+def discard_derived_ingestion_run(
+    conn: sqlite3.Connection,
+    ingestion_run_id: int,
+) -> None:
+    """Delete one superseded source extraction and all of its derived output.
+
+    v6 deliberately retained statement-linked transactions with ``SET NULL``
+    for legacy/manual compatibility.  Delete rows belonging to this derived
+    run first, then delete the run so its statements, evidence, snapshots,
+    quarantine, and reconciliation children are removed through their foreign
+    keys.  This function must run in the same transaction as replacement
+    activation; rollback restores the previous extraction intact.
+    """
+    derived_predicate = (
+        "ingestion_run_id = ? OR statement_id IN ("
+        "SELECT statement_id FROM statements WHERE ingestion_run_id = ?)"
+    )
+    conn.execute(
+        f"""
+        UPDATE transactions
+           SET counterpart_account_id = NULL,
+               counterpart_txn_id = NULL
+         WHERE {derived_predicate}
+            OR counterpart_txn_id IN (
+                SELECT transaction_id FROM transactions WHERE {derived_predicate}
+            )
+        """,
+        (ingestion_run_id, ingestion_run_id, ingestion_run_id, ingestion_run_id),
+    )
+    conn.execute(
+        f"DELETE FROM transactions WHERE {derived_predicate}",
+        (ingestion_run_id, ingestion_run_id),
+    )
+    conn.execute(
+        "DELETE FROM ingestion_runs WHERE ingestion_run_id = ?",
+        (ingestion_run_id,),
+    )
+
+
 def record_ingestion_run(
     conn: sqlite3.Connection,
     *,
@@ -980,47 +1140,43 @@ def record_ingestion_run(
     error_summary: str | None = None,
     resolver_version: str | None = None,
 ) -> int:
-    """Record an extraction attempt and activate only successful output."""
-    now = datetime.now(UTC).isoformat(timespec="seconds")
-    run_status = "active" if status in {"ok", "partial"} else status
-    if run_status not in {"active", "failed", "skipped", "pending"}:
-        raise ValueError(f"unsupported ingestion run status: {status!r}")
-    if run_status == "active":
-        conn.execute(
-            "UPDATE ingestion_runs SET status = 'superseded' "
-            "WHERE source_file_id = ? AND status = 'active'",
-            (source_file_id,),
+    """Compatibility helper for legacy/direct writers.
+
+    New pipeline code must use ``begin_ingestion_run`` followed by
+    ``activate_ingestion_run`` after all source children are staged.  Keeping
+    this helper avoids changing small seed fixtures and isolated writer tests.
+    """
+    if status in {"ok", "partial"}:
+        run_id = begin_ingestion_run(
+            conn,
+            source_file_id=source_file_id,
+            source_sha256=source_sha256,
+            parser_name=parser_name,
+            parser_version=parser_version,
+            contract_version=contract_version,
+            status="validated",
+            error_summary=error_summary,
+            resolver_version=resolver_version,
         )
-    run_id = conn.execute(
-        """
-        INSERT INTO ingestion_runs(
-            source_file_id, source_sha256, parser_name, parser_version,
-            contract_version, schema_version, resolver_version, status,
-            error_summary, started_at, finished_at, activated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        RETURNING ingestion_run_id
-        """,
-        (
-            source_file_id,
-            source_sha256,
-            parser_name,
-            parser_version,
-            contract_version,
-            SCHEMA_VERSION,
-            resolver_version,
-            run_status,
-            error_summary,
-            now,
-            now,
-            now if run_status == "active" else None,
-        ),
-    ).fetchone()[0]
-    if run_status == "active":
-        conn.execute(
-            "UPDATE source_files SET active_ingestion_run_id = ? WHERE source_file_id = ?",
-            (run_id, source_file_id),
+        activate_ingestion_run(
+            conn,
+            source_file_id=source_file_id,
+            ingestion_run_id=run_id,
+            content_counts={},
+            content_hash="legacy-direct-writer",
         )
-    return int(run_id)
+        return run_id
+    return begin_ingestion_run(
+        conn,
+        source_file_id=source_file_id,
+        source_sha256=source_sha256,
+        parser_name=parser_name,
+        parser_version=parser_version,
+        contract_version=contract_version,
+        status=status,
+        error_summary=error_summary,
+        resolver_version=resolver_version,
+    )
 
 
 def upsert_source_evidence(
