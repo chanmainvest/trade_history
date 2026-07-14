@@ -36,6 +36,9 @@ def quantity_delta(txn_type: str, quantity: float | None) -> float:
     if quantity is None:
         return 0.0
     q = float(quantity)
+    if txn_type == "journal":
+        # Brokers print in-kind journals with an already-signed quantity.
+        return q
     if txn_type in _POS_ABS:
         return abs(q)
     if txn_type in _NEG_ABS:

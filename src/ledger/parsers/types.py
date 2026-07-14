@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+PARSER_CONTRACT_VERSION = "2"
+
 # Canonical transaction-type vocabulary. See schema.sql for definitions.
 TxnType = Literal[
     "buy", "sell", "short_sell", "buy_to_cover",
@@ -24,6 +26,21 @@ TxnType = Literal[
     "reinvest_dividend", "stock_split", "stock_split_credit", "stock_split_debit",
     "name_change", "spinoff", "merger", "return_of_capital",
 ]
+
+SnapshotCompleteness = Literal["complete", "partial", "absent", "unknown"]
+SnapshotSectionType = Literal["positions", "cash", "summary"]
+
+
+@dataclass
+class SourceSpan:
+    """Location and parser rule supporting one emitted value or row."""
+
+    raw_text: str | None = None
+    page_number: int | None = None
+    line_number: int | None = None
+    bbox: tuple[float, float, float, float] | None = None
+    words: list[dict[str, object]] | None = None
+    parser_rule: str | None = None
 
 
 @dataclass
@@ -58,6 +75,13 @@ class ParsedTxn:
     tax_country: str | None = None
     tax_rate: float | None = None
     parser_confidence: float = 1.0
+    position_delta: float | None = None
+    cash_delta: float | None = None
+    cash_effective_date: str | None = None
+    resolution_method: str | None = None
+    resolution_confidence: float | None = None
+    resolution_evidence: SourceSpan | None = None
+    source_span: SourceSpan | None = None
 
 
 @dataclass
@@ -71,6 +95,8 @@ class ParsedPosition:
     unrealized_pnl: float | None
     currency: str
     raw_line: str | None = None
+    source_span: SourceSpan | None = None
+    scope_key: str = "default"
 
 
 @dataclass
@@ -78,6 +104,36 @@ class ParsedCashBalance:
     currency: str
     opening_balance: float | None
     closing_balance: float
+    raw_line: str | None = None
+    source_span: SourceSpan | None = None
+    scope_key: str = "default"
+
+
+@dataclass
+class ParsedSnapshotSet:
+    """Declared completeness of one statement currency/section scope."""
+
+    currency: str
+    section_type: SnapshotSectionType
+    completeness: SnapshotCompleteness
+    scope_key: str = "default"
+    reported_total: float | None = None
+    validation_status: Literal["unvalidated", "valid", "warning", "invalid"] = (
+        "unvalidated"
+    )
+    source_span: SourceSpan | None = None
+
+
+@dataclass
+class ParsedQuarantine:
+    raw_line: str
+    reason: str
+    source_span: SourceSpan | None = None
+
+    def __iter__(self):
+        """Retain tuple-unpacking compatibility during parser migration."""
+        yield self.raw_line
+        yield self.reason
 
 
 @dataclass
@@ -115,7 +171,8 @@ class ParsedStatement:
     positions: list[ParsedPosition] = field(default_factory=list)
     cash_balances: list[ParsedCashBalance] = field(default_factory=list)
     annual_performance: list[ParsedAnnualPerformance] = field(default_factory=list)
-    quarantine: list[tuple[str, str]] = field(default_factory=list)  # (raw_line, reason)
+    quarantine: list[tuple[str, str] | ParsedQuarantine] = field(default_factory=list)
+    snapshot_sets: list[ParsedSnapshotSet] = field(default_factory=list)
 
 
 @dataclass

@@ -39,6 +39,10 @@ uv run ledger db init
 uv run ledger serve --host 127.0.0.1 --port 8000
 ```
 
+For an existing real ledger, make a shadow copy first and run `db init` against
+that copy. Schema v6 has a tested compatibility migration, but it is not the
+approved live-data cutover; see [Operations](spec/OPERATIONS.md) and the plan.
+
 In another terminal:
 
 ```powershell

@@ -1,7 +1,7 @@
 # Parser contract
 
-This page owns the common parser interface and semantic rules. It distinguishes
-the Python types that exist today from validation that still needs to be built.
+This page owns the common parser interface and semantic rules, including the
+runtime validation boundary used before persistence.
 
 ## Current interface
 
@@ -19,8 +19,9 @@ Exceptions from `can_handle()` are logged and selection continues.
 
 `ParseResult` contains parser name/version, zero or more `ParsedStatement`
 objects, and string errors. A statement contains account, period, type,
-transactions, positions, cash balances, annual-performance rows, and
-`(raw_line, reason)` quarantine tuples.
+transactions, positions, cash balances, annual-performance rows, quarantine
+items, and optional `ParsedSnapshotSet` declarations. Legacy `(raw_line,
+reason)` quarantine tuples remain accepted during the parser migration.
 
 Exact fields and the `TxnType` literal vocabulary are defined in
 `src/ledger/parsers/types.py`. `parsers/validation.py` enforces the runtime
@@ -41,10 +42,11 @@ statement children.
 - Output statement identities are unique within a source.
 - A parser declares the scope and completeness of every holdings/cash section.
 
-Unique output identity, date/type/currency/option validity, finite numbers, and
-available raw lines are enforced now. Correct economic signs cannot be proven
-from a dataclass alone. Section scope/completeness and occurrence-level
-provenance remain warnings because the current types cannot represent them.
+Unique output identity, date/type/currency/option validity, finite numbers,
+declared scope validity, and source-span shape are enforced now. Correct
+economic signs cannot be proven from a dataclass alone. An emitted
+positions/cash scope without a declaration remains a warning and is persisted
+as `unknown`, never as complete.
 
 ## Transaction vocabulary
 
@@ -56,25 +58,28 @@ schema/docs, API, and tests updated together.
 
 ## Evidence and quarantine
 
-Today, transactions and positions can store `raw_line`; quarantine stores a
-raw line and reason. Cash and annual rows lack raw evidence, and no common type
-stores page, occurrence, bounding box, or parser rule. Verify therefore
-fuzzy-matches normalized raw strings to freshly extracted PDF lines.
+`SourceSpan` can carry raw text, page/line, bounding box, words, and parser
+rule. Transactions, positions, cash balances, snapshot sets, and the richer
+quarantine type can carry one. The writer assigns every parsed/quarantined row
+a deterministic evidence record, using a stable row occurrence when layout
+coordinates are not yet available. Cash balances now carry their opening/
+closing source line(s).
 
-The validator reports missing cash evidence and missing section completeness as
+The validator reports missing cash evidence and undeclared row scopes as
 explicit warnings. It treats malformed dates/currencies/numerics, invalid
 transaction vocabulary, incomplete options, duplicate statement identities,
-and parser-reported errors as fatal.
+invalid snapshot declarations, and parser-reported errors as fatal.
 
-Target evidence is a deterministic source-row key plus source fingerprint,
-page, occurrence, raw text, coordinates when available, and parser rule/version.
+Parser v1 implementations currently mostly supply raw lines and deterministic
+occurrences; Phase 4 must supply page/column coordinates and explicit
+complete/partial section declarations from layout-aware state machines.
 
 ## Known contract violations
 
 - All four bank parsers contain quantity `parsed or 0.0` paths; CIBC/RBC/HSBC
   also contain cash closing-balance fallbacks to zero.
-- The parser type cannot express a child currency/section scope or whether a
-  snapshot is complete.
+- Existing parser implementations have not yet declared child currency/section
+  scopes or proved completeness, even though the type can express them.
 - The database still accepts arbitrary transaction text, although new parser
   output is checked against `TxnType` before persistence.
 - Plain text extraction loses column geometry needed for defensible debit/

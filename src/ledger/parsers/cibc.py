@@ -388,7 +388,7 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                 amt = parse_money(_last_money(rest))
                 stmt.cash_balances.append(
                     ParsedCashBalance(currency=currency, opening_balance=amt,
-                                      closing_balance=amt or 0.0)
+                                      closing_balance=amt or 0.0, raw_line=ln)
                 )
                 continue
             if "closing cash balance" in low:
@@ -397,10 +397,13 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                 existing = next((c for c in stmt.cash_balances if c.currency == currency), None)
                 if existing is not None:
                     existing.closing_balance = amt or 0.0
+                    existing.raw_line = "\n".join(
+                        part for part in (existing.raw_line, ln) if part
+                    )
                 else:
                     stmt.cash_balances.append(
                         ParsedCashBalance(currency=currency, opening_balance=None,
-                                          closing_balance=amt or 0.0)
+                                          closing_balance=amt or 0.0, raw_line=ln)
                     )
                 continue
 

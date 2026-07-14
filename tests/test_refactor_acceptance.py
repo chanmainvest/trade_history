@@ -20,10 +20,6 @@ from ledger.pdf_text import PdfText
 from .fixture_loader import load_fixture
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Phase 2: nullable option columns defeat ordinary-instrument uniqueness",
-)
 def test_same_ordinary_instrument_upsert_returns_one_id(tmp_path):
     db_path = tmp_path / "ledger.sqlite"
     sqlite_db.init_db(db_path)
@@ -196,10 +192,6 @@ def test_missing_cash_number_is_quarantined_not_zero():
     assert any("Closing Cash Balance NOT AVAILABLE" in raw for raw, _ in statement.quarantine)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Phase 2/5: explicit residual/status records do not exist yet",
-)
 def test_schema_persists_explicit_reconciliation_results(tmp_path):
     db_path = tmp_path / "ledger.sqlite"
     sqlite_db.init_db(db_path)

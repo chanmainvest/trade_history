@@ -78,11 +78,13 @@ def _total_rows(
     syms = [s.upper() for s in _csv_list(symbol)]
 
     checkpoint_sql = [
-        "SELECT DISTINCT ps.as_of_date, ps.account_id",
+        "SELECT DISTINCT ps.as_of_date, ps.account_id, ps.currency",
         "  FROM position_snapshots ps",
+        "  JOIN snapshot_sets ss ON ss.snapshot_set_id = ps.snapshot_set_id",
         "  JOIN accounts a ON a.account_id = ps.account_id",
         "  JOIN institutions i ON i.institution_id = a.institution_id",
         " WHERE 1=1",
+        "   AND ss.section_type = 'positions' AND ss.can_clear_omitted = 1",
         *account_filter_sql,
         " ORDER BY ps.as_of_date",
     ]
@@ -91,10 +93,12 @@ def _total_rows(
         "SELECT ps.as_of_date, ps.account_id, ps.instrument_id,",
         "       ps.quantity, ps.market_value, ps.currency",
         "  FROM position_snapshots ps",
+        "  JOIN snapshot_sets ss ON ss.snapshot_set_id = ps.snapshot_set_id",
         "  JOIN accounts a ON a.account_id = ps.account_id",
         "  JOIN institutions i ON i.institution_id = a.institution_id",
         "  JOIN instruments inst ON inst.instrument_id = ps.instrument_id",
         " WHERE 1=1",
+        "   AND ss.section_type = 'positions' AND ss.can_clear_omitted = 1",
         *account_filter_sql,
     ]
     params: list = list(account_params)
@@ -109,9 +113,11 @@ def _total_rows(
     cash_sql = [
         "SELECT cb.as_of_date, cb.account_id, cb.currency, cb.closing_balance",
         "  FROM cash_balances cb",
+        "  JOIN snapshot_sets ss ON ss.snapshot_set_id = cb.snapshot_set_id",
         "  JOIN accounts a ON a.account_id = cb.account_id",
         "  JOIN institutions i ON i.institution_id = a.institution_id",
         " WHERE 1=1",
+        "   AND ss.section_type = 'cash' AND ss.can_clear_omitted = 1",
         *account_filter_sql,
         " ORDER BY cb.as_of_date",
     ]
@@ -162,13 +168,19 @@ def _total_rows(
     cash_by_date: dict[str, list[dict]] = {}
     for r in raw_cash:
         cash_by_date.setdefault(r["as_of_date"], []).append(r)
-    checkpoint_accounts_by_date: dict[str, set[int]] = {}
+    checkpoint_scopes_by_date: dict[str, set[tuple[int, str]]] = {}
     for r in checkpoint_rows:
-        checkpoint_accounts_by_date.setdefault(r["as_of_date"], set()).add(r["account_id"])
+        checkpoint_scopes_by_date.setdefault(r["as_of_date"], set()).add(
+            (r["account_id"], r["currency"])
+        )
     rows: list[dict] = []
     for d in dates:
-        for acct in checkpoint_accounts_by_date.get(d, set()):
-            for key in [key for key in position_state if key[0] == acct]:
+        for acct, currency in checkpoint_scopes_by_date.get(d, set()):
+            for key in [
+                key
+                for key, value in position_state.items()
+                if key[0] == acct and value[0] == currency
+            ]:
                 del position_state[key]
         for r in by_date.get(d, []):
             if abs(r["quantity"] or 0.0) > 1e-9:

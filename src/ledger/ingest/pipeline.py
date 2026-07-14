@@ -8,12 +8,20 @@ from pathlib import Path
 
 from .. import config
 from ..db import sqlite as sqlite_db
+from ..identity import canonical_statement_key, evidence_occurrence
 from ..logging_setup import get_logger, jsonl_path
 from ..parsers import registry  # noqa: F401  (ensures parsers register)
 from ..parsers.registry import select_parser
-from ..parsers.types import ParsedStatement, ParseResult
+from ..parsers.types import (
+    PARSER_CONTRACT_VERSION,
+    ParsedQuarantine,
+    ParsedStatement,
+    ParseResult,
+    SourceSpan,
+)
 from ..parsers.validation import validate_parse_result
 from ..pdf_text import PdfText, extract_pdf
+from ..quantity import quantity_delta
 
 log = get_logger("ingest")
 
@@ -63,11 +71,59 @@ def _record_source_file(conn, pdf: PdfText, *, parser_name: str | None,
             datetime.now(UTC).isoformat(timespec="seconds"), parse_status,
         ),
     )
-    return cur.fetchone()[0]
+    source_file_id = int(cur.fetchone()[0])
+    sqlite_db.record_ingestion_run(
+        conn,
+        source_file_id=source_file_id,
+        source_sha256=pdf.sha256,
+        parser_name=parser_name,
+        parser_version=parser_version,
+        contract_version=PARSER_CONTRACT_VERSION,
+        status=parse_status,
+    )
+    return source_file_id
+
+
+def _write_evidence(
+    conn,
+    *,
+    source_file_id: int,
+    run_id: int,
+    parser_version: str | None,
+    statement_key: str,
+    row_kind: str,
+    row_index: int,
+    raw_text: str | None,
+    source_span: SourceSpan | None,
+    default_rule: str,
+) -> int:
+    span = source_span or SourceSpan()
+    return sqlite_db.upsert_source_evidence(
+        conn,
+        source_file_id=source_file_id,
+        ingestion_run_id=run_id,
+        row_kind=row_kind,
+        occurrence=evidence_occurrence(statement_key, row_kind, row_index),
+        raw_text=span.raw_text if span.raw_text is not None else raw_text,
+        parser_version=parser_version,
+        parser_rule=span.parser_rule or default_rule,
+        page_number=span.page_number,
+        line_number=span.line_number,
+        bbox=span.bbox,
+        words=span.words,
+    )
+
+
+def _quarantine_parts(
+    item: tuple[str, str] | ParsedQuarantine,
+) -> tuple[str, str, SourceSpan | None]:
+    if isinstance(item, ParsedQuarantine):
+        return item.raw_line, item.reason, item.source_span
+    return item[0], item[1], None
 
 
 def _write_statement(conn, *, source_file_id: int, institution_code: str,
-                     stmt: ParsedStatement) -> None:
+                      stmt: ParsedStatement) -> None:
     inst_id = sqlite_db.upsert_institution(conn, institution_code, institution_code)
     acct_id = sqlite_db.upsert_account(
         conn,
@@ -76,18 +132,47 @@ def _write_statement(conn, *, source_file_id: int, institution_code: str,
         account_type=stmt.account.account_type,
         base_currency=stmt.account.base_currency,
     )
+    run_id = sqlite_db.active_ingestion_run_id(conn, source_file_id)
+    source = conn.execute(
+        "SELECT relpath, sha256 FROM source_files WHERE source_file_id = ?",
+        (source_file_id,),
+    ).fetchone()
+    source_identity = source["sha256"] or source["relpath"]
+    persisted_statement_key = canonical_statement_key(
+        source_identity=source_identity,
+        institution_code=institution_code,
+        account_number=stmt.account.account_number,
+        period_start=stmt.period_start,
+        period_end=stmt.period_end,
+        statement_type=stmt.statement_type,
+    )
     cur = conn.execute(
         """
-        INSERT INTO statements (source_file_id, account_id, period_start, period_end, statement_type)
-        VALUES (?,?,?,?,?)
-        ON CONFLICT(source_file_id, account_id, period_end) DO UPDATE SET
-            period_start = excluded.period_start,
-            statement_type = excluded.statement_type
+        INSERT INTO statements (
+            source_file_id, ingestion_run_id, account_id, statement_key,
+            period_start, period_end, statement_type
+        ) VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT(source_file_id, account_id, period_start, period_end, statement_type)
+        DO UPDATE SET
+            ingestion_run_id = excluded.ingestion_run_id,
+            statement_key = excluded.statement_key
         RETURNING statement_id
         """,
-        (source_file_id, acct_id, stmt.period_start, stmt.period_end, stmt.statement_type),
+        (
+            source_file_id,
+            run_id,
+            acct_id,
+            persisted_statement_key,
+            stmt.period_start,
+            stmt.period_end,
+            stmt.statement_type,
+        ),
     )
     statement_id = cur.fetchone()[0]
+    parser_version = conn.execute(
+        "SELECT parser_version FROM ingestion_runs WHERE ingestion_run_id = ?",
+        (run_id,),
+    ).fetchone()[0]
 
     # Replace child rows (idempotent re-ingest).
     conn.execute(
@@ -103,15 +188,99 @@ def _write_statement(conn, *, source_file_id: int, institution_code: str,
         (statement_id, statement_id),
     )
     conn.execute("DELETE FROM transactions WHERE statement_id = ?", (statement_id,))
-    conn.execute("DELETE FROM position_snapshots WHERE statement_id = ?", (statement_id,))
-    conn.execute("DELETE FROM cash_balances WHERE statement_id = ?", (statement_id,))
+    conn.execute("DELETE FROM reconciliation_results WHERE statement_id = ?", (statement_id,))
+    conn.execute("DELETE FROM snapshot_sets WHERE statement_id = ?", (statement_id,))
     conn.execute("DELETE FROM annual_performance_reports WHERE statement_id = ?", (statement_id,))
     conn.execute(
-        "DELETE FROM quarantine_transactions WHERE source_file_id = ? AND account_id = ?",
-        (source_file_id, acct_id),
+        "DELETE FROM quarantine_transactions "
+        "WHERE statement_id = ? OR "
+        "(statement_id IS NULL AND source_file_id = ? AND account_id = ?)",
+        (statement_id, source_file_id, acct_id),
     )
 
-    for t in stmt.transactions:
+    snapshot_sets: dict[tuple[str, str, str], int] = {}
+    for set_index, parsed_set in enumerate(stmt.snapshot_sets):
+        evidence_id = None
+        if parsed_set.source_span is not None:
+            evidence_id = _write_evidence(
+                conn,
+                source_file_id=source_file_id,
+                run_id=run_id,
+                parser_version=parser_version,
+                statement_key=persisted_statement_key,
+                row_kind=f"snapshot_set_{parsed_set.section_type}",
+                row_index=set_index,
+                raw_text=None,
+                source_span=parsed_set.source_span,
+                default_rule="parser:snapshot-set",
+            )
+        key = (parsed_set.currency, parsed_set.section_type, parsed_set.scope_key)
+        snapshot_sets[key] = sqlite_db.upsert_snapshot_set(
+            conn,
+            statement_id=statement_id,
+            account_id=acct_id,
+            as_of_date=stmt.period_end,
+            currency=parsed_set.currency,
+            section_type=parsed_set.section_type,
+            scope_key=parsed_set.scope_key,
+            completeness=parsed_set.completeness,
+            evidence_id=evidence_id,
+            reported_total=parsed_set.reported_total,
+            validation_status=parsed_set.validation_status,
+        )
+
+    actual_scopes = {
+        (position.currency, "positions", position.scope_key)
+        for position in stmt.positions
+    } | {
+        (cash.currency, "cash", cash.scope_key)
+        for cash in stmt.cash_balances
+    }
+    for key in sorted(actual_scopes):
+        if key in snapshot_sets:
+            continue
+        currency, section_type, scope_key = key
+        snapshot_sets[key] = sqlite_db.upsert_snapshot_set(
+            conn,
+            statement_id=statement_id,
+            account_id=acct_id,
+            as_of_date=stmt.period_end,
+            currency=currency,
+            section_type=section_type,
+            scope_key=scope_key,
+            completeness="unknown",
+            evidence_id=None,
+            reported_total=None,
+            validation_status="warning",
+        )
+
+    for row_index, t in enumerate(stmt.transactions):
+        evidence_id = _write_evidence(
+            conn,
+            source_file_id=source_file_id,
+            run_id=run_id,
+            parser_version=parser_version,
+            statement_key=persisted_statement_key,
+            row_kind="transaction",
+            row_index=row_index,
+            raw_text=t.raw_line,
+            source_span=t.source_span,
+            default_rule="parser:transaction",
+        )
+        resolution_evidence_id = None
+        if t.resolution_evidence is not None:
+            resolution_evidence_id = _write_evidence(
+                conn,
+                source_file_id=source_file_id,
+                run_id=run_id,
+                parser_version=parser_version,
+                statement_key=persisted_statement_key,
+                row_kind="transaction_resolution",
+                row_index=row_index,
+                raw_text=t.raw_line,
+                source_span=t.resolution_evidence,
+                default_rule="resolver:unspecified",
+            )
         instr_id = None
         if t.instrument is not None:
             i = t.instrument
@@ -122,24 +291,51 @@ def _write_statement(conn, *, source_file_id: int, institution_code: str,
                 option_root=i.option_root, option_expiry=i.option_expiry,
                 option_strike=i.option_strike, option_type=i.option_type,
                 option_multiplier=i.option_multiplier,
+                resolution_method=t.resolution_method,
+                resolution_confidence=t.resolution_confidence,
             )
+        position_effect = (
+            t.position_delta
+            if t.position_delta is not None
+            else quantity_delta(t.txn_type, t.quantity)
+            if t.quantity is not None
+            else None
+        )
+        cash_effect = t.cash_delta if t.cash_delta is not None else t.net_amount
         conn.execute(
             """INSERT INTO transactions
-            (account_id, statement_id, source_file_id, trade_date, settle_date,
-             txn_type, instrument_id, quantity, price, gross_amount, commission,
-             other_fees, net_amount, currency, tax_country, tax_rate,
-             description, raw_line, parser_confidence)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (account_id, statement_id, source_file_id, ingestion_run_id,
+             evidence_id, trade_date, settle_date, txn_type, instrument_id,
+             quantity, position_delta, price, gross_amount, commission,
+             other_fees, net_amount, cash_delta, cash_effective_date, currency,
+             tax_country, tax_rate, description, raw_line, parser_confidence,
+             resolution_method, resolution_confidence, resolution_evidence_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                acct_id, statement_id, source_file_id, t.trade_date, t.settle_date,
-                t.txn_type, instr_id, t.quantity, t.price, t.gross_amount,
-                t.commission, t.other_fees, t.net_amount, t.currency,
-                t.tax_country, t.tax_rate, t.description, t.raw_line,
-                t.parser_confidence,
+                acct_id, statement_id, source_file_id, run_id, evidence_id,
+                t.trade_date, t.settle_date, t.txn_type, instr_id, t.quantity,
+                position_effect, t.price, t.gross_amount, t.commission,
+                t.other_fees, t.net_amount, cash_effect,
+                t.cash_effective_date or t.settle_date or t.trade_date,
+                t.currency, t.tax_country, t.tax_rate, t.description,
+                t.raw_line, t.parser_confidence, t.resolution_method,
+                t.resolution_confidence, resolution_evidence_id,
             ),
         )
 
-    for p in stmt.positions:
+    for row_index, p in enumerate(stmt.positions):
+        evidence_id = _write_evidence(
+            conn,
+            source_file_id=source_file_id,
+            run_id=run_id,
+            parser_version=parser_version,
+            statement_key=persisted_statement_key,
+            row_kind="position",
+            row_index=row_index,
+            raw_text=p.raw_line,
+            source_span=p.source_span,
+            default_rule="parser:position",
+        )
         i = p.instrument
         instr_id = sqlite_db.upsert_instrument(
             conn,
@@ -151,33 +347,57 @@ def _write_statement(conn, *, source_file_id: int, institution_code: str,
         )
         conn.execute(
             """INSERT INTO position_snapshots
-            (statement_id, account_id, as_of_date, instrument_id, quantity,
-             avg_cost, book_value, market_price, market_value, unrealized_pnl,
-             currency, raw_line) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(statement_id, instrument_id) DO UPDATE SET
+            (statement_id, snapshot_set_id, evidence_id, account_id, as_of_date,
+             instrument_id, quantity, avg_cost, book_value, market_price,
+             market_value, unrealized_pnl, currency, raw_line)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(snapshot_set_id, instrument_id) DO UPDATE SET
+                evidence_id   = excluded.evidence_id,
                 quantity      = excluded.quantity,
                 avg_cost      = excluded.avg_cost,
                 book_value    = excluded.book_value,
                 market_price  = excluded.market_price,
                 market_value  = excluded.market_value,
-                unrealized_pnl= excluded.unrealized_pnl""",
+                unrealized_pnl= excluded.unrealized_pnl,
+                raw_line      = excluded.raw_line""",
             (
-                statement_id, acct_id, stmt.period_end, instr_id, p.quantity,
+                statement_id,
+                snapshot_sets[(p.currency, "positions", p.scope_key)],
+                evidence_id, acct_id, stmt.period_end, instr_id, p.quantity,
                 p.avg_cost, p.book_value, p.market_price, p.market_value,
                 p.unrealized_pnl, p.currency, p.raw_line,
             ),
         )
 
-    for c in stmt.cash_balances:
+    for row_index, c in enumerate(stmt.cash_balances):
+        evidence_id = _write_evidence(
+            conn,
+            source_file_id=source_file_id,
+            run_id=run_id,
+            parser_version=parser_version,
+            statement_key=persisted_statement_key,
+            row_kind="cash",
+            row_index=row_index,
+            raw_text=c.raw_line,
+            source_span=c.source_span,
+            default_rule="parser:cash",
+        )
         conn.execute(
             """INSERT INTO cash_balances
-            (statement_id, account_id, as_of_date, currency, opening_balance, closing_balance)
-            VALUES (?,?,?,?,?,?)
-            ON CONFLICT(statement_id, currency) DO UPDATE SET
+            (statement_id, snapshot_set_id, evidence_id, account_id, as_of_date,
+             currency, opening_balance, closing_balance, raw_line)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(snapshot_set_id) DO UPDATE SET
+                evidence_id = excluded.evidence_id,
                 opening_balance = excluded.opening_balance,
-                closing_balance = excluded.closing_balance""",
-            (statement_id, acct_id, stmt.period_end, c.currency,
-             c.opening_balance, c.closing_balance),
+                closing_balance = excluded.closing_balance,
+                raw_line = excluded.raw_line""",
+            (
+                statement_id,
+                snapshot_sets[(c.currency, "cash", c.scope_key)],
+                evidence_id, acct_id, stmt.period_end, c.currency,
+                c.opening_balance, c.closing_balance, c.raw_line,
+            ),
         )
 
     for perf in stmt.annual_performance:
@@ -214,11 +434,37 @@ def _write_statement(conn, *, source_file_id: int, institution_code: str,
             ),
         )
 
-    for raw, reason in stmt.quarantine:
+    for row_index, item in enumerate(stmt.quarantine):
+        raw, reason, span = _quarantine_parts(item)
+        evidence_id = _write_evidence(
+            conn,
+            source_file_id=source_file_id,
+            run_id=run_id,
+            parser_version=parser_version,
+            statement_key=persisted_statement_key,
+            row_kind="quarantine",
+            row_index=row_index,
+            raw_text=raw,
+            source_span=span,
+            default_rule="parser:quarantine",
+        )
         conn.execute(
-            "INSERT INTO quarantine_transactions(source_file_id, account_id, raw_line, reason) "
-            "VALUES (?,?,?,?)",
-            (source_file_id, acct_id, raw, reason),
+            """
+            INSERT INTO quarantine_transactions(
+                source_file_id, ingestion_run_id, statement_id, account_id,
+                evidence_id, occurrence, raw_line, reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source_file_id,
+                run_id,
+                statement_id,
+                acct_id,
+                evidence_id,
+                evidence_occurrence(persisted_statement_key, "quarantine", row_index),
+                raw,
+                reason,
+            ),
         )
 
 

@@ -51,17 +51,26 @@ def _clear_auto_transfer_links(conn: sqlite3.Connection) -> int:
 
 
 def _security_delta(row: sqlite3.Row) -> float:
-    if row["instrument_id"] is None or row["quantity"] is None:
+    if row["instrument_id"] is None:
         return 0.0
-    if row["txn_type"] == "journal":
-        return float(row["quantity"] or 0.0)
+    if "position_delta" in row.keys() and row["position_delta"] is not None:
+        return float(row["position_delta"])
+    if row["quantity"] is None:
+        return 0.0
     return quantity_delta(row["txn_type"], row["quantity"])
 
 
 def _cash_delta(row: sqlite3.Row) -> float:
-    if row["instrument_id"] is not None or row["net_amount"] is None:
+    if row["instrument_id"] is not None:
         return 0.0
-    amount = float(row["net_amount"] or 0.0)
+    amount_value = (
+        row["cash_delta"]
+        if "cash_delta" in row.keys() and row["cash_delta"] is not None
+        else row["net_amount"]
+    )
+    if amount_value is None:
+        return 0.0
+    amount = float(amount_value)
     if row["txn_type"] == "transfer_in":
         return abs(amount)
     if row["txn_type"] == "transfer_out":
@@ -69,10 +78,15 @@ def _cash_delta(row: sqlite3.Row) -> float:
     return amount
 
 
-def _transfer_key(row: sqlite3.Row) -> tuple[str, int | str, str, float] | None:
+def _transfer_key(row: sqlite3.Row) -> tuple[str, str, str, float] | None:
     security_delta = _security_delta(row)
-    if abs(security_delta) > 1e-9 and row["instrument_id"] is not None:
-        return ("instrument", int(row["instrument_id"]), row["currency"] or "", round(abs(security_delta), 8))
+    if abs(security_delta) > 1e-9 and row["instrument_key"] is not None:
+        return (
+            "instrument",
+            str(row["instrument_key"]),
+            row["currency"] or "",
+            round(abs(security_delta), 8),
+        )
     cash_delta = _cash_delta(row)
     if abs(cash_delta) > 0.005:
         return ("cash", row["currency"] or "", row["currency"] or "", round(abs(cash_delta), 2))
@@ -93,20 +107,23 @@ def link_transfers(
 ) -> dict:
     """Pair unambiguous transfer rows and populate counterpart fields."""
     db_path = path if path is not None else sqlite_db.SQLITE_PATH
+    sqlite_db.init_db(db_path)
     with sqlite_db.session(db_path) as conn:
         cleared = _clear_auto_transfer_links(conn)
         rows = conn.execute(
             """
-            SELECT transaction_id, account_id, trade_date, txn_type,
-                   instrument_id, quantity, net_amount, currency, description
-              FROM transactions
+            SELECT t.transaction_id, t.account_id, t.trade_date, t.txn_type,
+                   t.instrument_id, i.instrument_key, t.quantity, t.position_delta,
+                   t.net_amount, t.cash_delta, t.currency, t.description
+              FROM transactions t
+              LEFT JOIN instruments i ON i.instrument_id = t.instrument_id
              WHERE txn_type IN ('transfer_in', 'transfer_out', 'journal')
                AND counterpart_txn_id IS NULL
              ORDER BY trade_date, transaction_id
             """
         ).fetchall()
 
-        incoming: dict[tuple[str, int | str, str, float], list[sqlite3.Row]] = {}
+        incoming: dict[tuple[str, str, str, float], list[sqlite3.Row]] = {}
         outgoing: list[sqlite3.Row] = []
         skipped_missing_key = 0
         for row in rows:
@@ -193,20 +210,28 @@ def link_transfers(
 def rebuild_position_transaction_links(path: Path | str | None = None) -> dict:
     """Rebuild monthly snapshot movement attribution from transaction rows."""
     db_path = path if path is not None else sqlite_db.SQLITE_PATH
+    sqlite_db.init_db(db_path)
     with sqlite_db.session(db_path) as conn:
         conn.execute("DELETE FROM position_transaction_links")
         snapshots = conn.execute(
             """
-            SELECT snapshot_id, account_id, instrument_id, as_of_date, statement_id
-              FROM position_snapshots
-             ORDER BY account_id, instrument_id, as_of_date, statement_id, snapshot_id
+            SELECT ps.snapshot_id, ps.account_id, ps.instrument_id, ps.as_of_date,
+                   ps.statement_id, ps.currency, i.instrument_key
+              FROM position_snapshots ps
+              JOIN instruments i ON i.instrument_id = ps.instrument_id
+             ORDER BY ps.account_id, i.instrument_key, ps.currency,
+                      ps.as_of_date, ps.statement_id, ps.snapshot_id
             """
         ).fetchall()
-        previous_snapshot_date: dict[tuple[int, int], str] = {}
+        previous_snapshot_date: dict[tuple[int, str, str], str] = {}
         linked = 0
         for snapshot in snapshots:
-            key = (int(snapshot["account_id"]), int(snapshot["instrument_id"]))
-            params: list = [snapshot["account_id"], snapshot["instrument_id"], snapshot["as_of_date"]]
+            key = (
+                int(snapshot["account_id"]),
+                str(snapshot["instrument_key"]),
+                str(snapshot["currency"]),
+            )
+            params: list = [snapshot["account_id"], snapshot["instrument_key"], snapshot["as_of_date"]]
             previous_date = previous_snapshot_date.get(key)
             previous_clause = ""
             if previous_date is not None:
@@ -214,18 +239,20 @@ def rebuild_position_transaction_links(path: Path | str | None = None) -> dict:
                 params.append(previous_date)
             transactions = conn.execute(
                 f"""
-                SELECT transaction_id, txn_type, quantity
-                  FROM transactions
-                 WHERE account_id = ?
-                   AND instrument_id = ?
-                   AND trade_date <= ?
+                SELECT t.transaction_id, t.instrument_id, t.txn_type, t.quantity,
+                       t.position_delta
+                  FROM transactions t
+                  JOIN instruments i ON i.instrument_id = t.instrument_id
+                 WHERE t.account_id = ?
+                   AND i.instrument_key = ?
+                   AND t.trade_date <= ?
                    {previous_clause}
                  ORDER BY trade_date, transaction_id
                 """,
                 params,
             ).fetchall()
             for transaction in transactions:
-                attributed = quantity_delta(transaction["txn_type"], transaction["quantity"])
+                attributed = _security_delta(transaction)
                 if abs(attributed) <= 1e-9:
                     continue
                 conn.execute(

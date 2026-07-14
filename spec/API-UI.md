@@ -59,11 +59,11 @@ An empty `account_ids` list means all accounts. Legacy `display_currency` and
 ## Known read-model problems
 
 The Monthly, Performance, and Visualisation paths do not share a holdings
-engine. Monthly uses unstable instrument IDs and incomplete diff keys;
-Performance assumes any account checkpoint is complete. The extraction and
-reconciliation refactor must replace these with one canonical read service and
-surface checkpoint/reconciliation/pricing quality without adding ledger writes
-to the GUI.
+engine. Monthly now uses canonical identity/currency diff keys and
+Monthly/Performance refuse to clear from partial or unknown scopes, but
+Visualisation remains separate and no route yet returns reconciliation/pricing
+quality. The refactor must still replace these with one canonical read service
+without adding ledger writes to the GUI.
 
 ## Frontend rules
 

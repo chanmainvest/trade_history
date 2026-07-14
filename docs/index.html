@@ -280,9 +280,10 @@ database, across all accounts in the active portfolio.</p>
   toggles off automatically when "Hide $ values" is on.</li>
 </ul>
 <p>The chart forward-fills accounts whose statement dates do not line up and
-clears an account's prior holdings when a later checkpoint omits them. The
-current schema cannot prove checkpoint completeness, so partial extraction can
-incorrectly clear holdings. See <a href="#reconciliation">RECONCILIATION.md</a>.</p>
+clears an account/currency scope only when its later checkpoint is explicitly
+complete. Current parser v1 output is conservatively <code>unknown</code>, so it may carry
+an old holding forward rather than clear it until the parser rebuild proves the
+section complete. See <a href="#reconciliation">RECONCILIATION.md</a>.</p>
 <h3 id="44-research">4.4 Research</h3>
 <p>Per-symbol deep dive.</p>
 <ul>
@@ -443,7 +444,7 @@ It intentionally does not offer arbitrary shell access.</p>
 </tr>
 <tr>
 <td>Performance chart drops to zero</td>
-<td>Holdings were sold, filtered, or omitted by a checkpoint currently assumed complete</td>
+<td>Holdings were sold, filtered, or omitted by a checkpoint explicitly marked complete</td>
 <td>Check Verify/current-state warnings; broaden filters, or pass <code>forward_fill=false</code> to <code>/api/performance/total</code> for raw sums</td>
 </tr>
 <tr>
@@ -581,7 +582,7 @@ snapshot, not a release promise. Re-run the audit before relying on them.</p>
 </ul>
 <h2 id="validation-baseline">Validation baseline</h2>
 <ul>
-<li><code>uv run python -m pytest -q</code>: 30 tests passed and seven later-phase
+<li><code>uv run python -m pytest -q</code>: 38 tests passed and five later-phase
   acceptance requirements are recorded as strict xfails.</li>
 <li><code>uv run ruff check src tests</code>: passed.</li>
 <li><code>npm run build</code> in <code>frontend/</code>: passed with Vite's large-bundle warning.</li>
@@ -653,36 +654,43 @@ snapshot, not a release promise. Re-run the audit before relying on them.</p>
 </table>
 <h2 id="confirmed-correctness-defects">Confirmed correctness defects</h2>
 <ol>
-<li><strong>Instrument identity is not unique in practice.</strong> The unique constraint
-   contains nullable option columns, and SQLite treats <code>NULL</code> values as
-   distinct. The audit found 803 duplicate logical groups, 31,567 excess IDs,
-   and 28,587 unreferenced instrument rows.</li>
+<li><strong>The dated live ledger still has broken instrument identity.</strong> Schema v6
+   gives new/migrated rows one non-null canonical key and collapses duplicate
+   references, but the 2026-07-12 live snapshot has not been migrated or
+   shadow-rebuilt. That snapshot contains 803 duplicate logical groups, 31,567
+   excess IDs, and 28,587 unreferenced instrument rows.</li>
 <li><strong>RBC CAD and USD blocks overwrite each other.</strong> Both parser outputs use the
    same statement key. Writing the later block deletes the earlier children.</li>
 <li><strong>TD 2018–2022 bundled months are not split correctly.</strong> Repeated statement
    keys overwrite segments; 470 audited TD transactions fall outside the
    stored statement period.</li>
-<li><strong>Source replacement is not atomic.</strong> Statements are activated one at a
-   time, duplicate output keys are not rejected, obsolete prior outputs are
-   not removed, and a failed attempt can leave stale active children.</li>
-<li><strong>“Reconciliation” is link attribution only.</strong> No expected close, actual
-   close, residual, tolerance, or status is computed or persisted.</li>
+<li><strong>Source replacement is not atomic.</strong> Duplicate parser output keys are now
+   rejected before writes and failed attempts retain the active-run pointer,
+   but statements are still activated one at a time and obsolete prior output
+   is not removed.</li>
+<li><strong>“Reconciliation” is still link attribution only.</strong> Schema v6 can persist
+   expected/actual close, residual, tolerance, and status, but no engine
+   computes or stores those results yet.</li>
 <li><strong>Cash does not reliably roll forward.</strong> Using
    <code>closing = opening + SUM(net_amount)</code>, 198 of 459 live rows differ by more
    than one cent; the text-corpus check fails 316 statement/currency cases.</li>
 <li><strong>Positions do not reliably roll forward.</strong> Grouped by logical instrument,
    492 of 5,517 consecutive snapshot intervals have a quantity residual.</li>
-<li><strong>Monthly joins checkpoints and movements by unstable <code>instrument_id</code>.</strong> A
-   logical security can appear as duplicate rows, and post-checkpoint rows can
-   be unpriced. Monthly diff keys also omit currency/canonical identity.</li>
-<li><strong>Snapshot completeness is not represented.</strong> Monthly and Performance can
-   clear prior positions merely because some rows exist on a later date.</li>
+<li><strong>Holdings consumers are only partly aligned.</strong> Monthly now keys movements
+   and diff rows by canonical identity/currency; Performance respects complete
+   scoped checkpoints. Visualisations and the broader shared-holdings refactor
+   remain pending, and post-checkpoint rows can still be unpriced.</li>
+<li><strong>Parser completeness is still unproven.</strong> Schema v6 represents scoped
+   completeness and Monthly/Performance refuse to clear from partial/unknown
+   scopes, but current parser outputs are stored as <code>unknown</code> until Phase 4
+   can prove their sections complete.</li>
 <li><strong>Unknown numbers can become zero.</strong> Parsers contain <code>parsed or 0.0</code>
     fallbacks for quantities and cash, making parse failure indistinguishable
     from a reported zero.</li>
-<li><strong>Provenance is too weak.</strong> Cash has no raw line, parsed rows lack page/word
-    coordinates, and quarantine identity omits occurrence. The live DB has
-    4,620 exact duplicate quarantine rows under a coarse logical key.</li>
+<li><strong>Legacy/live provenance remains weak.</strong> New rows carry deterministic
+    evidence records and cash raw lines; parser v1 still lacks page/word
+    coordinates and the live snapshot retains 4,620 exact duplicate quarantine
+    rows under its old coarse identity.</li>
 </ol>
 <h2 id="corpus-evidence">Corpus evidence</h2>
 <p>Phase 1 added <code>ledger audit extraction</code>, which parses without opening SQLite
@@ -706,8 +714,8 @@ ledger rows.</p>
   active database.</li>
 <li>The current ingestion cache uses only source path/hash/status, not parser,
   resolver, or schema version.</li>
-<li>New fatal parser-contract errors are blocked before child-row writes, but the
-  current source row still lacks a separate last-good active run.</li>
+<li><code>ingestion_runs</code> and active-run pointers exist, but source-wide staged
+  activation, content hashes, and truthful cache invalidation remain pending.</li>
 <li>The target repair and cutover are defined in
   <code>plan/EXTRACTION_RECONCILIATION_REFACTOR.md</code>; they are not implemented yet.</li>
 </ul>
@@ -814,7 +822,7 @@ see <a href="#reconciliation">RECONCILIATION.md</a>.</p>
 <p>This document describes the schema currently implemented. Exact SQLite DDL is
 owned by <code>src/ledger/db/schema.sql</code>; exact DuckDB DDL is the <code>DDL</code> string in
 <code>src/ledger/db/duckdb_store.py</code>. Update code and this spec together.</p>
-<h2 id="sqlite-ledger-schema-version-5">SQLite ledger (schema version 5)</h2>
+<h2 id="sqlite-ledger-schema-version-6">SQLite ledger (schema version 6)</h2>
 <p>All dates are ISO text and monetary values remain in the row's native
 <code>currency</code>.</p>
 <table>
@@ -839,22 +847,27 @@ owned by <code>src/ledger/db/schema.sql</code>; exact DuckDB DDL is the <code>DD
 <tr>
 <td>Securities</td>
 <td><code>instruments</code>, <code>instrument_aliases</code>, <code>instrument_identifier_lookups</code></td>
-<td>parsed/reviewed security identities and aliases</td>
+<td>one non-null canonical key per logical instrument plus reviewed aliases</td>
 </tr>
 <tr>
 <td>Source</td>
-<td><code>source_files</code>, <code>statements</code></td>
-<td>one source path; statement unique on <code>(source_file_id, account_id, period_end)</code></td>
+<td><code>source_files</code>, <code>ingestion_runs</code>, <code>statements</code></td>
+<td>source metadata, immutable attempts, and account-period output</td>
+</tr>
+<tr>
+<td>Evidence</td>
+<td><code>source_evidence</code></td>
+<td>deterministic source-row provenance without exposing it in public audit logs</td>
 </tr>
 <tr>
 <td>Ledger</td>
 <td><code>transactions</code>, <code>quarantine_transactions</code></td>
-<td>movements and unparsed evidence</td>
+<td>reported rows plus normalized deltas and evidence links</td>
 </tr>
 <tr>
 <td>Checkpoints</td>
-<td><code>position_snapshots</code>, <code>cash_balances</code></td>
-<td>statement holdings/cash by date</td>
+<td><code>snapshot_sets</code>, <code>position_snapshots</code>, <code>cash_balances</code></td>
+<td>independently complete currency/section checkpoints</td>
 </tr>
 <tr>
 <td>Pre-history</td>
@@ -867,9 +880,9 @@ owned by <code>src/ledger/db/schema.sql</code>; exact DuckDB DDL is the <code>DD
 <td>annual statement totals/returns, not movements</td>
 </tr>
 <tr>
-<td>Attribution</td>
-<td><code>position_transaction_links</code></td>
-<td>transactions since the prior same-ID snapshot</td>
+<td>Reconciliation</td>
+<td><code>position_transaction_links</code>, <code>reconciliation_results</code>, <code>reconciliation_components</code></td>
+<td>legacy attribution plus explicit result/equation storage</td>
 </tr>
 <tr>
 <td>Metadata</td>
@@ -878,35 +891,51 @@ owned by <code>src/ledger/db/schema.sql</code>; exact DuckDB DDL is the <code>DD
 </tr>
 </tbody>
 </table>
-<h3 id="transactions">Transactions</h3>
-<p><code>transactions</code> stores account/source/statement, trade and optional settlement
-date, <code>txn_type</code>, optional instrument, quantity, price, gross/fees/net amount,
-currency, optional transfer counterpart/tax data, description, <code>raw_line</code>, and
-parser confidence. The database does not constrain <code>txn_type</code>; the Python
-literal vocabulary is defined in <code>parsers/types.py</code>.</p>
-<p><code>quantity</code> is not consistently normalized by all parsers. Consumers call
-<code>quantity.quantity_delta()</code> to interpret position effect. <code>net_amount</code> is
-intended to be signed cash effect, but the parser corpus does not currently
-satisfy that contract reliably.</p>
-<h3 id="checkpoints">Checkpoints</h3>
-<p><code>position_snapshots</code> is unique on <code>(statement_id, instrument_id)</code> and stores
-reported quantity/cost/price/value/P&amp;L plus optional raw text. <code>cash_balances</code>
-is unique on <code>(statement_id, currency)</code> and stores opening/closing values, but
-no source raw line. Neither table represents section scope or completeness.</p>
-<h3 id="instrument-identity-defect">Instrument identity defect</h3>
-<p>The current uniqueness key is:</p>
-<div class="highlight"><pre><span></span><code>(asset_type, symbol, currency, option_expiry, option_strike, option_type)
-</code></pre></div>
-<p>Option fields are <code>NULL</code> for ordinary instruments. In SQLite, <code>NULL</code> values do
-not conflict under a unique constraint, so repeated ordinary-instrument
-upserts create new rows. Transactions and snapshots for the same printed
-security can therefore reference different IDs. This is a confirmed defect,
-not intended behavior.</p>
-<h3 id="statement-identity-defect">Statement identity defect</h3>
-<p>The statement key omits <code>period_start</code> and <code>statement_type</code>. More importantly,
-the current parser type cannot represent child currency/section scopes. RBC
-CAD and USD outputs share a key and overwrite each other's children. Snapshot
-completeness is also absent.</p>
+<h3 id="canonical-instrument-identity">Canonical instrument identity</h3>
+<p><code>instruments.instrument_key</code> is non-null and unique. The shared normalizer in
+<code>identity.py</code> produces <code>ik1</code> keys from asset type, normalized symbol, and
+native currency; option keys additionally include root, expiry, strike, type,
+and multiplier. <code>upsert_instrument()</code> conflicts only on this key, never on
+nullable option columns.</p>
+<p>The v5-to-v6 migration repoints dependent rows to the oldest canonical ID. If
+two duplicate legacy holding/initial rows collide, it preserves their total
+reported quantity/value and marks no new source facts. The shadow rebuild in
+the plan remains the authoritative repair/cutover route for live derived data.</p>
+<h3 id="statements-attempts-and-evidence">Statements, attempts, and evidence</h3>
+<p><code>statements</code> is unique on
+<code>(source_file_id, account_id, period_start, period_end, statement_type)</code> and
+has a deterministic <code>sk1</code> <code>statement_key</code>. A statement belongs to an
+<code>ingestion_run</code>; source metadata points at at most one active successful run.
+The current incremental writer creates run records but is not yet a staged,
+source-atomic activation pipeline.</p>
+<p><code>source_evidence</code> has a deterministic non-content-revealing key, source/run,
+row occurrence, raw text, optional page/line/coordinates/words, and parser
+rule/version. New transactions, holdings, cash balances, and quarantine rows
+link to evidence. Coordinates remain optional until the layout-aware parser
+phase. Legacy migrated cash evidence explicitly has no raw source text rather
+than a fabricated line.</p>
+<h3 id="transactions-and-normalized-effects">Transactions and normalized effects</h3>
+<p><code>transactions.quantity</code> and amount fields retain the reported parser values.
+<code>position_delta</code>, <code>cash_delta</code>, and <code>cash_effective_date</code> hold the normalized
+effects used by new consumers; <code>net_amount</code> remains a compatibility field.
+Resolution method/confidence and an optional resolution-evidence link are also
+available. The database does not constrain <code>txn_type</code>; the Python literal
+vocabulary and validator own it.</p>
+<h3 id="scoped-checkpoints">Scoped checkpoints</h3>
+<p><code>snapshot_sets</code> declares a statement/account/date/currency/section scope with
+<code>complete</code>, <code>partial</code>, <code>absent</code>, or <code>unknown</code> completeness. Position snapshots
+are unique within <code>(snapshot_set_id, instrument_id)</code> and cash balances within a
+cash snapshot set. <code>can_clear_omitted</code> is true only for a complete set.</p>
+<p>Monthly and Performance now refuse to clear earlier holdings from partial or
+unknown scopes. Current parsers do not yet prove scope completeness, so their
+implicit sets are stored as <code>unknown</code>; a parser must explicitly declare a
+complete set before it becomes a clearing checkpoint.</p>
+<h3 id="reconciliation-storage">Reconciliation storage</h3>
+<p><code>reconciliation_results</code> can store a position, cash, statement-total, or
+transfer equation with checkpoints, deltas, expected/reported close, residual,
+tolerance, status, and reason. <code>reconciliation_components</code> can point to the
+contributing transactions. No reconciliation engine writes these records yet;
+the existing command still builds transfer and attribution links only.</p>
 <h2 id="duckdb-market-store">DuckDB market store</h2>
 <table>
 <thead>
@@ -973,16 +1002,16 @@ completeness is also absent.</p>
 Price identity is currently symbol/date only; exchange/currency are not part of
 the primary key.</p>
 <h2 id="current-migration-behavior">Current migration behavior</h2>
-<p><code>db init</code> executes idempotent DDL and compatibility migrations in
-<code>db/sqlite.py</code>; it is not a general revisioned migration framework. Any schema
-refactor must include tests from a pre-refactor database and must build a
-shadow database before live cutover.</p>
-<h2 id="target-direction-not-implemented">Target direction (not implemented)</h2>
-<p>The approved plan adds a non-null canonical <code>instrument_key</code>, unambiguous
-statement keys, child snapshot scopes with completeness, source spans,
-versioned ingestion runs, normalized position/cash deltas, and explicit
-reconciliation results. See the plan for sequencing; do not code as if these
-columns already exist.</p>
+<p><code>db init</code> executes idempotent DDL and a tested v5-to-v6 compatibility
+migration in <code>db/sqlite.py</code>. The migration preserves row IDs and foreign keys,
+creates legacy source runs/evidence, and marks migrated snapshot scopes
+<code>unknown</code>. It is not a replacement for the planned shadow rebuild; do not use
+it as a live-data correctness cutover.</p>
+<h2 id="still-pending">Still pending</h2>
+<p>The remaining phases make source activation atomic, populate layout coordinates
+and proved-complete scopes, repair broker parsers, calculate and persist
+reconciliation results, unify all holdings consumers, and rebuild/cut over a
+shadow ledger. See the plan for sequencing.</p>
 </div>
 
 <div class="doc-section" id="ingestion">
@@ -1007,7 +1036,7 @@ are derived artifacts.</p>
   -&gt; first registered parser whose can_handle() returns true
   -&gt; parser.parse(PdfText)
   -&gt; validate the complete ParseResult
-  -&gt; upsert source metadata
+  -&gt; record ingestion attempt / select active run for successful output
   -&gt; write each emitted statement immediately
   -&gt; repair symbols after the whole scan
   -&gt; pair transfers and rebuild position/transaction links
@@ -1025,22 +1054,29 @@ rows active.</p>
 <p>Fatal validation issues record the source attempt as failed and skip every
 statement write from that parser result. Validation currently covers duplicate
 statement identities, parser errors, periods/transaction dates, transaction
-vocabulary, currencies, finite numerics, option identity, and available raw
-evidence. Scope/completeness limitations remain warnings until the data types
-can represent them.</p>
+vocabulary, currencies, finite numerics, option identity, and source-span/
+scope declarations. An undeclared scope remains a visible warning and becomes
+an <code>unknown</code> persisted set rather than a clearing checkpoint.</p>
 <p>For each validated <code>ParsedStatement</code>, the writer upserts institution/account and
-the statement key <code>(source_file_id, account_id, period_end)</code>. It then deletes
-that statement's transactions, positions, cash, annual performance rows, and
-same-source/account quarantine before inserting replacements.</p>
+the full statement identity <code>(source_file_id, account_id, period_start,
+period_end, statement_type)</code> plus its deterministic <code>statement_key</code>. It writes
+source evidence, normalized deltas, and declared/inferred snapshot sets before
+inserting row children. It then replaces that statement's transactions,
+positions, cash, annual performance rows, and quarantine items.</p>
 <p>This makes one statement write repeatable in isolation, but it does not make a
 source-file parse atomic:</p>
 <ul>
 <li>validation is in-memory, but active output is not staged/versioned;</li>
 <li>statements emitted by an older parse but omitted by a newer parse survive;</li>
-<li>a failed extraction/parse updates source status but does not activate a new
-  coherent source version; and</li>
-<li>there is no persisted ingestion-attempt record or active-run pointer.</li>
+<li>a successful incremental statement write can become visible before all of
+  the source's statements are ready; and</li>
+<li>the persisted <code>ingestion_runs</code> record and active-run pointer do not yet have
+  content hashes/counts or a source-wide activation transaction.</li>
 </ul>
+<p>A failed attempt creates a failed run and does not replace the active-run
+pointer, but the legacy <code>source_files.parse_status</code> compatibility field still
+tracks the latest attempt. Phase 3 will make the active source view and cache
+semantics authoritative.</p>
 <p>SQLite session commit/rollback covers the outer command, but the semantic unit
 is still the incremental scan rather than a staged source activation.</p>
 <h2 id="post-processing">Post-processing</h2>
@@ -1080,8 +1116,8 @@ acceptance gates.</p>
 <div class="doc-section" id="parser-contract">
   <div class="section-banner">Parser Contract</div>
   <h1 id="parser-contract">Parser contract</h1>
-<p>This page owns the common parser interface and semantic rules. It distinguishes
-the Python types that exist today from validation that still needs to be built.</p>
+<p>This page owns the common parser interface and semantic rules, including the
+runtime validation boundary used before persistence.</p>
 <h2 id="current-interface">Current interface</h2>
 <p>A registered parser exposes:</p>
 <div class="highlight"><pre><span></span><code><span class="n">NAME</span><span class="p">:</span> <span class="nb">str</span>
@@ -1093,8 +1129,9 @@ the Python types that exist today from validation that still needs to be built.<
 Exceptions from <code>can_handle()</code> are logged and selection continues.</p>
 <p><code>ParseResult</code> contains parser name/version, zero or more <code>ParsedStatement</code>
 objects, and string errors. A statement contains account, period, type,
-transactions, positions, cash balances, annual-performance rows, and
-<code>(raw_line, reason)</code> quarantine tuples.</p>
+transactions, positions, cash balances, annual-performance rows, quarantine
+items, and optional <code>ParsedSnapshotSet</code> declarations. Legacy <code>(raw_line,
+reason)</code> quarantine tuples remain accepted during the parser migration.</p>
 <p>Exact fields and the <code>TxnType</code> literal vocabulary are defined in
 <code>src/ledger/parsers/types.py</code>. <code>parsers/validation.py</code> enforces the runtime
 contract on the complete <code>ParseResult</code> before current ingestion writes any
@@ -1113,10 +1150,11 @@ statement children.</p>
 <li>Output statement identities are unique within a source.</li>
 <li>A parser declares the scope and completeness of every holdings/cash section.</li>
 </ul>
-<p>Unique output identity, date/type/currency/option validity, finite numbers, and
-available raw lines are enforced now. Correct economic signs cannot be proven
-from a dataclass alone. Section scope/completeness and occurrence-level
-provenance remain warnings because the current types cannot represent them.</p>
+<p>Unique output identity, date/type/currency/option validity, finite numbers,
+declared scope validity, and source-span shape are enforced now. Correct
+economic signs cannot be proven from a dataclass alone. An emitted
+positions/cash scope without a declaration remains a warning and is persisted
+as <code>unknown</code>, never as complete.</p>
 <h2 id="transaction-vocabulary">Transaction vocabulary</h2>
 <p>The current literals cover buys/sells/shorts, four option open/close actions,
 assignment/exercise/expiration, income/interest, transfers/journals,
@@ -1124,22 +1162,25 @@ deposits/withdrawals, taxes/fees/FX/adjustments, reinvestment, splits, and
 corporate actions. Add a new value only with parser, quantity/cash semantics,
 schema/docs, API, and tests updated together.</p>
 <h2 id="evidence-and-quarantine">Evidence and quarantine</h2>
-<p>Today, transactions and positions can store <code>raw_line</code>; quarantine stores a
-raw line and reason. Cash and annual rows lack raw evidence, and no common type
-stores page, occurrence, bounding box, or parser rule. Verify therefore
-fuzzy-matches normalized raw strings to freshly extracted PDF lines.</p>
-<p>The validator reports missing cash evidence and missing section completeness as
+<p><code>SourceSpan</code> can carry raw text, page/line, bounding box, words, and parser
+rule. Transactions, positions, cash balances, snapshot sets, and the richer
+quarantine type can carry one. The writer assigns every parsed/quarantined row
+a deterministic evidence record, using a stable row occurrence when layout
+coordinates are not yet available. Cash balances now carry their opening/
+closing source line(s).</p>
+<p>The validator reports missing cash evidence and undeclared row scopes as
 explicit warnings. It treats malformed dates/currencies/numerics, invalid
 transaction vocabulary, incomplete options, duplicate statement identities,
-and parser-reported errors as fatal.</p>
-<p>Target evidence is a deterministic source-row key plus source fingerprint,
-page, occurrence, raw text, coordinates when available, and parser rule/version.</p>
+invalid snapshot declarations, and parser-reported errors as fatal.</p>
+<p>Parser v1 implementations currently mostly supply raw lines and deterministic
+occurrences; Phase 4 must supply page/column coordinates and explicit
+complete/partial section declarations from layout-aware state machines.</p>
 <h2 id="known-contract-violations">Known contract violations</h2>
 <ul>
 <li>All four bank parsers contain quantity <code>parsed or 0.0</code> paths; CIBC/RBC/HSBC
   also contain cash closing-balance fallbacks to zero.</li>
-<li>The parser type cannot express a child currency/section scope or whether a
-  snapshot is complete.</li>
+<li>Existing parser implementations have not yet declared child currency/section
+  scopes or proved completeness, even though the type can express them.</li>
 <li>The database still accepts arbitrary transaction text, although new parser
   output is checked against <code>TxnType</code> before persistence.</li>
 <li>Plain text extraction loses column geometry needed for defensible debit/
@@ -1164,8 +1205,8 @@ the fixed behavior becomes a normal regression.</p>
   <div class="section-banner">Reconciliation</div>
   <h1 id="reconciliation-and-holdings">Reconciliation and holdings</h1>
 <p>This document owns movement rules, checkpoint reconciliation, and holdings at
-a date. The current implementation does not yet perform financial
-reconciliation despite using that word for its link-building command.</p>
+a date. Schema support for financial reconciliation exists, but the current
+command still performs link-building rather than calculating residuals.</p>
 <h2 id="intended-equations">Intended equations</h2>
 <p>For one account and canonical instrument between complete checkpoints:</p>
 <div class="highlight"><pre><span></span><code>expected_close_quantity = prior_close_quantity + SUM(position_delta)
@@ -1186,10 +1227,12 @@ be hidden with a fabricated adjustment.</p>
 <li>sells, shorts, transfer-out, split debit, and option sells use
   <code>-abs(quantity)</code>;</li>
 <li>assignment, exercise, and expiration use <code>-quantity</code>;</li>
-<li>all other types and missing quantity contribute zero.</li>
+<li>journals preserve their printed signed quantity; and</li>
+<li>all other types and missing quantity contribute zero in the legacy helper.</li>
 </ul>
-<p>These rules compensate for inconsistent parser signs. Missing quantity
-silently producing zero is a known limitation.</p>
+<p>New writes store <code>transactions.position_delta</code> and preserve the reported
+quantity separately. Missing position quantity is represented as absent in the
+new writer; the helper remains for legacy/manual compatibility.</p>
 <h2 id="current-ingest-reconcile">Current <code>ingest reconcile</code></h2>
 <p>The command performs two operations:</p>
 <ol>
@@ -1201,26 +1244,29 @@ silently producing zero is a known limitation.</p>
    non-zero same-account/<strong>same-instrument-ID</strong> movement since the previous
    snapshot to the current snapshot.</li>
 </ol>
-<p>It does not compare quantities, cash, statement totals, or persist a residual
-or status. Instrument duplication prevents many economically identical rows
-from matching.</p>
+<p>It does not compare quantities, cash, or statement totals and does not yet
+write <code>reconciliation_results</code>. That table can now persist residual/status
+records without a balancing adjustment. Transfer pairing and position links
+now compare canonical <code>instrument_key</code> values rather than vulnerable raw
+instrument-ID equality.</p>
 <h2 id="current-monthly-holdings">Current Monthly holdings</h2>
-<p>For securities, <code>/monthly/snapshot</code> chooses the latest position date per
-account at or before the requested day, treats all rows at that date as the
-account checkpoint, and adds later transaction quantity deltas keyed by
-<code>instrument_id</code>. Before any checkpoint it uses <code>initial_positions</code> plus
-movements. Cost/price/value come from the anchor row when one exists.</p>
-<p>For cash, it independently chooses the latest balance per account/currency and
-adds later non-corporate-action <code>net_amount</code> values using trade date. It falls
-back to <code>initial_cash</code> before the first checkpoint. Native totals are primary;
-available DuckDB FX rates also produce CAD/USD combined totals.</p>
+<p>For securities, <code>/monthly/snapshot</code> chooses the latest <strong>complete</strong> position
+scope per account/currency at or before the requested day and adds later
+normalized (or legacy-derived) quantity deltas by canonical instrument key.
+Partial/unknown scopes cannot clear an earlier complete scope. Before a
+complete checkpoint it uses <code>initial_positions</code> plus movements. Cost/price/
+value come from the anchor row when one exists.</p>
+<p>For cash, it independently chooses the latest complete cash scope and adds
+later non-corporate-action <code>cash_delta</code> values using <code>cash_effective_date</code>
+(falling back to legacy fields). It falls back to <code>initial_cash</code> before the
+first complete checkpoint. Native totals are primary; available DuckDB FX rates
+also produce CAD/USD combined totals.</p>
 <p>Known failures:</p>
 <ul>
-<li>snapshot completeness is assumed at account/date scope;</li>
-<li>canonical identity is absent, so checkpoint and movement IDs may differ;</li>
 <li>a movement-only row has no anchor price/value;</li>
-<li>diff keys omit currency and canonical identity; and</li>
-<li>settlement-date cash semantics are not represented.</li>
+<li>Performance and visualisation still have separate holdings engines; and</li>
+<li>parser v1 scopes are <code>unknown</code>, so a shadow rebuild/parser repair is needed
+  before the live ledger gains trusted complete checkpoints.</li>
 </ul>
 <h2 id="other-holdings-consumers">Other holdings consumers</h2>
 <p>Performance has a separate state machine that clears an account's prior
@@ -1228,16 +1274,18 @@ securities whenever any later account checkpoint date appears, then
 forward-fills values. Visualisation routes have their own holdings queries.
 Therefore Monthly, Performance, and Visualisations are not guaranteed to agree.</p>
 <h2 id="initial-rows">Initial rows</h2>
-<p><code>ingest infer-initials</code> derives pre-history positions/cash from the earliest
-snapshot minus prior parsed movements. Tagged inferred rows are replaceable;
-user-curated rows are intended to survive. Because extraction and signs are
-currently unreliable, inference must be rerun only after the canonical ledger
-rebuild and must never be used to mask a reconciliation residual.</p>
-<h2 id="target-statuses-not-implemented">Target statuses (not implemented)</h2>
-<p>The new engine will reconcile within explicit complete statement scopes using
-canonical identities and normalized deltas. Results will distinguish at least
-<code>balanced</code>, <code>unbalanced</code>, <code>incomplete</code>, and <code>not_applicable</code>, preserve component
-links, and feed one shared <code>holdings_at()</code> service used by all consumers.</p>
+<p><code>ingest infer-initials</code> derives pre-history positions/cash only from the
+earliest <strong>complete</strong> snapshot minus prior parsed movements. Tagged inferred
+rows are replaceable; user-curated rows are intended to survive. Because
+extraction and signs are currently unreliable, inference must be rerun only
+after the canonical ledger rebuild and must never be used to mask a
+reconciliation residual.</p>
+<h2 id="persisted-result-vocabulary-engine-pending">Persisted result vocabulary; engine pending</h2>
+<p><code>reconciliation_results</code> accepts <code>reconciled</code>, <code>within_rounding</code>,
+<code>unexplained_residual</code>, <code>incomplete_input</code>, <code>missing_prior_checkpoint</code>,
+<code>ambiguous_transfer</code>, and <code>not_applicable</code>, with optional transaction
+components. Phase 5 will calculate these deterministically within explicit
+complete scopes and Phase 6 will move all consumers to one holdings service.</p>
 </div>
 
 <div class="doc-section" id="api-ui">
@@ -1331,11 +1379,11 @@ can match multiple boxes. Coordinates are not stored as ingestion provenance.</p
 <code>llm_keys</code> keys are removed on read/write.</p>
 <h2 id="known-read-model-problems">Known read-model problems</h2>
 <p>The Monthly, Performance, and Visualisation paths do not share a holdings
-engine. Monthly uses unstable instrument IDs and incomplete diff keys;
-Performance assumes any account checkpoint is complete. The extraction and
-reconciliation refactor must replace these with one canonical read service and
-surface checkpoint/reconciliation/pricing quality without adding ledger writes
-to the GUI.</p>
+engine. Monthly now uses canonical identity/currency diff keys and
+Monthly/Performance refuse to clear from partial or unknown scopes, but
+Visualisation remains separate and no route yet returns reconciliation/pricing
+quality. The refactor must still replace these with one canonical read service
+without adding ledger writes to the GUI.</p>
 <h2 id="frontend-rules">Frontend rules</h2>
 <ul>
 <li>Use React Query for server data and component state only for UI concerns.</li>
@@ -1391,6 +1439,11 @@ source PDFs or stored <code>.txt</code> dumps, overwrites a deterministic JSONL 
 (default <code>logs/extraction_audit.jsonl</code>), and omits raw statement text. Use
 <code>--fail-on-errors</code> in a gate where invalid/unclaimed/crashed outputs must
 return non-zero.</p>
+<p><code>ledger db init</code> now creates or upgrades schema version 6. For a real existing
+ledger, do <strong>not</strong> treat that compatibility migration as the refactor cutover:
+first copy the database to a shadow data directory and run the command against
+that copy. The API/server does not silently migrate a database at startup; run
+<code>db init</code> deliberately before serving a v6 database.</p>
 <h2 id="local-development">Local development</h2>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">sync</span> <span class="p">-</span><span class="n">-all-extras</span> <span class="p">-</span><span class="n">-dev</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">db</span> <span class="n">init</span>

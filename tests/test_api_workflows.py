@@ -13,6 +13,8 @@ from ledger.ingest.pipeline import _record_source_file, _unchanged_source_file_i
 from ledger.parsers.types import ParsedAccount, ParsedStatement
 from ledger.pdf_text import PdfText
 
+from .db_fixtures import seed_cash, seed_position, seed_source, seed_statement
+
 
 def _seed_account(conn, *, source_relpath: str = "Statements/Test/sample.pdf"):
     institution_id = sqlite_db.upsert_institution(conn, "TST", "Test Broker")
@@ -23,22 +25,17 @@ def _seed_account(conn, *, source_relpath: str = "Statements/Test/sample.pdf"):
         account_type="Margin",
         base_currency="CAD",
     )
-    source_file_id = conn.execute(
-        "INSERT INTO source_files(relpath, parse_status) VALUES (?, 'ok') RETURNING source_file_id",
-        (source_relpath,),
-    ).fetchone()[0]
+    source_file_id = seed_source(conn, source_relpath)
     return account_id, source_file_id
 
 
 def _seed_statement(conn, account_id: int, source_file_id: int, period_end: str) -> int:
-    return conn.execute(
-        """
-        INSERT INTO statements(source_file_id, account_id, period_start, period_end)
-        VALUES (?, ?, ?, ?)
-        RETURNING statement_id
-        """,
-        (source_file_id, account_id, period_end[:8] + "01", period_end),
-    ).fetchone()[0]
+    return seed_statement(
+        conn,
+        account_id=account_id,
+        source_file_id=source_file_id,
+        period_end=period_end,
+    )
 
 
 def test_config_route_drops_legacy_display_currency(tmp_path, monkeypatch):
@@ -125,41 +122,38 @@ def test_performance_total_clears_omitted_sold_out_positions_and_includes_cash(t
     sqlite_db.init_db(db_path)
     with sqlite_db.session(db_path) as conn:
         account_id, jan_source_id = _seed_account(conn, source_relpath="Statements/Test/jan.pdf")
-        feb_source_id = conn.execute(
-            "INSERT INTO source_files(relpath, parse_status) VALUES (?, 'ok') RETURNING source_file_id",
-            ("Statements/Test/feb.pdf",),
-        ).fetchone()[0]
+        feb_source_id = seed_source(conn, "Statements/Test/feb.pdf")
         jan_statement_id = _seed_statement(conn, account_id, jan_source_id, "2024-01-31")
         feb_statement_id = _seed_statement(conn, account_id, feb_source_id, "2024-02-29")
         abc_id = sqlite_db.upsert_instrument(conn, asset_type="equity", symbol="ABC", currency="CAD")
         xyz_id = sqlite_db.upsert_instrument(conn, asset_type="equity", symbol="XYZ", currency="CAD")
-        conn.execute(
-            """
-            INSERT INTO position_snapshots(statement_id, account_id, as_of_date, instrument_id, quantity, market_value, currency)
-            VALUES (?, ?, '2024-01-31', ?, 10, 100, 'CAD')
-            """,
-            (jan_statement_id, account_id, abc_id),
+        seed_position(
+            conn,
+            statement_id=jan_statement_id,
+            instrument_id=abc_id,
+            quantity=10,
+            market_value=100,
+            currency="CAD",
         )
-        conn.execute(
-            """
-            INSERT INTO position_snapshots(statement_id, account_id, as_of_date, instrument_id, quantity, market_value, currency)
-            VALUES (?, ?, '2024-02-29', ?, 5, 50, 'CAD')
-            """,
-            (feb_statement_id, account_id, xyz_id),
+        seed_position(
+            conn,
+            statement_id=feb_statement_id,
+            instrument_id=xyz_id,
+            quantity=5,
+            market_value=50,
+            currency="CAD",
         )
-        conn.execute(
-            """
-            INSERT INTO cash_balances(statement_id, account_id, as_of_date, currency, closing_balance)
-            VALUES (?, ?, '2024-01-31', 'CAD', 25)
-            """,
-            (jan_statement_id, account_id),
+        seed_cash(
+            conn,
+            statement_id=jan_statement_id,
+            currency="CAD",
+            closing_balance=25,
         )
-        conn.execute(
-            """
-            INSERT INTO cash_balances(statement_id, account_id, as_of_date, currency, closing_balance)
-            VALUES (?, ?, '2024-02-29', 'CAD', 30)
-            """,
-            (feb_statement_id, account_id),
+        seed_cash(
+            conn,
+            statement_id=feb_statement_id,
+            currency="CAD",
+            closing_balance=30,
         )
 
     abc_rows = _total_rows(symbol="ABC", include_cash=False, path=db_path)
@@ -178,32 +172,105 @@ def test_monthly_holding_uses_one_snapshot_per_account_instrument_on_duplicate_d
     sqlite_db.init_db(db_path)
     with sqlite_db.session(db_path) as conn:
         account_id, first_source_id = _seed_account(conn, source_relpath="Statements/Test/first.pdf")
-        second_source_id = conn.execute(
-            "INSERT INTO source_files(relpath, parse_status) VALUES (?, 'ok') RETURNING source_file_id",
-            ("Statements/Test/second.pdf",),
-        ).fetchone()[0]
+        second_source_id = seed_source(conn, "Statements/Test/second.pdf")
         first_statement_id = _seed_statement(conn, account_id, first_source_id, "2024-01-31")
         second_statement_id = _seed_statement(conn, account_id, second_source_id, "2024-01-31")
         instrument_id = sqlite_db.upsert_instrument(conn, asset_type="equity", symbol="ABC", currency="CAD")
-        conn.execute(
-            """
-            INSERT INTO position_snapshots(statement_id, account_id, as_of_date, instrument_id, quantity, market_value, currency)
-            VALUES (?, ?, '2024-01-31', ?, 100, 1000, 'CAD')
-            """,
-            (first_statement_id, account_id, instrument_id),
+        seed_position(
+            conn,
+            statement_id=first_statement_id,
+            instrument_id=instrument_id,
+            quantity=100,
+            market_value=1000,
+            currency="CAD",
         )
-        conn.execute(
-            """
-            INSERT INTO position_snapshots(statement_id, account_id, as_of_date, instrument_id, quantity, market_value, currency)
-            VALUES (?, ?, '2024-01-31', ?, 125, 1250, 'CAD')
-            """,
-            (second_statement_id, account_id, instrument_id),
+        seed_position(
+            conn,
+            statement_id=second_statement_id,
+            instrument_id=instrument_id,
+            quantity=125,
+            market_value=1250,
+            currency="CAD",
         )
 
     rows = _holdings_at("2024-01-31", [], path=db_path)
     assert len(rows) == 1
     assert rows[0]["quantity"] == 125.0
     assert rows[0]["market_value"] == 1250.0
+
+
+def test_incomplete_scope_never_clears_prior_complete_holdings(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id, first_source_id = _seed_account(
+            conn,
+            source_relpath="Statements/Test/complete.pdf",
+        )
+        second_source_id = seed_source(conn, "Statements/Test/partial.pdf")
+        first_statement_id = _seed_statement(
+            conn,
+            account_id,
+            first_source_id,
+            "2024-01-31",
+        )
+        second_statement_id = _seed_statement(
+            conn,
+            account_id,
+            second_source_id,
+            "2024-02-29",
+        )
+        abc_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="equity",
+            symbol="ABC",
+            currency="CAD",
+        )
+        xyz_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="equity",
+            symbol="XYZ",
+            currency="CAD",
+        )
+        seed_position(
+            conn,
+            statement_id=first_statement_id,
+            instrument_id=abc_id,
+            quantity=10,
+            market_value=100,
+            currency="CAD",
+            completeness="complete",
+        )
+        seed_position(
+            conn,
+            statement_id=second_statement_id,
+            instrument_id=xyz_id,
+            quantity=5,
+            market_value=50,
+            currency="CAD",
+            completeness="partial",
+        )
+        seed_cash(
+            conn,
+            statement_id=second_statement_id,
+            currency="CAD",
+            closing_balance=10,
+            completeness="complete",
+        )
+
+    rows = _holdings_at("2024-02-29", [], path=db_path)
+    assert [
+        (row["symbol"], row["quantity"])
+        for row in rows
+        if row["asset_type"] != "cash"
+    ] == [("ABC", 10.0)]
+    performance = _total_rows(path=db_path)
+    february = {
+        row["currency"]: row["market_value"]
+        for row in performance
+        if row["as_of_date"] == "2024-02-29"
+    }
+    assert february == {"CAD": 110.0}
 
 
 def test_monthly_holdings_include_cash_rows_and_converted_totals(tmp_path, monkeypatch):
@@ -233,26 +300,25 @@ def test_monthly_holdings_include_cash_rows_and_converted_totals(tmp_path, monke
         account_id, source_id = _seed_account(conn)
         statement_id = _seed_statement(conn, account_id, source_id, "2024-01-31")
         instrument_id = sqlite_db.upsert_instrument(conn, asset_type="equity", symbol="ABC", currency="CAD")
-        conn.execute(
-            """
-            INSERT INTO position_snapshots(statement_id, account_id, as_of_date, instrument_id, quantity, market_value, currency)
-            VALUES (?, ?, '2024-01-31', ?, 10, 100, 'CAD')
-            """,
-            (statement_id, account_id, instrument_id),
+        seed_position(
+            conn,
+            statement_id=statement_id,
+            instrument_id=instrument_id,
+            quantity=10,
+            market_value=100,
+            currency="CAD",
         )
-        conn.execute(
-            """
-            INSERT INTO cash_balances(statement_id, account_id, as_of_date, currency, closing_balance)
-            VALUES (?, ?, '2024-01-31', 'CAD', 25)
-            """,
-            (statement_id, account_id),
+        seed_cash(
+            conn,
+            statement_id=statement_id,
+            currency="CAD",
+            closing_balance=25,
         )
-        conn.execute(
-            """
-            INSERT INTO cash_balances(statement_id, account_id, as_of_date, currency, closing_balance)
-            VALUES (?, ?, '2024-01-31', 'USD', 10)
-            """,
-            (statement_id, account_id),
+        seed_cash(
+            conn,
+            statement_id=statement_id,
+            currency="USD",
+            closing_balance=10,
         )
 
     rows = _holdings_at("2024-01-31", [], path=db_path)

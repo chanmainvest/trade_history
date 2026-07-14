@@ -231,9 +231,10 @@ Total portfolio value over time, including cash.
   toggles off automatically when "Hide $ values" is on.
 
 The chart forward-fills accounts whose statement dates do not line up and
-clears an account's prior holdings when a later checkpoint omits them. The
-current schema cannot prove checkpoint completeness, so partial extraction can
-incorrectly clear holdings. See [RECONCILIATION.md](RECONCILIATION.md).
+clears an account/currency scope only when its later checkpoint is explicitly
+complete. Current parser v1 output is conservatively `unknown`, so it may carry
+an old holding forward rather than clear it until the parser rebuild proves the
+section complete. See [RECONCILIATION.md](RECONCILIATION.md).
 
 ### 4.4 Research
 
@@ -385,7 +386,7 @@ It intentionally does not offer arbitrary shell access.
 |---|---|---|
 | Vite crashes with `Failed to resolve` on Windows | Vite realpath'd the workspace onto another drive | Already fixed via `resolve.preserveSymlinks: true` in `frontend/vite.config.ts` |
 | Treemap is blank | Picked a date with no snapshot | Pick a date ≥ your earliest statement; the API falls back to the latest available |
-| Performance chart drops to zero | Holdings were sold, filtered, or omitted by a checkpoint currently assumed complete | Check Verify/current-state warnings; broaden filters, or pass `forward_fill=false` to `/api/performance/total` for raw sums |
+| Performance chart drops to zero | Holdings were sold, filtered, or omitted by a checkpoint explicitly marked complete | Check Verify/current-state warnings; broaden filters, or pass `forward_fill=false` to `/api/performance/total` for raw sums |
 | `BOUGHT` appears as a symbol in RBC rows | Pre-fix bug | Run `uv run ledger ingest repair-symbols` or re-ingest after pulling. The parser now strips leading verbs and applies a small name-to-ticker map (e.g. iShares 20+ → TLT) |
 | Empty option symbol on a CIBC `option_expiration` row | Pre-fix bug | Run `uv run ledger ingest repair-symbols` or re-ingest. The parser now recognizes `CALL ROOT MON DD YYYY STRIKE` shapes |
 

@@ -71,23 +71,14 @@ def _parse_option_symbol(symbol: str) -> tuple[str, str, str | None, float | Non
 
 
 def _instrument_id(conn, symbol: str, asset_type: str, currency: str, name: str | None) -> int:
-    row = conn.execute(
-        "SELECT instrument_id FROM instruments "
-        " WHERE asset_type = ? AND symbol = ? AND currency = ? "
-        "   AND option_expiry IS NULL AND option_strike IS NULL AND option_type IS NULL "
-        " LIMIT 1",
-        (asset_type, symbol, currency),
-    ).fetchone()
-    if row:
-        return int(row["instrument_id"])
-    cur = conn.execute(
-        "INSERT INTO instruments "
-        "  (asset_type, symbol, exchange, currency, name, cusip, isin, "
-        "   option_root, option_expiry, option_strike, option_type) "
-        "VALUES (?, ?, NULL, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)",
-        (asset_type, symbol, currency, name),
+    """Resolve through the shared canonical key, never nullable SQL fields."""
+    return sqlite_db.upsert_instrument(
+        conn,
+        asset_type=asset_type,
+        symbol=symbol,
+        currency=currency,
+        name=name,
     )
-    return int(cur.lastrowid)
 
 
 def _display_symbol(row) -> str | None:
@@ -757,6 +748,7 @@ def repair_option_roots() -> dict:
 
 def repair_symbols() -> dict:
     """Run all symbol-repair passes."""
+    sqlite_db.init_db()
     leading = repair_leading_verb_symbols()
     options = repair_option_roots()
     option_transactions = repair_option_transaction_instruments()

@@ -54,6 +54,12 @@ source PDFs or stored `.txt` dumps, overwrites a deterministic JSONL report
 `--fail-on-errors` in a gate where invalid/unclaimed/crashed outputs must
 return non-zero.
 
+`ledger db init` now creates or upgrades schema version 6. For a real existing
+ledger, do **not** treat that compatibility migration as the refactor cutover:
+first copy the database to a shadow data directory and run the command against
+that copy. The API/server does not silently migrate a database at startup; run
+`db init` deliberately before serving a v6 database.
+
 ## Local development
 
 ```powershell

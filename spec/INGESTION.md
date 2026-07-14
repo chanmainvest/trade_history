@@ -26,7 +26,7 @@ discover path
   -> first registered parser whose can_handle() returns true
   -> parser.parse(PdfText)
   -> validate the complete ParseResult
-  -> upsert source metadata
+  -> record ingestion attempt / select active run for successful output
   -> write each emitted statement immediately
   -> repair symbols after the whole scan
   -> pair transfers and rebuild position/transaction links
@@ -50,23 +50,31 @@ rows active.
 Fatal validation issues record the source attempt as failed and skip every
 statement write from that parser result. Validation currently covers duplicate
 statement identities, parser errors, periods/transaction dates, transaction
-vocabulary, currencies, finite numerics, option identity, and available raw
-evidence. Scope/completeness limitations remain warnings until the data types
-can represent them.
+vocabulary, currencies, finite numerics, option identity, and source-span/
+scope declarations. An undeclared scope remains a visible warning and becomes
+an `unknown` persisted set rather than a clearing checkpoint.
 
 For each validated `ParsedStatement`, the writer upserts institution/account and
-the statement key `(source_file_id, account_id, period_end)`. It then deletes
-that statement's transactions, positions, cash, annual performance rows, and
-same-source/account quarantine before inserting replacements.
+the full statement identity `(source_file_id, account_id, period_start,
+period_end, statement_type)` plus its deterministic `statement_key`. It writes
+source evidence, normalized deltas, and declared/inferred snapshot sets before
+inserting row children. It then replaces that statement's transactions,
+positions, cash, annual performance rows, and quarantine items.
 
 This makes one statement write repeatable in isolation, but it does not make a
 source-file parse atomic:
 
 - validation is in-memory, but active output is not staged/versioned;
 - statements emitted by an older parse but omitted by a newer parse survive;
-- a failed extraction/parse updates source status but does not activate a new
-  coherent source version; and
-- there is no persisted ingestion-attempt record or active-run pointer.
+- a successful incremental statement write can become visible before all of
+  the source's statements are ready; and
+- the persisted `ingestion_runs` record and active-run pointer do not yet have
+  content hashes/counts or a source-wide activation transaction.
+
+A failed attempt creates a failed run and does not replace the active-run
+pointer, but the legacy `source_files.parse_status` compatibility field still
+tracks the latest attempt. Phase 3 will make the active source view and cache
+semantics authoritative.
 
 SQLite session commit/rollback covers the outer command, but the semantic unit
 is still the incremental scan rather than a staged source activation.

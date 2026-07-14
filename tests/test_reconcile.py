@@ -1,6 +1,8 @@
 from ledger.db import sqlite as sqlite_db
 from ledger.ingest.reconcile import link_transfers, rebuild_position_transaction_links
 
+from .db_fixtures import seed_position, seed_source, seed_statement
+
 
 def _seed_account(conn, account_number: str) -> int:
     institution_id = sqlite_db.upsert_institution(conn, "TST", "Test Broker")
@@ -14,18 +16,13 @@ def _seed_account(conn, account_number: str) -> int:
 
 
 def _seed_statement(conn, account_id: int, relpath: str, period_end: str) -> int:
-    source_file_id = conn.execute(
-        "INSERT INTO source_files(relpath, parse_status) VALUES (?, 'ok') RETURNING source_file_id",
-        (relpath,),
-    ).fetchone()[0]
-    return conn.execute(
-        """
-        INSERT INTO statements(source_file_id, account_id, period_start, period_end)
-        VALUES (?, ?, ?, ?)
-        RETURNING statement_id
-        """,
-        (source_file_id, account_id, period_end[:8] + "01", period_end),
-    ).fetchone()[0]
+    source_file_id = seed_source(conn, relpath)
+    return seed_statement(
+        conn,
+        account_id=account_id,
+        source_file_id=source_file_id,
+        period_end=period_end,
+    )
 
 
 def test_transfer_and_position_reconciliation_links_unambiguous_rows(tmp_path):
@@ -58,19 +55,19 @@ def test_transfer_and_position_reconciliation_links_unambiguous_rows(tmp_path):
             """,
             (to_account_id, to_statement_id, instrument_id),
         ).fetchone()[0]
-        conn.execute(
-            """
-            INSERT INTO position_snapshots(statement_id, account_id, as_of_date, instrument_id, quantity, currency)
-            VALUES (?, ?, '2024-01-31', ?, 90, 'CAD')
-            """,
-            (from_statement_id, from_account_id, instrument_id),
+        seed_position(
+            conn,
+            statement_id=from_statement_id,
+            instrument_id=instrument_id,
+            quantity=90,
+            currency="CAD",
         )
-        conn.execute(
-            """
-            INSERT INTO position_snapshots(statement_id, account_id, as_of_date, instrument_id, quantity, currency)
-            VALUES (?, ?, '2024-01-31', ?, 10, 'CAD')
-            """,
-            (to_statement_id, to_account_id, instrument_id),
+        seed_position(
+            conn,
+            statement_id=to_statement_id,
+            instrument_id=instrument_id,
+            quantity=10,
+            currency="CAD",
         )
 
     transfer_summary = link_transfers(db_path)

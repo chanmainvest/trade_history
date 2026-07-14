@@ -343,6 +343,7 @@ def _parse_asset_review(body: str, currency: str, stmt: ParsedStatement) -> None
 def _parse_activity(body: str, currency: str, year: int,
                     stmt: ParsedStatement) -> None:
     opening = closing = None
+    cash_lines: list[str] = []
     for ln in body.splitlines():
         s = ln.strip()
         if not s:
@@ -359,10 +360,12 @@ def _parse_activity(body: str, currency: str, year: int,
         mo = RE_OPENING_BAL.search(s)
         if mo:
             opening = parse_money(mo.group(1))
+            cash_lines.append(ln)
             continue
         mc = RE_CLOSING_BAL.search(s)
         if mc:
             closing = parse_money(mc.group(1))
+            cash_lines.append(ln)
             continue
 
         m = RE_ACT_DATE.match(s)
@@ -513,6 +516,7 @@ def _parse_activity(body: str, currency: str, year: int,
         stmt.cash_balances.append(ParsedCashBalance(
             currency=currency, opening_balance=opening,
             closing_balance=closing or 0.0,
+            raw_line="\n".join(cash_lines) or None,
         ))
 
 

@@ -8,6 +8,7 @@ from ledger.parsers.types import (
     ParsedCashBalance,
     ParsedInstrument,
     ParsedPosition,
+    ParsedSnapshotSet,
     ParsedStatement,
     ParsedTxn,
     ParseResult,
@@ -73,7 +74,7 @@ def test_valid_result_has_only_current_contract_warnings():
     assert report.is_valid
     assert {issue.code for issue in report.warnings} == {
         "cash_source_evidence_unavailable",
-        "snapshot_completeness_unavailable",
+        "snapshot_scope_undeclared",
     }
 
 
@@ -83,6 +84,21 @@ def test_duplicate_statement_key_is_fatal_before_persistence():
     report = validate_parse_result(result)
     assert not report.is_valid
     assert any(issue.code == "duplicate_statement_key" for issue in report.errors)
+
+
+def test_declared_complete_scopes_remove_legacy_scope_warnings():
+    result = _result()
+    statement = result.statements[0]
+    statement.cash_balances[0].raw_line = "Opening 1000.00\nClosing 800.00"
+    statement.snapshot_sets = [
+        ParsedSnapshotSet("CAD", "positions", "complete"),
+        ParsedSnapshotSet("CAD", "cash", "complete"),
+    ]
+
+    report = validate_parse_result(result)
+
+    assert report.is_valid
+    assert report.warnings == []
 
 
 def test_out_of_period_date_and_noncanonical_type_are_fatal():

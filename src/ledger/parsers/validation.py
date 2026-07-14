@@ -12,7 +12,15 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Literal, get_args
 
-from .types import ParsedInstrument, ParsedStatement, ParseResult, TxnType
+from ..identity import canonical_instrument_key
+from .types import (
+    ParsedInstrument,
+    ParsedQuarantine,
+    ParsedStatement,
+    ParseResult,
+    SourceSpan,
+    TxnType,
+)
 
 Severity = Literal["error", "warning"]
 
@@ -84,26 +92,17 @@ def statement_key(statement: ParsedStatement) -> tuple[str, str, str, str]:
 
 
 def instrument_key(instrument: ParsedInstrument) -> str:
-    """Return a deterministic audit-only logical instrument key.
-
-    This does not replace the Phase 2 database instrument key. It lets the
-    read-only audit compare parser output without broken SQLite IDs.
-    """
-    symbol = re.sub(r"\s+", "", (instrument.option_root or instrument.symbol).upper())
-    if instrument.asset_type == "option":
-        strike = (
-            format(float(instrument.option_strike), ".12g")
-            if instrument.option_strike is not None
-            else ""
-        )
-        return "|".join(
-            [
-                "option", symbol, instrument.currency.upper(),
-                instrument.option_expiry or "", strike,
-                instrument.option_type or "", str(instrument.option_multiplier),
-            ]
-        )
-    return "|".join([instrument.asset_type, symbol, instrument.currency.upper()])
+    """Return the canonical logical instrument key used by SQLite."""
+    return canonical_instrument_key(
+        asset_type=instrument.asset_type,
+        symbol=instrument.symbol,
+        currency=instrument.currency,
+        option_root=instrument.option_root,
+        option_expiry=instrument.option_expiry,
+        option_strike=instrument.option_strike,
+        option_type=instrument.option_type,
+        option_multiplier=instrument.option_multiplier,
+    )
 
 
 def _issue(
@@ -196,6 +195,48 @@ def _finite(
             report,
             "invalid_numeric",
             f"{field_name} must be a finite number or null, got {value!r}",
+            statement_index=statement_index,
+            row_kind=row_kind,
+            row_index=row_index,
+        )
+
+
+def _source_span(
+    report: ValidationReport,
+    span: SourceSpan | None,
+    *,
+    statement_index: int,
+    row_kind: str,
+    row_index: int,
+) -> None:
+    if span is None:
+        return
+    for field_name in ("page_number", "line_number"):
+        value = getattr(span, field_name)
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or value < 1
+        ):
+            _issue(
+                report,
+                "invalid_source_span",
+                f"{field_name} must be a positive integer or null, got {value!r}",
+                statement_index=statement_index,
+                row_kind=row_kind,
+                row_index=row_index,
+            )
+    if span.bbox is not None and (
+        len(span.bbox) != 4
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            for value in span.bbox
+        )
+    ):
+        _issue(
+            report,
+            "invalid_source_bbox",
+            "source bounding box must contain four finite numbers",
             statement_index=statement_index,
             row_kind=row_kind,
             row_index=row_index,
@@ -383,6 +424,15 @@ def _validate_statement(
                 row_kind=row_kind,
                 row_index=row_index,
             )
+        if transaction.cash_effective_date:
+            _iso_date(
+                report,
+                transaction.cash_effective_date,
+                code="invalid_cash_effective_date",
+                statement_index=statement_index,
+                row_kind=row_kind,
+                row_index=row_index,
+            )
         if transaction.txn_type not in VALID_TXN_TYPES:
             _issue(
                 report,
@@ -423,12 +473,27 @@ def _validate_statement(
             )
         for field_name in (
             "quantity", "price", "gross_amount", "commission", "other_fees",
-            "net_amount", "tax_rate", "parser_confidence",
+            "net_amount", "tax_rate", "parser_confidence", "position_delta",
+            "cash_delta", "resolution_confidence",
         ):
             _finite(
                 report,
                 getattr(transaction, field_name),
                 field_name=field_name,
+                statement_index=statement_index,
+                row_kind=row_kind,
+                row_index=row_index,
+            )
+        if (
+            isinstance(transaction.resolution_confidence, (int, float))
+            and not isinstance(transaction.resolution_confidence, bool)
+            and math.isfinite(transaction.resolution_confidence)
+            and not 0 <= transaction.resolution_confidence <= 1
+        ):
+            _issue(
+                report,
+                "invalid_resolution_confidence",
+                "resolution_confidence must be between zero and one",
                 statement_index=statement_index,
                 row_kind=row_kind,
                 row_index=row_index,
@@ -442,6 +507,20 @@ def _validate_statement(
                 row_kind=row_kind,
                 row_index=row_index,
             )
+        _source_span(
+            report,
+            transaction.source_span,
+            statement_index=statement_index,
+            row_kind=row_kind,
+            row_index=row_index,
+        )
+        _source_span(
+            report,
+            transaction.resolution_evidence,
+            statement_index=statement_index,
+            row_kind="transaction_resolution",
+            row_index=row_index,
+        )
 
     for row_index, position in enumerate(statement.positions):
         row_kind = "position"
@@ -483,6 +562,13 @@ def _validate_statement(
                 row_kind=row_kind,
                 row_index=row_index,
             )
+        _source_span(
+            report,
+            position.source_span,
+            statement_index=statement_index,
+            row_kind=row_kind,
+            row_index=row_index,
+        )
 
     cash_currencies: set[str] = set()
     for row_index, cash in enumerate(statement.cash_balances):
@@ -521,17 +607,158 @@ def _validate_statement(
             row_index=row_index,
             required=True,
         )
-        _issue(
+        if not (cash.raw_line or "").strip() and not (
+            cash.source_span and (cash.source_span.raw_text or "").strip()
+        ):
+            _issue(
+                report,
+                "cash_source_evidence_unavailable",
+                "cash balance has no source raw text",
+                severity="warning",
+                statement_index=statement_index,
+                row_kind=row_kind,
+                row_index=row_index,
+            )
+        _source_span(
             report,
-            "cash_source_evidence_unavailable",
-            "ParsedCashBalance has no raw source field in the current contract",
-            severity="warning",
+            cash.source_span,
             statement_index=statement_index,
             row_kind=row_kind,
             row_index=row_index,
         )
 
-    for row_index, (raw_line, reason) in enumerate(statement.quarantine):
+    declared_scopes: set[tuple[str, str, str]] = set()
+    for row_index, snapshot_set in enumerate(statement.snapshot_sets):
+        row_kind = "snapshot_set"
+        _currency(
+            report,
+            snapshot_set.currency,
+            statement_index=statement_index,
+            row_kind=row_kind,
+            row_index=row_index,
+        )
+        key = (
+            snapshot_set.currency,
+            snapshot_set.section_type,
+            snapshot_set.scope_key,
+        )
+        if key in declared_scopes:
+            _issue(
+                report,
+                "duplicate_snapshot_scope",
+                f"duplicate snapshot scope {key!r}",
+                statement_index=statement_index,
+                row_kind=row_kind,
+                row_index=row_index,
+            )
+        declared_scopes.add(key)
+        if snapshot_set.section_type not in {"positions", "cash", "summary"}:
+            _issue(
+                report,
+                "invalid_snapshot_section_type",
+                f"unsupported snapshot section type: {snapshot_set.section_type!r}",
+                statement_index=statement_index,
+                row_kind=row_kind,
+                row_index=row_index,
+            )
+        if not isinstance(snapshot_set.scope_key, str) or not snapshot_set.scope_key.strip():
+            _issue(
+                report,
+                "invalid_snapshot_scope_key",
+                "snapshot scope_key must be non-empty text",
+                statement_index=statement_index,
+                row_kind=row_kind,
+                row_index=row_index,
+            )
+        if snapshot_set.completeness not in {"complete", "partial", "absent", "unknown"}:
+            _issue(
+                report,
+                "invalid_snapshot_completeness",
+                f"unsupported snapshot completeness: {snapshot_set.completeness!r}",
+                statement_index=statement_index,
+                row_kind=row_kind,
+                row_index=row_index,
+            )
+        if snapshot_set.validation_status not in {
+            "unvalidated",
+            "valid",
+            "warning",
+            "invalid",
+        }:
+            _issue(
+                report,
+                "invalid_snapshot_validation_status",
+                f"unsupported snapshot validation status: {snapshot_set.validation_status!r}",
+                statement_index=statement_index,
+                row_kind=row_kind,
+                row_index=row_index,
+            )
+        _finite(
+            report,
+            snapshot_set.reported_total,
+            field_name="reported_total",
+            statement_index=statement_index,
+            row_kind=row_kind,
+            row_index=row_index,
+        )
+        _source_span(
+            report,
+            snapshot_set.source_span,
+            statement_index=statement_index,
+            row_kind=row_kind,
+            row_index=row_index,
+        )
+
+    actual_scopes = {
+        (position.currency, "positions", position.scope_key)
+        for position in statement.positions
+    } | {
+        (cash.currency, "cash", cash.scope_key)
+        for cash in statement.cash_balances
+    }
+    for row_kind, rows in (
+        ("position", statement.positions),
+        ("cash", statement.cash_balances),
+    ):
+        for row_index, row in enumerate(rows):
+            if not isinstance(row.scope_key, str) or not row.scope_key.strip():
+                _issue(
+                    report,
+                    "invalid_snapshot_scope_key",
+                    f"{row_kind} scope_key must be non-empty text",
+                    statement_index=statement_index,
+                    row_kind=row_kind,
+                    row_index=row_index,
+                )
+    for scope in sorted(actual_scopes, key=repr):
+        if scope not in declared_scopes:
+            _issue(
+                report,
+                "snapshot_scope_undeclared",
+                f"rows exist for undeclared snapshot scope {scope!r}",
+                severity="warning",
+                statement_index=statement_index,
+            )
+    for scope in declared_scopes:
+        declaration = next(
+            item
+            for item in statement.snapshot_sets
+            if (item.currency, item.section_type, item.scope_key) == scope
+        )
+        if declaration.completeness == "absent" and scope in actual_scopes:
+            _issue(
+                report,
+                "absent_snapshot_scope_has_rows",
+                f"scope {scope!r} is declared absent but emits rows",
+                statement_index=statement_index,
+            )
+
+    for row_index, item in enumerate(statement.quarantine):
+        if isinstance(item, ParsedQuarantine):
+            raw_line, reason, span = item.raw_line, item.reason, item.source_span
+        else:
+            raw_line, reason = item
+            span = None
         if not raw_line.strip():
             _issue(
                 report,
@@ -550,14 +777,12 @@ def _validate_statement(
                 row_kind="quarantine",
                 row_index=row_index,
             )
-
-    if statement.positions or statement.cash_balances:
-        _issue(
+        _source_span(
             report,
-            "snapshot_completeness_unavailable",
-            "the current parser contract cannot declare section scope/completeness",
-            severity="warning",
+            span,
             statement_index=statement_index,
+            row_kind="quarantine",
+            row_index=row_index,
         )
 
 

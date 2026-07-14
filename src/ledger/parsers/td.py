@@ -455,6 +455,7 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> None:
 def _parse_activity(body: str, currency: str, year_end: int,
                     period_end_month: int, stmt: ParsedStatement) -> None:
     opening = closing = None
+    cash_lines: list[str] = []
     cur: ParsedTxn | None = None
     for ln in body.splitlines():
         s = ln.strip()
@@ -463,10 +464,12 @@ def _parse_activity(body: str, currency: str, year_end: int,
         mb = RE_BEGIN_BAL.search(s) or RE_LEGACY_BEGIN_BAL.search(s)
         if mb:
             opening = parse_money(mb.group(1))
+            cash_lines.append(ln)
             continue
         me = RE_END_BAL.search(s) or RE_LEGACY_END_BAL.search(s)
         if me:
             closing = parse_money(me.group(1))
+            cash_lines.append(ln)
             continue
         # noise
         if (s.startswith("Order-Execution-Only") or s.startswith("TD Waterhouse")
@@ -566,6 +569,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
         stmt.cash_balances.append(ParsedCashBalance(
             currency=currency, opening_balance=opening,
             closing_balance=closing if closing is not None else 0.0,
+            raw_line="\n".join(cash_lines) or None,
         ))
 
 

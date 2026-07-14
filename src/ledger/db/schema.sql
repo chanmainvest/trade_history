@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS account_links (
 
 CREATE TABLE IF NOT EXISTS instruments (
     instrument_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    instrument_key   TEXT NOT NULL UNIQUE,         -- canonical logical identity (ik1)
     asset_type       TEXT NOT NULL CHECK (asset_type IN
                        ('equity','etf','option','bond','mutual_fund','cash','other')),
     symbol           TEXT NOT NULL,               -- e.g. AAPL, BNS.TO, SPY
@@ -60,7 +61,10 @@ CREATE TABLE IF NOT EXISTS instruments (
     option_strike    REAL,
     option_type      TEXT CHECK (option_type IN ('CALL','PUT') OR option_type IS NULL),
     option_multiplier INTEGER DEFAULT 100,
-    UNIQUE(asset_type, symbol, currency, option_expiry, option_strike, option_type)
+    resolution_method TEXT,
+    resolution_confidence REAL,
+    CHECK (resolution_confidence IS NULL OR
+           (resolution_confidence >= 0 AND resolution_confidence <= 1))
 );
 
 CREATE INDEX IF NOT EXISTS idx_instruments_symbol ON instruments(symbol);
@@ -116,20 +120,100 @@ CREATE TABLE IF NOT EXISTS source_files (
     parser_name      TEXT,
     parser_version   TEXT,
     parsed_at        TEXT,
-    parse_status     TEXT NOT NULL DEFAULT 'pending'  -- pending|ok|partial|failed|skipped
+    parse_status     TEXT NOT NULL DEFAULT 'pending', -- compatibility summary of active/latest run
+    active_ingestion_run_id INTEGER REFERENCES ingestion_runs(ingestion_run_id)
+                                      ON DELETE SET NULL
 );
+
+-- Every extraction attempt is retained independently. Only a validated run
+-- may be selected by source_files.active_ingestion_run_id.
+CREATE TABLE IF NOT EXISTS ingestion_runs (
+    ingestion_run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_file_id   INTEGER NOT NULL REFERENCES source_files(source_file_id)
+                                 ON DELETE CASCADE,
+    source_sha256    TEXT,
+    parser_name      TEXT,
+    parser_version   TEXT,
+    contract_version TEXT NOT NULL,
+    schema_version   INTEGER NOT NULL,
+    resolver_version TEXT,
+    status           TEXT NOT NULL CHECK (status IN
+                       ('pending','parsing','validated','active','failed','skipped','superseded')),
+    error_summary    TEXT,
+    started_at       TEXT NOT NULL,
+    finished_at      TEXT,
+    content_counts_json TEXT,
+    content_hash     TEXT,
+    activated_at     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingestion_runs_source
+    ON ingestion_runs(source_file_id, ingestion_run_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ingestion_runs_one_active
+    ON ingestion_runs(source_file_id) WHERE status = 'active';
 
 CREATE TABLE IF NOT EXISTS statements (
     statement_id     INTEGER PRIMARY KEY AUTOINCREMENT,
     source_file_id   INTEGER NOT NULL REFERENCES source_files(source_file_id) ON DELETE CASCADE,
+    ingestion_run_id INTEGER NOT NULL REFERENCES ingestion_runs(ingestion_run_id) ON DELETE CASCADE,
     account_id       INTEGER NOT NULL REFERENCES accounts(account_id),
+    statement_key    TEXT NOT NULL UNIQUE,
     period_start     TEXT NOT NULL,               -- YYYY-MM-DD
     period_end       TEXT NOT NULL,               -- YYYY-MM-DD
     statement_type   TEXT NOT NULL DEFAULT 'monthly', -- monthly|quarterly|annual|interim
-    UNIQUE(source_file_id, account_id, period_end)
+    UNIQUE(source_file_id, account_id, period_start, period_end, statement_type)
 );
 
 CREATE INDEX IF NOT EXISTS idx_statements_account_period ON statements(account_id, period_end);
+CREATE INDEX IF NOT EXISTS idx_statements_run ON statements(ingestion_run_id);
+
+-- Source evidence is provenance metadata. Coordinates remain optional until a
+-- layout-aware parser can supply them; missing evidence is represented as NULL,
+-- never as invented text or coordinates.
+CREATE TABLE IF NOT EXISTS source_evidence (
+    evidence_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    evidence_key     TEXT NOT NULL UNIQUE,
+    source_file_id   INTEGER NOT NULL REFERENCES source_files(source_file_id) ON DELETE CASCADE,
+    ingestion_run_id INTEGER REFERENCES ingestion_runs(ingestion_run_id) ON DELETE CASCADE,
+    row_kind         TEXT NOT NULL,
+    occurrence       INTEGER NOT NULL,
+    page_number      INTEGER,
+    line_number      INTEGER,
+    raw_text         TEXT,
+    bbox_json        TEXT,
+    words_json       TEXT,
+    parser_rule      TEXT,
+    parser_version   TEXT,
+    CHECK (page_number IS NULL OR page_number >= 1),
+    CHECK (line_number IS NULL OR line_number >= 1),
+    UNIQUE(source_file_id, row_kind, occurrence, ingestion_run_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_evidence_run ON source_evidence(ingestion_run_id);
+
+-- A statement may contain multiple independently complete currency/section
+-- scopes. Consumers may clear an omitted holding only when can_clear_omitted=1.
+CREATE TABLE IF NOT EXISTS snapshot_sets (
+    snapshot_set_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    statement_id     INTEGER NOT NULL REFERENCES statements(statement_id) ON DELETE CASCADE,
+    account_id       INTEGER NOT NULL REFERENCES accounts(account_id),
+    as_of_date       TEXT NOT NULL,
+    currency         TEXT NOT NULL,
+    section_type     TEXT NOT NULL CHECK (section_type IN ('positions','cash','summary')),
+    scope_key        TEXT NOT NULL DEFAULT 'default',
+    completeness     TEXT NOT NULL CHECK (completeness IN
+                       ('complete','partial','absent','unknown')),
+    can_clear_omitted INTEGER GENERATED ALWAYS AS
+                       (CASE WHEN completeness = 'complete' THEN 1 ELSE 0 END) STORED,
+    evidence_id      INTEGER REFERENCES source_evidence(evidence_id),
+    reported_total   REAL,
+    validation_status TEXT NOT NULL DEFAULT 'unvalidated' CHECK (validation_status IN
+                       ('unvalidated','valid','warning','invalid')),
+    UNIQUE(statement_id, currency, section_type, scope_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_snapshot_sets_scope
+    ON snapshot_sets(account_id, as_of_date, currency, section_type, completeness);
 
 -- ---------------------------------------------------------------------------
 -- TRANSACTIONS: every event that affects positions or cash
@@ -155,18 +239,23 @@ CREATE TABLE IF NOT EXISTS transactions (
     account_id         INTEGER NOT NULL REFERENCES accounts(account_id),
     statement_id       INTEGER REFERENCES statements(statement_id) ON DELETE SET NULL,
     source_file_id     INTEGER REFERENCES source_files(source_file_id) ON DELETE SET NULL,
+    ingestion_run_id   INTEGER REFERENCES ingestion_runs(ingestion_run_id) ON DELETE SET NULL,
+    evidence_id        INTEGER REFERENCES source_evidence(evidence_id) ON DELETE SET NULL,
 
     trade_date         TEXT NOT NULL,             -- YYYY-MM-DD
     settle_date        TEXT,
     txn_type           TEXT NOT NULL,
     instrument_id      INTEGER REFERENCES instruments(instrument_id),
 
-    quantity           REAL,                      -- signed: + buy/long, - sell/short
+    quantity           REAL,                      -- reported quantity (compatibility name)
+    position_delta     REAL,                      -- normalized signed position effect
     price              REAL,                      -- per share / contract premium per share
     gross_amount       REAL,                      -- price * quantity * multiplier (sign per direction)
     commission         REAL DEFAULT 0,
     other_fees         REAL DEFAULT 0,
-    net_amount         REAL,                      -- cash impact in `currency` (signed)
+    net_amount         REAL,                      -- reported/legacy signed amount
+    cash_delta         REAL,                      -- normalized signed cash effect
+    cash_effective_date TEXT,                     -- settlement or trade date by broker contract
     currency           TEXT NOT NULL,             -- the currency of price/amount
 
     -- For transfer_in / transfer_out / journal: link to the matching event
@@ -180,6 +269,9 @@ CREATE TABLE IF NOT EXISTS transactions (
     description        TEXT,                      -- raw description from statement
     raw_line           TEXT,                      -- original line for audit
     parser_confidence  REAL DEFAULT 1.0,
+    resolution_method  TEXT,
+    resolution_confidence REAL,
+    resolution_evidence_id INTEGER REFERENCES source_evidence(evidence_id) ON DELETE SET NULL,
     created_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -187,16 +279,22 @@ CREATE INDEX IF NOT EXISTS idx_txn_account_date  ON transactions(account_id, tra
 CREATE INDEX IF NOT EXISTS idx_txn_instrument    ON transactions(instrument_id);
 CREATE INDEX IF NOT EXISTS idx_txn_type          ON transactions(txn_type);
 CREATE INDEX IF NOT EXISTS idx_txn_statement     ON transactions(statement_id);
+CREATE INDEX IF NOT EXISTS idx_txn_run           ON transactions(ingestion_run_id);
 CREATE INDEX IF NOT EXISTS idx_txn_counterpart   ON transactions(counterpart_txn_id);
 
 -- Quarantine: rows we couldn't confidently parse.
 CREATE TABLE IF NOT EXISTS quarantine_transactions (
     quarantine_id    INTEGER PRIMARY KEY AUTOINCREMENT,
     source_file_id   INTEGER REFERENCES source_files(source_file_id) ON DELETE CASCADE,
+    ingestion_run_id INTEGER REFERENCES ingestion_runs(ingestion_run_id) ON DELETE CASCADE,
+    statement_id     INTEGER REFERENCES statements(statement_id) ON DELETE CASCADE,
     account_id       INTEGER REFERENCES accounts(account_id),
+    evidence_id      INTEGER REFERENCES source_evidence(evidence_id) ON DELETE CASCADE,
+    occurrence       INTEGER NOT NULL,
     raw_line         TEXT NOT NULL,
     reason           TEXT,
-    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(ingestion_run_id, evidence_id)
 );
 
 -- ---------------------------------------------------------------------------
@@ -206,6 +304,8 @@ CREATE TABLE IF NOT EXISTS quarantine_transactions (
 CREATE TABLE IF NOT EXISTS position_snapshots (
     snapshot_id       INTEGER PRIMARY KEY AUTOINCREMENT,
     statement_id      INTEGER NOT NULL REFERENCES statements(statement_id) ON DELETE CASCADE,
+    snapshot_set_id   INTEGER NOT NULL REFERENCES snapshot_sets(snapshot_set_id) ON DELETE CASCADE,
+    evidence_id       INTEGER NOT NULL REFERENCES source_evidence(evidence_id) ON DELETE CASCADE,
     account_id        INTEGER NOT NULL REFERENCES accounts(account_id),
     as_of_date        TEXT NOT NULL,
     instrument_id     INTEGER NOT NULL REFERENCES instruments(instrument_id),
@@ -217,7 +317,7 @@ CREATE TABLE IF NOT EXISTS position_snapshots (
     unrealized_pnl    REAL,
     currency          TEXT NOT NULL,
     raw_line          TEXT,
-    UNIQUE(statement_id, instrument_id)
+    UNIQUE(snapshot_set_id, instrument_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_pos_account_date ON position_snapshots(account_id, as_of_date);
@@ -226,12 +326,15 @@ CREATE INDEX IF NOT EXISTS idx_pos_account_date ON position_snapshots(account_id
 CREATE TABLE IF NOT EXISTS cash_balances (
     cash_balance_id   INTEGER PRIMARY KEY AUTOINCREMENT,
     statement_id      INTEGER NOT NULL REFERENCES statements(statement_id) ON DELETE CASCADE,
+    snapshot_set_id   INTEGER NOT NULL REFERENCES snapshot_sets(snapshot_set_id) ON DELETE CASCADE,
+    evidence_id       INTEGER NOT NULL REFERENCES source_evidence(evidence_id) ON DELETE CASCADE,
     account_id        INTEGER NOT NULL REFERENCES accounts(account_id),
     as_of_date        TEXT NOT NULL,
     currency          TEXT NOT NULL,
     opening_balance   REAL,
     closing_balance   REAL NOT NULL,
-    UNIQUE(statement_id, currency)
+    raw_line          TEXT,
+    UNIQUE(snapshot_set_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_cash_account_date ON cash_balances(account_id, as_of_date);
@@ -300,6 +403,48 @@ CREATE TABLE IF NOT EXISTS position_transaction_links (
 
 CREATE INDEX IF NOT EXISTS idx_pos_txn_links_txn ON position_transaction_links(transaction_id);
 
+-- Explicit results store the equation and residual; they never create an
+-- adjustment transaction. A component table preserves the audit trail.
+CREATE TABLE IF NOT EXISTS reconciliation_results (
+    reconciliation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reconciliation_key TEXT NOT NULL UNIQUE,
+    ingestion_run_id INTEGER REFERENCES ingestion_runs(ingestion_run_id) ON DELETE CASCADE,
+    kind             TEXT NOT NULL CHECK (kind IN
+                       ('position','cash','statement_total','transfer')),
+    account_id       INTEGER NOT NULL REFERENCES accounts(account_id),
+    statement_id     INTEGER REFERENCES statements(statement_id) ON DELETE CASCADE,
+    snapshot_set_id  INTEGER REFERENCES snapshot_sets(snapshot_set_id) ON DELETE CASCADE,
+    prior_snapshot_set_id INTEGER REFERENCES snapshot_sets(snapshot_set_id) ON DELETE SET NULL,
+    instrument_id    INTEGER REFERENCES instruments(instrument_id),
+    currency         TEXT NOT NULL,
+    prior_checkpoint TEXT,
+    current_checkpoint TEXT,
+    opening_value    REAL,
+    summed_deltas    REAL,
+    expected_close   REAL,
+    reported_close   REAL,
+    residual         REAL,
+    tolerance        REAL NOT NULL DEFAULT 0,
+    status           TEXT NOT NULL CHECK (status IN
+                       ('reconciled','within_rounding','unexplained_residual',
+                        'incomplete_input','missing_prior_checkpoint',
+                        'ambiguous_transfer','not_applicable')),
+    reason           TEXT,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_reconciliation_scope
+    ON reconciliation_results(account_id, current_checkpoint, kind, status);
+
+CREATE TABLE IF NOT EXISTS reconciliation_components (
+    reconciliation_id INTEGER NOT NULL REFERENCES reconciliation_results(reconciliation_id)
+                                  ON DELETE CASCADE,
+    transaction_id    INTEGER NOT NULL REFERENCES transactions(transaction_id)
+                                  ON DELETE CASCADE,
+    delta             REAL NOT NULL,
+    PRIMARY KEY(reconciliation_id, transaction_id)
+);
+
 -- ---------------------------------------------------------------------------
 -- META
 -- ---------------------------------------------------------------------------
@@ -309,4 +454,4 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value            TEXT NOT NULL
 );
 
-INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '5');
+INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '6');

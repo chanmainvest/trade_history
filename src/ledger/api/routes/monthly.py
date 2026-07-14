@@ -39,75 +39,92 @@ def _csv_ints(v: str | None) -> list[int]:
 
 def _holdings_at(as_of: str, account_ids: list[int], path: Path | str | None = None) -> list[dict]:
     base_sql = """
-        WITH account_anchor AS (
-            SELECT account_id, MAX(as_of_date) AS d
-              FROM position_snapshots
-             WHERE as_of_date <= ?
-             GROUP BY account_id
+        WITH scope_anchor AS (
+            SELECT ps.account_id, ps.currency, MAX(ps.as_of_date) AS d
+              FROM position_snapshots ps
+              JOIN snapshot_sets ss ON ss.snapshot_set_id = ps.snapshot_set_id
+             WHERE ps.as_of_date <= ?
+               AND ss.section_type = 'positions'
+               AND ss.can_clear_omitted = 1
+             GROUP BY ps.account_id, ps.currency
         ),
         anchor_qty AS (
-              SELECT account_id, instrument_id, quantity, as_of_date,
-                    avg_cost, book_value, market_price,
-                    market_value, unrealized_pnl
-                FROM (
-                 SELECT ps.account_id, ps.instrument_id, ps.quantity, ps.as_of_date,
-                       ps.avg_cost, ps.book_value, ps.market_price,
-                       ps.market_value, ps.unrealized_pnl,
-                       ROW_NUMBER() OVER (
-                        PARTITION BY ps.account_id, ps.instrument_id
-                        ORDER BY ps.statement_id DESC, ps.snapshot_id DESC
-                       ) AS rn
-                   FROM position_snapshots ps
-                   JOIN account_anchor aa ON aa.account_id = ps.account_id
-                                    AND aa.d = ps.as_of_date
-                )
-               WHERE rn = 1
+               SELECT account_id, instrument_id, instrument_key, currency,
+                      quantity, as_of_date,
+                     avg_cost, book_value, market_price,
+                     market_value, unrealized_pnl
+                 FROM (
+                  SELECT ps.account_id, ps.instrument_id, i.instrument_key,
+                        ps.currency, ps.quantity, ps.as_of_date,
+                        ps.avg_cost, ps.book_value, ps.market_price,
+                        ps.market_value, ps.unrealized_pnl,
+                        ROW_NUMBER() OVER (
+                         PARTITION BY ps.account_id, i.instrument_key, ps.currency
+                         ORDER BY ps.statement_id DESC, ps.snapshot_id DESC
+                        ) AS rn
+                    FROM position_snapshots ps
+                    JOIN snapshot_sets ss ON ss.snapshot_set_id = ps.snapshot_set_id
+                    JOIN scope_anchor aa ON aa.account_id = ps.account_id
+                                      AND aa.currency = ps.currency
+                                      AND aa.d = ps.as_of_date
+                    JOIN instruments i ON i.instrument_id = ps.instrument_id
+                   WHERE ss.section_type = 'positions'
+                     AND ss.can_clear_omitted = 1
+                 )
+                WHERE rn = 1
         ),
         post_txn AS (
-            SELECT t.account_id, t.instrument_id,
-                   SUM(quantity_delta(t.txn_type, t.quantity)) AS quantity
-              FROM transactions t
-              LEFT JOIN account_anchor aa ON aa.account_id = t.account_id
-             WHERE t.instrument_id IS NOT NULL
-               AND t.quantity IS NOT NULL
-               AND t.trade_date <= ?
-               AND (aa.d IS NULL OR t.trade_date > aa.d)
-             GROUP BY t.account_id, t.instrument_id
+            SELECT t.account_id, i.instrument_id, i.instrument_key, i.currency,
+                   SUM(COALESCE(t.position_delta, quantity_delta(t.txn_type, t.quantity))) AS quantity
+               FROM transactions t
+               JOIN instruments i ON i.instrument_id = t.instrument_id
+               LEFT JOIN scope_anchor aa ON aa.account_id = t.account_id
+                                        AND aa.currency = i.currency
+              WHERE t.instrument_id IS NOT NULL
+                AND t.trade_date <= ?
+                AND (aa.d IS NULL OR t.trade_date > aa.d)
+              GROUP BY t.account_id, i.instrument_id, i.instrument_key, i.currency
         ),
         pre_snapshot AS (
-            SELECT ip.account_id, ip.instrument_id, SUM(ip.quantity) AS quantity
-              FROM initial_positions ip
-              LEFT JOIN account_anchor aa ON aa.account_id = ip.account_id
-             WHERE ip.as_of_date <= ?
-               AND aa.d IS NULL
-             GROUP BY ip.account_id, ip.instrument_id
+            SELECT ip.account_id, i.instrument_id, i.instrument_key, ip.currency,
+                   SUM(ip.quantity) AS quantity
+               FROM initial_positions ip
+               JOIN instruments i ON i.instrument_id = ip.instrument_id
+               LEFT JOIN scope_anchor aa ON aa.account_id = ip.account_id
+                                        AND aa.currency = ip.currency
+              WHERE ip.as_of_date <= ?
+                AND aa.d IS NULL
+              GROUP BY ip.account_id, i.instrument_id, i.instrument_key, ip.currency
         ),
         keys AS (
-            SELECT account_id, instrument_id FROM anchor_qty
+            SELECT account_id, instrument_id, instrument_key, currency FROM anchor_qty
             UNION
-            SELECT account_id, instrument_id FROM post_txn
+            SELECT account_id, instrument_id, instrument_key, currency FROM post_txn
             UNION
-            SELECT account_id, instrument_id FROM pre_snapshot
+            SELECT account_id, instrument_id, instrument_key, currency FROM pre_snapshot
         ),
         qty AS (
-            SELECT k.account_id, k.instrument_id,
+            SELECT k.account_id, k.instrument_id, k.instrument_key, k.currency,
                    COALESCE(aq.quantity, 0) + COALESCE(pt.quantity, 0)
-                   + COALESCE(pre.quantity, 0) AS quantity
-              FROM keys k
-              LEFT JOIN anchor_qty aq ON aq.account_id = k.account_id
-                                     AND aq.instrument_id = k.instrument_id
-              LEFT JOIN post_txn pt ON pt.account_id = k.account_id
-                                   AND pt.instrument_id = k.instrument_id
-              LEFT JOIN pre_snapshot pre ON pre.account_id = k.account_id
-                                         AND pre.instrument_id = k.instrument_id
+                    + COALESCE(pre.quantity, 0) AS quantity
+               FROM keys k
+               LEFT JOIN anchor_qty aq ON aq.account_id = k.account_id
+                                      AND aq.instrument_key = k.instrument_key
+                                      AND aq.currency = k.currency
+               LEFT JOIN post_txn pt ON pt.account_id = k.account_id
+                                    AND pt.instrument_key = k.instrument_key
+                                    AND pt.currency = k.currency
+               LEFT JOIN pre_snapshot pre ON pre.account_id = k.account_id
+                                          AND pre.instrument_key = k.instrument_key
+                                          AND pre.currency = k.currency
              WHERE ABS(COALESCE(aq.quantity, 0) + COALESCE(pt.quantity, 0)
                        + COALESCE(pre.quantity, 0)) > 1e-9
         )
         SELECT COALESCE(aq.as_of_date, ?) AS as_of_date,
                q.account_id, a.account_number, a.nickname,
-               ins.code AS institution_code, ins.display_name AS institution_name,
-               COALESCE(inst.option_root, inst.symbol) AS symbol,
-               inst.asset_type, inst.currency,
+                ins.code AS institution_code, ins.display_name AS institution_name,
+                COALESCE(inst.option_root, inst.symbol) AS symbol,
+                inst.asset_type, inst.currency, q.instrument_key,
                inst.option_expiry, inst.option_strike, inst.option_type,
                q.quantity,
                aq.avg_cost,
@@ -128,9 +145,10 @@ def _holdings_at(as_of: str, account_ids: list[int], path: Path | str | None = N
           FROM qty q
           JOIN accounts a ON a.account_id = q.account_id
           JOIN institutions ins ON ins.institution_id = a.institution_id
-          JOIN instruments inst ON inst.instrument_id = q.instrument_id
-          LEFT JOIN anchor_qty aq ON aq.account_id = q.account_id
-                                  AND aq.instrument_id = q.instrument_id
+           JOIN instruments inst ON inst.instrument_id = q.instrument_id
+           LEFT JOIN anchor_qty aq ON aq.account_id = q.account_id
+                                   AND aq.instrument_key = q.instrument_key
+                                   AND aq.currency = q.currency
          WHERE 1=1
         {acct_clause}
          ORDER BY institution_name, a.account_number, inst.symbol
@@ -167,7 +185,10 @@ def _cash_at(conn, as_of: str, account_ids: list[int]) -> list[dict]:
         anchor AS (
             SELECT cb.account_id, cb.currency, MAX(cb.as_of_date) AS as_of_date
               FROM cash_balances cb
+              JOIN snapshot_sets ss ON ss.snapshot_set_id = cb.snapshot_set_id
              WHERE cb.as_of_date <= ?
+               AND ss.section_type = 'cash'
+               AND ss.can_clear_omitted = 1
              GROUP BY cb.account_id, cb.currency
         ),
         anchor_balance AS (
@@ -178,14 +199,16 @@ def _cash_at(conn, as_of: str, account_ids: list[int]) -> list[dict]:
                            AND a.as_of_date = cb.as_of_date
         ),
         post_txn AS (
-            SELECT t.account_id, t.currency, SUM(t.net_amount) AS balance_delta
+            SELECT t.account_id, t.currency,
+                   SUM(COALESCE(t.cash_delta, t.net_amount)) AS balance_delta
               FROM transactions t
               LEFT JOIN anchor a ON a.account_id = t.account_id
                                 AND a.currency = t.currency
              WHERE t.currency IS NOT NULL
-               AND t.net_amount IS NOT NULL
-               AND t.trade_date <= ?
-               AND (a.as_of_date IS NULL OR t.trade_date > a.as_of_date)
+                AND COALESCE(t.cash_delta, t.net_amount) IS NOT NULL
+                AND COALESCE(t.cash_effective_date, t.trade_date) <= ?
+                AND (a.as_of_date IS NULL OR
+                     COALESCE(t.cash_effective_date, t.trade_date) > a.as_of_date)
                AND t.txn_type NOT IN ({','.join('?' * len(NON_CASH_TXN_TYPES))})
              GROUP BY t.account_id, t.currency
         ),
@@ -215,9 +238,10 @@ def _cash_at(conn, as_of: str, account_ids: list[int]) -> list[dict]:
         SELECT COALESCE(cq.anchor_date, ?) AS as_of_date,
                cq.account_id, a.account_number, a.nickname,
                ins.code AS institution_code, ins.display_name AS institution_name,
-               cq.currency || ' Cash' AS symbol,
-               'cash' AS asset_type,
-               cq.currency AS currency,
+                cq.currency || ' Cash' AS symbol,
+                'cash' AS asset_type,
+                cq.currency AS currency,
+                'cash|' || cq.currency AS instrument_key,
                NULL AS option_expiry, NULL AS option_strike, NULL AS option_type,
                cq.balance AS quantity,
                NULL AS avg_cost,
@@ -314,13 +338,13 @@ def diff(
     account_id: str | None = Query(None),
 ) -> dict:
     accts = _csv_ints(account_id)
-    rows_a = {(r["account_id"], r["symbol"], r["option_expiry"], r["option_strike"], r["option_type"]): r
+    rows_a = {(r["account_id"], r["instrument_key"], r["currency"]): r
               for r in _holdings_at(a, accts)}
-    rows_b = {(r["account_id"], r["symbol"], r["option_expiry"], r["option_strike"], r["option_type"]): r
+    rows_b = {(r["account_id"], r["instrument_key"], r["currency"]): r
               for r in _holdings_at(b, accts)}
     keys = set(rows_a) | set(rows_b)
     diffs = []
-    for k in sorted(keys, key=lambda x: (x[1] or "", x[0])):
+    for k in sorted(keys, key=lambda x: (x[1] or "", x[0], x[2] or "")):
         ra, rb = rows_a.get(k), rows_b.get(k)
         qa = ra["quantity"] if ra else 0.0
         qb = rb["quantity"] if rb else 0.0
@@ -331,6 +355,7 @@ def diff(
             "account_id": ref["account_id"],
             "account_number": ref["account_number"],
             "institution_code": ref["institution_code"],
+            "instrument_key": ref["instrument_key"],
             "symbol": ref["symbol"],
             "asset_type": ref["asset_type"], "currency": ref["currency"],
             "option_expiry": ref["option_expiry"], "option_strike": ref["option_strike"],

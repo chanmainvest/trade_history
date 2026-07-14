@@ -2,6 +2,8 @@ from ledger.api.routes.monthly import _holdings_at
 from ledger.db import sqlite as sqlite_db
 from ledger.ingest.initials import infer_initials
 
+from .db_fixtures import seed_cash, seed_position, seed_source, seed_statement
+
 
 def _seed_account(conn):
     institution_id = sqlite_db.upsert_institution(conn, "TST", "Test Broker")
@@ -12,18 +14,14 @@ def _seed_account(conn):
         account_type="Margin",
         base_currency="CAD",
     )
-    source_file_id = conn.execute(
-        "INSERT INTO source_files(relpath, parse_status) VALUES (?, 'ok') RETURNING source_file_id",
-        ("Statements/Test/sample.pdf",),
-    ).fetchone()[0]
-    statement_id = conn.execute(
-        """
-        INSERT INTO statements(source_file_id, account_id, period_start, period_end)
-        VALUES (?, ?, '2024-01-01', '2024-01-31')
-        RETURNING statement_id
-        """,
-        (source_file_id, account_id),
-    ).fetchone()[0]
+    source_file_id = seed_source(conn, "Statements/Test/sample.pdf")
+    statement_id = seed_statement(
+        conn,
+        account_id=account_id,
+        source_file_id=source_file_id,
+        period_start="2024-01-01",
+        period_end="2024-01-31",
+    )
     return account_id, statement_id
 
 
@@ -74,19 +72,19 @@ def test_infer_initials_preserves_curated_rows_and_tags_cash(tmp_path):
             symbol="XYZ",
             currency="CAD",
         )
-        conn.execute(
-            """
-            INSERT INTO position_snapshots(statement_id, account_id, as_of_date, instrument_id, quantity, currency)
-            VALUES (?, ?, '2024-01-31', ?, 100, 'CAD')
-            """,
-            (statement_id, account_id, inferred_instrument_id),
+        seed_position(
+            conn,
+            statement_id=statement_id,
+            instrument_id=inferred_instrument_id,
+            quantity=100,
+            currency="CAD",
         )
-        conn.execute(
-            """
-            INSERT INTO position_snapshots(statement_id, account_id, as_of_date, instrument_id, quantity, currency)
-            VALUES (?, ?, '2024-01-31', ?, 10, 'CAD')
-            """,
-            (statement_id, account_id, curated_instrument_id),
+        seed_position(
+            conn,
+            statement_id=statement_id,
+            instrument_id=curated_instrument_id,
+            quantity=10,
+            currency="CAD",
         )
         conn.execute(
             """
@@ -95,38 +93,32 @@ def test_infer_initials_preserves_curated_rows_and_tags_cash(tmp_path):
             """,
             (account_id, inferred_instrument_id),
         )
-        conn.execute(
-            """
-            INSERT INTO cash_balances(statement_id, account_id, as_of_date, currency, closing_balance)
-            VALUES (?, ?, '2024-01-31', 'CAD', 1000)
-            """,
-            (statement_id, account_id),
+        seed_cash(
+            conn,
+            statement_id=statement_id,
+            currency="CAD",
+            closing_balance=1000,
         )
-        conn.execute(
-            """
-            INSERT INTO cash_balances(statement_id, account_id, as_of_date, currency, closing_balance)
-            VALUES (?, ?, '2024-01-31', 'USD', 500)
-            """,
-            (statement_id, account_id),
+        seed_cash(
+            conn,
+            statement_id=statement_id,
+            currency="USD",
+            closing_balance=500,
         )
-        annual_source_id = conn.execute(
-            "INSERT INTO source_files(relpath, parse_status) VALUES (?, 'ok') RETURNING source_file_id",
-            ("Statements/Test/annual.pdf",),
-        ).fetchone()[0]
-        annual_statement_id = conn.execute(
-            """
-            INSERT INTO statements(source_file_id, account_id, period_start, period_end, statement_type)
-            VALUES (?, ?, '2023-01-01', '2023-12-31', 'annual')
-            RETURNING statement_id
-            """,
-            (annual_source_id, account_id),
-        ).fetchone()[0]
-        conn.execute(
-            """
-            INSERT INTO cash_balances(statement_id, account_id, as_of_date, currency, closing_balance)
-            VALUES (?, ?, '2023-12-31', 'USD', 9999)
-            """,
-            (annual_statement_id, account_id),
+        annual_source_id = seed_source(conn, "Statements/Test/annual.pdf")
+        annual_statement_id = seed_statement(
+            conn,
+            account_id=account_id,
+            source_file_id=annual_source_id,
+            period_start="2023-01-01",
+            period_end="2023-12-31",
+            statement_type="annual",
+        )
+        seed_cash(
+            conn,
+            statement_id=annual_statement_id,
+            currency="USD",
+            closing_balance=9999,
         )
         conn.execute(
             """
@@ -203,23 +195,21 @@ def test_holdings_reconstruct_before_first_snapshot_and_after_empty_statement(tm
             """,
             (account_id, instrument_id),
         )
-        conn.execute(
-            """
-            INSERT INTO position_snapshots(statement_id, account_id, as_of_date, instrument_id, quantity, currency)
-            VALUES (?, ?, '2024-01-31', ?, 100, 'CAD')
-            """,
-            (statement_id, account_id, instrument_id),
+        seed_position(
+            conn,
+            statement_id=statement_id,
+            instrument_id=instrument_id,
+            quantity=100,
+            currency="CAD",
         )
-        later_source_id = conn.execute(
-            "INSERT INTO source_files(relpath, parse_status) VALUES (?, 'ok') RETURNING source_file_id",
-            ("Statements/Test/empty-annual.pdf",),
-        ).fetchone()[0]
-        conn.execute(
-            """
-            INSERT INTO statements(source_file_id, account_id, period_start, period_end, statement_type)
-            VALUES (?, ?, '2024-02-01', '2024-02-28', 'annual')
-            """,
-            (later_source_id, account_id),
+        later_source_id = seed_source(conn, "Statements/Test/empty-annual.pdf")
+        seed_statement(
+            conn,
+            account_id=account_id,
+            source_file_id=later_source_id,
+            period_start="2024-02-01",
+            period_end="2024-02-28",
+            statement_type="annual",
         )
         conn.execute(
             """

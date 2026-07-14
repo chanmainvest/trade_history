@@ -53,37 +53,55 @@ def infer_initials(path: Path | str | None = None) -> dict:
         conn.execute("DELETE FROM initial_cash WHERE notes LIKE 'inferred:%' OR notes IS NULL")
         # Positions ------------------------------------------------------
         rows = conn.execute(
-            "SELECT account_id, instrument_id, MIN(as_of_date) AS first_date "
-            "  FROM position_snapshots "
-            " GROUP BY account_id, instrument_id"
+            """
+            SELECT ps.account_id, i.instrument_key, MIN(ps.as_of_date) AS first_date
+              FROM position_snapshots ps
+              JOIN snapshot_sets ss ON ss.snapshot_set_id = ps.snapshot_set_id
+              JOIN instruments i ON i.instrument_id = ps.instrument_id
+             WHERE ss.section_type = 'positions' AND ss.can_clear_omitted = 1
+             GROUP BY ps.account_id, i.instrument_key
+            """
         ).fetchall()
 
         for r in rows:
             acct = r["account_id"]
-            inst = r["instrument_id"]
+            instrument_key = r["instrument_key"]
             first = r["first_date"]
 
             snap = conn.execute(
-                "SELECT quantity, currency "
-                "  FROM position_snapshots "
-                " WHERE account_id = ? AND instrument_id = ? AND as_of_date = ? "
+                "SELECT ps.instrument_id, ps.quantity, ps.currency "
+                "  FROM position_snapshots ps "
+                "  JOIN snapshot_sets ss ON ss.snapshot_set_id = ps.snapshot_set_id "
+                "  JOIN instruments i ON i.instrument_id = ps.instrument_id "
+                " WHERE ps.account_id = ? AND i.instrument_key = ? AND ps.as_of_date = ? "
+                "   AND ss.section_type = 'positions' AND ss.can_clear_omitted = 1 "
                 " LIMIT 1",
-                (acct, inst, first),
+                (acct, instrument_key, first),
             ).fetchone()
             if not snap:
                 continue
             snap_qty = float(snap["quantity"] or 0.0)
             ccy = snap["currency"]
+            inst = snap["instrument_id"]
 
             txns = conn.execute(
-                "SELECT txn_type, COALESCE(quantity, 0) AS quantity "
-                "  FROM transactions "
-                " WHERE account_id = ? AND instrument_id = ? AND trade_date <= ?",
-                (acct, inst, first),
+                """
+                SELECT t.txn_type, t.quantity, t.position_delta
+                  FROM transactions t
+                  JOIN instruments i ON i.instrument_id = t.instrument_id
+                 WHERE t.account_id = ?
+                   AND i.instrument_key = ?
+                   AND t.trade_date <= ?
+                """,
+                (acct, instrument_key, first),
             ).fetchall()
             txn_qty = 0.0
             for t in txns:
-                txn_qty += quantity_delta(t["txn_type"], t["quantity"])
+                txn_qty += (
+                    float(t["position_delta"])
+                    if t["position_delta"] is not None
+                    else quantity_delta(t["txn_type"], t["quantity"])
+                )
 
             implied_initial = snap_qty - txn_qty
             if abs(implied_initial) < 1e-9:
@@ -114,7 +132,9 @@ def infer_initials(path: Path | str | None = None) -> dict:
             "SELECT cb.account_id, cb.currency, MIN(cb.as_of_date) AS first_date "
             "  FROM cash_balances cb "
             "  JOIN statements s ON s.statement_id = cb.statement_id "
+            "  JOIN snapshot_sets ss ON ss.snapshot_set_id = cb.snapshot_set_id "
             " WHERE s.statement_type = 'monthly' "
+            "   AND ss.section_type = 'cash' AND ss.can_clear_omitted = 1 "
             " GROUP BY cb.account_id, cb.currency"
         ).fetchall()
         for r in cash_rows:
@@ -123,10 +143,12 @@ def infer_initials(path: Path | str | None = None) -> dict:
             first = r["first_date"]
             first_bal = conn.execute(
                 "SELECT cb.closing_balance AS balance "
-                "  FROM cash_balances cb "
-                "  JOIN statements s ON s.statement_id = cb.statement_id "
-                " WHERE cb.account_id = ? AND cb.currency = ? AND cb.as_of_date = ? "
-                "   AND s.statement_type = 'monthly' "
+            "  FROM cash_balances cb "
+            "  JOIN statements s ON s.statement_id = cb.statement_id "
+            "  JOIN snapshot_sets ss ON ss.snapshot_set_id = cb.snapshot_set_id "
+            " WHERE cb.account_id = ? AND cb.currency = ? AND cb.as_of_date = ? "
+            "   AND s.statement_type = 'monthly' "
+            "   AND ss.section_type = 'cash' AND ss.can_clear_omitted = 1 "
                 " LIMIT 1",
                 (acct, ccy, first),
             ).fetchone()
@@ -134,10 +156,11 @@ def infer_initials(path: Path | str | None = None) -> dict:
                 continue
             bal = float(first_bal["balance"] or 0.0)
             net_rows = conn.execute(
-                "SELECT COALESCE(SUM(net_amount), 0) AS s "
+                "SELECT COALESCE(SUM(COALESCE(cash_delta, net_amount)), 0) AS s "
                 "  FROM transactions "
-                " WHERE account_id = ? AND currency = ? AND trade_date <= ? "
-                "   AND net_amount IS NOT NULL "
+                " WHERE account_id = ? AND currency = ? "
+                "   AND COALESCE(cash_effective_date, trade_date) <= ? "
+                "   AND COALESCE(cash_delta, net_amount) IS NOT NULL "
                 f"   AND txn_type NOT IN ({','.join('?' * len(NON_CASH_TXN_TYPES))})",
                 (acct, ccy, first, *sorted(NON_CASH_TXN_TYPES)),
             ).fetchone()
