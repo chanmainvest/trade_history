@@ -26,6 +26,11 @@ from .helpers import (
     _option_mon,
     parse_money,
 )
+from .layout import (
+    attach_source_spans,
+    declare_snapshot_scopes,
+    quarantine_unsupported_rows,
+)
 from .name_resolver import resolve_ticker, synthetic_symbol
 from .registry import register
 from .types import (
@@ -33,6 +38,7 @@ from .types import (
     ParsedCashBalance,
     ParsedInstrument,
     ParsedPosition,
+    ParsedQuarantine,
     ParsedStatement,
     ParsedTxn,
     ParseResult,
@@ -349,12 +355,12 @@ def _instr_from_desc(desc: str, currency: str) -> ParsedInstrument:
 
 # ------------------------------------------------------------- Activity parse
 def _parse_activity_block(body: str, *, currency: str, year: int,
-                          stmt: ParsedStatement) -> None:
+                          stmt: ParsedStatement) -> bool:
     lines = body.splitlines()
     i = 0
-    def flush():
-        # Generic flush is handled inline; this is a placeholder for clarity.
-        return
+    opening_balance: float | None = None
+    cash_lines: list[str] = []
+    cash_complete = False
 
     while i < len(lines):
         ln = lines[i].rstrip()
@@ -386,25 +392,40 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
             low = rest.lower()
             if "opening cash balance" in low:
                 amt = parse_money(_last_money(rest))
-                stmt.cash_balances.append(
-                    ParsedCashBalance(currency=currency, opening_balance=amt,
-                                      closing_balance=amt or 0.0, raw_line=ln)
-                )
+                if amt is None:
+                    stmt.quarantine.append(ParsedQuarantine(
+                        raw_line=ln,
+                        reason="opening cash balance has no valid amount",
+                    ))
+                else:
+                    opening_balance = amt
+                    cash_lines = [ln]
                 continue
             if "closing cash balance" in low:
                 amt = parse_money(_last_money(rest))
+                if amt is None:
+                    stmt.quarantine.append(ParsedQuarantine(
+                        raw_line=ln,
+                        reason="closing cash balance has no valid amount",
+                    ))
+                    continue
                 # Update or insert closing balance for this currency.
                 existing = next((c for c in stmt.cash_balances if c.currency == currency), None)
                 if existing is not None:
-                    existing.closing_balance = amt or 0.0
+                    existing.closing_balance = amt
                     existing.raw_line = "\n".join(
                         part for part in (existing.raw_line, ln) if part
                     )
                 else:
                     stmt.cash_balances.append(
-                        ParsedCashBalance(currency=currency, opening_balance=None,
-                                          closing_balance=amt or 0.0, raw_line=ln)
+                        ParsedCashBalance(
+                            currency=currency,
+                            opening_balance=opening_balance,
+                            closing_balance=amt,
+                            raw_line="\n".join([*cash_lines, ln]),
+                        )
                     )
+                cash_complete = True
                 continue
 
             # Try option transaction first.
@@ -509,6 +530,18 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
             extra = s
             last.description = (last.description or "") + " | " + extra
             last.raw_line = (last.raw_line or "") + "\n" + ln
+        elif re.search(r"\d", s):
+            stmt.quarantine.append(ParsedQuarantine(
+                raw_line=ln,
+                reason="unclaimed activity-like row",
+            ))
+
+    if opening_balance is not None and not cash_complete:
+        stmt.quarantine.append(ParsedQuarantine(
+            raw_line="\n".join(cash_lines),
+            reason="opening cash balance has no valid closing balance",
+        ))
+    return cash_complete
 
 
 def _last_money(s: str) -> str | None:
@@ -518,19 +551,22 @@ def _last_money(s: str) -> str | None:
 
 # -------------------------------------------------------- Portfolio Assets
 def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
-                           stmt: ParsedStatement) -> None:
+                           stmt: ParsedStatement) -> bool:
     section = "Equities"
+    saw_section = False
     for ln in body.splitlines():
         s = ln.strip()
         if not s:
             continue
         # Sub-section headers
         if s in {"Equities", "Mutual Funds", "Other", "Cash & Cash Equivalents",
-                 "Fixed Income", "Bonds"}:
+                  "Fixed Income", "Bonds"}:
             section = s
+            saw_section = True
             continue
-        if s.startswith("subtotal") or s.startswith("total portfolio") or \
-           s.startswith("description") or s.startswith("price at"):
+        lower = s.lower()
+        if lower.startswith("subtotal") or lower.startswith("total portfolio") or \
+           lower.startswith("description") or lower.startswith("price at"):
             continue
 
         if section == "Cash & Cash Equivalents":
@@ -540,6 +576,11 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
         if section == "Other":
             mo = RE_OPT_POS.match(s)
             if not mo:
+                if re.search(r"\d", s):
+                    stmt.quarantine.append(ParsedQuarantine(
+                        raw_line=ln,
+                        reason="unrecognized option portfolio row",
+                    ))
                 continue
             cp, root, mon3, dd, yr, strike_s, qty_s, book_s, mp_s, mv_s = mo.groups()
             expiry = _opt_expiry(mon3, dd, yr)
@@ -565,10 +606,19 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
             s,
         )
         if not m:
+            if re.search(r"\d", s):
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="unrecognized portfolio row",
+                ))
             continue
         qty_s, book_s, price_s, mv_s = m.group(1), m.group(2), m.group(3), m.group(4)
         desc = s[:m.start()].strip()
         if not desc:
+            stmt.quarantine.append(ParsedQuarantine(
+                raw_line=ln,
+                reason="portfolio row has no description",
+            ))
             continue
         atype = "equity"
         up = desc.upper()
@@ -585,12 +635,13 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
             market_price=parse_money(price_s), market_value=parse_money(mv_s),
             unrealized_pnl=None, currency=currency, raw_line=ln,
         ))
+    return saw_section
 
 
 # ----------------------------------------------------------------- Parser
 class CIBCParser:
     NAME = "cibc"
-    VERSION = "1.0.0"
+    VERSION = "2.0.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name.startswith("CIBC "):
@@ -606,7 +657,8 @@ class CIBCParser:
         text = pdf.full_text.replace("\u00f0", "\u2014").replace("\u00d0", "\u2014")
 
         if _is_tax_doc(text, pdf.relpath):
-            result.errors.append("tax document; skipped")
+            result.status = "skipped"
+            result.skip_reason = "tax document; no brokerage statement extraction"
             return result
 
         period = _parse_period(text)
@@ -631,17 +683,31 @@ class CIBCParser:
         )
 
         year = _activity_year(period_end)
+        position_scopes: dict[str, str] = {}
+        cash_scopes: dict[str, str] = {}
         for kind, ccy, body in _split_sections(text):
             try:
                 if kind == "activity":
-                    _parse_activity_block(body, currency=ccy, year=year, stmt=stmt)
+                    if _parse_activity_block(body, currency=ccy, year=year, stmt=stmt):
+                        cash_scopes[ccy] = "complete"
                 else:
-                    _parse_portfolio_block(body, currency=ccy,
-                                           period_end=period_end, stmt=stmt)
+                    if _parse_portfolio_block(body, currency=ccy,
+                                              period_end=period_end, stmt=stmt):
+                        position_scopes[ccy] = "complete"
             except Exception as e:
-                stmt.quarantine.append(("<section>", f"section parse error: {e}"))
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line="<section>",
+                    reason=f"section parse error: {e}",
+                ))
 
+        declare_snapshot_scopes(
+            stmt,
+            position_scopes=position_scopes,
+            cash_scopes=cash_scopes,
+        )
         result.statements.append(stmt)
+        quarantine_unsupported_rows(result)
+        attach_source_spans(pdf, result, parser_name=self.NAME)
         return result
 
 

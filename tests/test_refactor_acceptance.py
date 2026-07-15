@@ -1,9 +1,4 @@
-"""Executable acceptance gaps for later refactor phases.
-
-Strict xfails are intentional: each test states the target behavior. When a
-later phase fixes one, XPASS fails the suite until the marker is removed and
-the requirement is accepted as a normal regression test.
-"""
+"""Executable acceptance regressions for the extraction refactor phases."""
 from __future__ import annotations
 
 import pytest
@@ -38,10 +33,6 @@ def test_same_ordinary_instrument_upsert_returns_one_id(tmp_path):
     assert first == second
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Phase 2/4: RBC currency blocks share a statement key and overwrite",
-)
 def test_rbc_cad_and_usd_children_both_survive_persistence(tmp_path):
     result = RBCParser().parse(load_fixture("rbc/monthly_dual_currency.txt"))
     db_path = tmp_path / "ledger.sqlite"
@@ -52,7 +43,7 @@ def test_rbc_cad_and_usd_children_both_survive_persistence(tmp_path):
             conn,
             pdf,
             parser_name="rbc",
-            parser_version="1.0.0",
+            parser_version="2.0.0",
             parse_status="ok",
         )
         for statement in result.statements:
@@ -77,10 +68,6 @@ def test_rbc_cad_and_usd_children_both_survive_persistence(tmp_path):
     assert currencies == {"CAD", "USD"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Phase 4: non-legacy full period headers are not split",
-)
 def test_td_full_header_bundle_emits_every_month():
     result = TDParser().parse(
         load_fixture("td/full_header_bundle_known_broken.txt")
@@ -214,10 +201,6 @@ def test_failed_attempt_preserves_last_good_source_activation(tmp_path):
     assert statement_count == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Phase 4: invalid CIBC closing cash is coerced to zero",
-)
 def test_missing_cash_number_is_quarantined_not_zero():
     fixture = load_fixture("cibc/monthly_dual_currency.txt")
     fixture.pages = [

@@ -9,13 +9,12 @@ This guide is written for **humans**. Technical context starts at
 [INDEX.md](INDEX.md), while coding-agent rules live in
 [AGENTS.md](../AGENTS.md).
 
-> **Current data-quality notice (2026-07-13):** the GUI is operational and
-> source ingestion now preserves the prior active extraction if parsing or
-> staging fails. Extraction, instrument identity, and month-end reconciliation
-> still have confirmed defects: RBC dual-currency and some TD bundled layouts
-> are rejected/unsupported rather than safe reconciled output. Review
-> [CURRENT-STATE.md](CURRENT-STATE.md) before rebuilding or relying on the
-> ledger as reconciled.
+> **Current data-quality notice (2026-07-14):** the GUI is operational and
+> source ingestion preserves the prior active extraction if parsing or staging
+> fails. Parser v2 fixes the audited RBC dual-currency and TD bundled layouts,
+> but the dated live ledger has not been re-ingested or shadow-rebuilt, and
+> month-end reconciliation is not implemented yet. Review
+> [CURRENT-STATE.md](CURRENT-STATE.md) before relying on totals as reconciled.
 
 ---
 
@@ -237,9 +236,10 @@ Total portfolio value over time, including cash.
 
 The chart forward-fills accounts whose statement dates do not line up and
 clears an account/currency scope only when its later checkpoint is explicitly
-complete. Current parser v1 output is conservatively `unknown`, so it may carry
-an old holding forward rather than clear it until the parser rebuild proves the
-section complete. See [RECONCILIATION.md](RECONCILIATION.md).
+complete. Parser v2 can emit complete scopes for recognized sections; existing
+active/live v1 rows remain conservatively `unknown`, so they may carry an old
+holding forward until a reviewed re-ingest or shadow rebuild. See
+[RECONCILIATION.md](RECONCILIATION.md).
 
 ### 4.4 Research
 

@@ -1,34 +1,43 @@
 # HSBC parser
 
 Implementation: `src/ledger/parsers/hsbc.py`, parser name `hsbc`, current
-version `1.0.0`.
+version `2.0.0`.
 
-## Recognition and accounts
+## Recognition and account shape
 
-HSBC PDFs can contain several account sections. The parser recognizes account
-headers, emits one statement per account, and infers currency from the printed
-type label or the observed `-E` (CAD) / `-F` (USD) suffix convention. Annual fee
-summaries emit an annual record with no fabricated monthly holdings.
+HSBC PDFs can contain several account sections. The parser emits one statement
+per printed account and infers currency from the account type or the observed
+`-E` (CAD) / `-F` (USD) suffix convention. Annual fee summaries emit annual
+records with no fabricated monthly holdings.
 
-## Layout handling
+Adjacent sections for the same account are merged before scope declaration, so
+a continued account page does not create a duplicate account-period statement.
 
-- Normalization repairs lost spaces around compact dates.
-- Activity rows often look like `Sep5 Dividend ...`.
-- Compact options use forms such as `PUT-100TLT'2616JA@75`.
-- Holdings include explicit/parenthesized symbols when available; adjacent
-  continuation sections for the same account are combined by the parser.
-- Parentheses/trailing formatting are interpreted through shared money parsing.
+## State and evidence handling
 
-## Known risks
+- Normalization repairs compact dates such as `Sep5 Bought` without corrupting
+  valid closing-balance text such as `Sep30 Closing Balance`.
+- The state machine tracks account, currency, holdings/activity section, and
+  continuation rows. It preserves compact option contracts and printed/
+  parenthesized holding symbols.
+- Parentheses and trailing-negative money text flow through the shared money
+  parser. A cash scope is complete only with a valid printed closing balance;
+  invalid quantities, cash values, or unclaimed numeric rows are quarantined
+  rather than made zero.
+- Parsed transactions, positions, cash, and quarantine rows receive source
+  spans. Real PDF coordinates are retained when available; text-only fallback
+  evidence is deterministic page/line information.
 
-- First-word/ticker heuristics and multi-line holdings can choose an incorrect
-  synthetic identity.
-- Continuation correctness depends on adjacent text order rather than explicit
-  stored section scope.
-- Quantity and closing-cash parse failures can become zero.
-- Text extraction lacks page/word evidence and section completeness.
-- Activity sign/amount coverage has not passed full cash reconciliation.
+## Remaining limits
 
-Refactoring must make account continuation a state-machine transition, retain
-the printed account/currency evidence, and test parentheses negatives,
-continued pages, compact options, and every observed account-header variant.
+- Some old holdings lack an explicit symbol. The parser preserves the printed
+  identity or quarantines uncertainty; resolution remains a separate reviewed
+  ingest step.
+- New account-header variants and broker column changes require a fixture or
+  PDF spot-check before declaring their sections complete.
+- Complete scopes are parser evidence, not a substitute for Phase 5 cash or
+  position reconciliation.
+
+Fixtures cover two accounts/currencies, parentheses negatives, compact options,
+continued account pages, cash, and source evidence. See
+[PARSER-CONTRACT.md](../PARSER-CONTRACT.md) for the shared output rules.

@@ -28,6 +28,14 @@ def test_hsbc_two_account_split_holdings_activity_and_cash():
     assert any(row.instrument.asset_type == "option" for row in cad.positions)
     buy = next(row for row in cad.transactions if row.txn_type == "buy")
     assert buy.net_amount == -200.0
+    assert {
+        (scope.section_type, scope.completeness)
+        for scope in cad.snapshot_sets
+    } == {
+        ("cash", "complete"),
+        ("positions", "complete"),
+    }
+    assert buy.source_span and buy.source_span.page_number == 1
     assert validate_parse_result(result).is_valid
 
 
@@ -40,3 +48,6 @@ def test_hsbc_continued_account_sections_are_merged():
     assert statement.positions
     assert statement.transactions
     assert statement.cash_balances[0].closing_balance == 200.0
+    assert statement.positions[0].source_span and statement.positions[0].source_span.page_number == 1
+    assert statement.transactions[0].source_span and statement.transactions[0].source_span.page_number == 2
+    assert statement.cash_balances[0].source_span and statement.cash_balances[0].source_span.page_number == 2

@@ -9,9 +9,10 @@ semantics. Institution parsing details are under `spec/parsers/`.
 `STATEMENTS_DIR`. Folder names map to institution codes in `config.INSTITUTIONS`;
 unknown folders use their literal name as the code.
 
-`pdf_text.extract_pdf()` reads all pages with `pdfplumber`, falls back to
-`pypdf` only when the first result is empty, fingerprints the file, and marks
-fewer than 20 extracted characters as image-only. OCR is not implemented.
+`pdf_text.extract_pdf()` reads all pages with `pdfplumber`, retains its
+page-local words/visual lines when available, falls back to `pypdf` only when
+the first result is empty, fingerprints the file, and marks fewer than 20
+extracted characters as image-only. OCR is not implemented.
 
 PDFs are immutable inputs. Text dumps under `<DATA_DIR>/text_dumps/` and logs
 are derived artifacts.
@@ -22,7 +23,7 @@ are derived artifacts.
 discover path
   -> hash and contract-aware cache check (unless --force)
   -> extract text
-  -> skip image-only / fail unclaimed
+  -> skip image-only, explicit non-broker documents / fail unclaimed
   -> first registered parser whose can_handle() returns true
   -> parser.parse(PdfText)
   -> validate the complete ParseResult
@@ -34,14 +35,17 @@ discover path
 ```
 
 The registered parsers are CIBC, HSBC, RBC, and TD, all currently reporting
-version `1.0.0`.
+version `2.0.0`. The version bump intentionally invalidates active v1 cache
+entries, so a reviewed re-ingest can exercise the updated parser contract.
 
 ## Status and cache behavior
 
 `source_files.parse_status` is a compatibility summary of the active
-extraction. It is `pending`, `ok`, `partial`, `failed`, or `skipped`. A failed
-or skipped attempt is recorded in `ingestion_runs`; if a source already has an
-active extraction, its active metadata and pointer remain unchanged.
+extraction. It is `pending`, `ok`, `partial`, `failed`, or `skipped`. A parser
+can explicitly return a skipped result for a non-broker document such as a tax
+summary; no statement activation is attempted. A failed or skipped attempt is
+recorded in `ingestion_runs`; if a source already has an active extraction, its
+active metadata and pointer remain unchanged.
 
 An unchanged source skips only when its active run matches all of the
 following: source SHA-256, current registered parser name/version, parser
@@ -127,17 +131,22 @@ cash and logical-instrument position residuals where possible, measures raw-line
 coverage, and overwrites a deterministic JSONL report. It excludes raw statement
 text from the report.
 
-The 2026-07-12 Phase 1 runs completed over all 324 stored text dumps and all 338
-source PDFs. The PDF run emitted 617 in-memory statements and reported 178
-duplicate statement keys, 270 unbalanced calculable cash checks, 214 incomplete
-cash checks, and 533 unbalanced position intervals out of 5,941. No source was
-unclaimed and no parser crashed. These are a defect baseline, not passing
-reconciliation results.
+On 2026-07-14 parser v2 audited all 324 stored text dumps (323 parsed, one
+explicit tax-document skip) and all 338 PDFs (337 parsed, one skip). Both runs
+had zero invalid/unclaimed/failed sources, zero contract errors/warnings, and
+zero duplicate statement keys. They still report cash/position residuals and
+incomplete cash scopes; those are Phase 5 reconciliation findings, not grounds
+for fabricated parser rows. Current counts are maintained in
+[CURRENT-STATE.md](CURRENT-STATE.md).
+
+The 2026-07-12 Phase 1 run is retained only as the pre-v2 defect baseline: it
+reported 178 duplicate statement keys across the PDF audit. It is not evidence
+about current parser output.
 
 ## Remaining work
 
-The Phase 3 source activation boundary is implemented. Parser v1 still emits
-known duplicate/missing/ambiguous broker data, and the current reconciliation
-command remains link attribution only. See the plan for layout-aware parser
-work, residual computation, shared holdings reconstruction, and the shadow
-rebuild/cutover.
+The source activation boundary and parser v2 layout/state handling are
+implemented for the committed fixture corpus. Current active/live source runs
+have not been re-ingested or shadow-rebuilt, and the reconciliation command
+remains link attribution only. See the plan for residual computation, shared
+holdings reconstruction, and the shadow rebuild/cutover.

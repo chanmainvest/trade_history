@@ -1,39 +1,47 @@
 # TD WebBroker parser
 
 Implementation: `src/ledger/parsers/td.py`, parser name `td`, current version
-`1.0.0`.
+`2.0.0`.
 
-## Recognition and accounts
+## Recognition and account shape
 
 TD PDFs commonly contain separate `Direct Trading - CDN` and `Direct Trading
-- US` subaccounts. These are real broker currency subaccounts and are emitted
-as distinct accounts/currencies. Annual `*_summary.pdf` files emit annual
-records rather than monthly holdings.
+- US` subaccounts. They remain distinct accounts/currencies. Annual
+`*_summary.pdf` files emit annual records rather than monthly holdings.
 
-The parser handles modern activity/holding formats, multi-line option tails,
-and a special legacy 2016–2017 `Statement for January 1 to ...` splitter.
+The parser splits every recognized legacy `Statement for <month> ...` header
+and full `<month> <day>, <year> to ...` period header before account splitting.
+It aggregates repeated page fragments for the same period/account/currency, so
+bundled months and repeated headers emit one statement identity per logical
+scope.
 
-## Critical current defect
+## State and evidence handling
 
-The bundled-period splitter recognizes only the legacy `Statement for` header.
-Many 2018–2022 quarterly PDFs contain repeated full period headers in another
-form. They are parsed under the first period, emit repeated statement keys, and
-later segments overwrite earlier ones. The corpus audit found 34 affected TD
-bundles, 100 overwritten segments, and 470 transactions outside the stored
-period.
+- Holdings and activity sections retain account, currency, period, current
+  section, and continuation state. An opening cash balance can carry across a
+  repeated page fragment until its closing balance is found.
+- Multi-line option holdings tolerate harmless page/header lines between their
+  contract head and expiry/strike tail. The parser retains the printed option
+  root, expiry, strike, type, and multiplier.
+- Stock splits map to the canonical `stock_split` type. Buy/sell, option
+  buy/sell, known fees/taxes, and known income events receive canonical cash
+  directions when TD prints an unsigned debit/credit amount.
+- Missing/invalid quantities or closing cash values, and unrecognized numeric
+  candidate rows, are quarantined rather than converted to zero.
+- Recognized holdings/cash sections declare explicit scope completeness; cash
+  requires a valid printed closing balance. Parsed rows and quarantines receive
+  page/line source spans, with coordinates/words when available.
 
-Every period must be split before currency subaccounts, and duplicate
-source/account/period output must fail validation before persistence.
+## Remaining limits
 
-## Other known risks
+- New TD statement generations and non-standard pending rows require a fixture
+  or PDF spot-check before their date and sign rules are trusted.
+- A complete parser scope is not yet proof that a broker portfolio total or
+  roll-forward reconciles; Phase 5 owns that calculation.
+- Existing active/live TD rows were produced by earlier parser versions and
+  require a reviewed re-ingest/shadow rebuild to gain these fixes.
 
-- Option positions can span description/root and expiry-tail lines.
-- Holdings may place the symbol on the following line.
-- Quantity fallbacks convert failed parsing to zero.
-- Activity amounts/signs and header contamination need layout-aware parsing.
-- The action map contains legacy labels that should be validated against the
-  canonical transaction vocabulary.
-- No section completeness or source coordinates are emitted.
-
-Fixtures must cover modern monthly statements, 2016–2017 legacy bundles,
-2018–2022 quarterly bundles, CDN/US subaccounts, options, and closing cash.
+Fixtures cover modern CDN/US holdings and options, legacy 2016–2017 bundled
+months, full-header 2018–2022-style bundles, repeated account fragments,
+closing cash, and source evidence. See
+[PARSER-CONTRACT.md](../PARSER-CONTRACT.md) for shared rules.

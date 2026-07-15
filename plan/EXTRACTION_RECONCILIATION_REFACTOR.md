@@ -1,7 +1,7 @@
 # Extraction, Reconciliation, and Month-End Refactor Plan
 
-Status: in progress — Phases 0–3 completed and validated 2026-07-13
-Audit date: 2026-07-12
+Status: in progress — Phases 0–4 completed and validated 2026-07-14
+Baseline audit date: 2026-07-12
 Scope: documentation truth reset, statement extraction, ingestion, security/cash reconciliation, and the Monthly/Performance read models
 
 **First action:** complete Phase 0—the `AGENTS.md`/`spec/` truth reset and on-demand context split—before changing the schema, parsers, reconciliation, or read models.
@@ -500,6 +500,25 @@ A data-looking row not claimed by a rule goes to quarantine once, with its page/
 - Every TD bundled month is emitted once with the correct dates.
 - Every numeric zero in output is supported by a printed zero.
 - Every candidate data row is parsed or quarantined with source provenance.
+
+### Phase 4 completion record (2026-07-14)
+
+- `PdfText` now retains raw page text plus optional `pdfplumber` words/visual
+  lines, while text-only extraction receives deterministic page/line evidence
+  rather than invented coordinates.
+- Parser v2 state machines declare scoped snapshots, attach source spans, and
+  quarantine unsupported numbers, incomplete option contracts, and
+  out-of-period pending rows rather than manufacturing a value or invalid
+  ordinary transaction.
+- CIBC/HSBC continuation and cash handling, RBC CAD/USD aggregation, and TD
+  full/legacy period splitting with repeated account fragments have committed
+  regressions.
+- The fixture audit, all 324 stored text dumps, and all 338 PDFs emitted zero
+  duplicate statement keys and zero contract errors. The full PDF run produced
+  337 parsed sources plus one explicit tax-document skip; the text-dump run
+  produced 323 parsed sources plus one skip.
+- Cash/position residuals remain reported by the read-only audit and are
+  deliberately deferred to Phase 5; no balancing rows were created.
 
 ## Phase 5 — Implement real reconciliation
 

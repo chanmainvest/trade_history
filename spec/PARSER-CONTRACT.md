@@ -18,8 +18,10 @@ The registry tests parsers in registration order and selects the first match.
 Exceptions from `can_handle()` are logged and selection continues.
 
 `ParseResult` contains parser name/version, zero or more `ParsedStatement`
-objects, and string errors. A statement contains account, period, type,
-transactions, positions, cash balances, annual-performance rows, quarantine
+objects, string errors, and a `parsed`/`skipped` status. A skipped result has a
+reason but no fatal parser error and is never activated. A statement contains
+account, period, type, transactions, positions, cash balances,
+annual-performance rows, quarantine
 items, and optional `ParsedSnapshotSet` declarations. Legacy `(raw_line,
 reason)` quarantine tuples remain accepted during the parser migration.
 
@@ -72,9 +74,20 @@ explicit warnings. It treats malformed dates/currencies/numerics, invalid
 transaction vocabulary, incomplete options, duplicate statement identities,
 invalid snapshot declarations, and parser-reported errors as fatal.
 
-Parser v1 implementations currently mostly supply raw lines and deterministic
-occurrences; Phase 4 must supply page/column coordinates and explicit
-complete/partial section declarations from layout-aware state machines.
+`PdfText` now retains raw page text plus `PdfWord`/`PdfLine` layout rows when
+`pdfplumber` exposes coordinates. The parser bridge normalizes text only for
+matching; it keeps the original raw evidence in the stored span. Text fixtures
+and the `pypdf` fallback still receive deterministic page/line evidence but no
+invented bounding box or word coordinates.
+
+The four bank parsers are at layout/state-machine version 2. They attach spans
+to transactions, positions, cash, and quarantine rows, and declare a scope
+`complete` only after recognizing the full relevant section (and, for cash, a
+valid printed closing balance). An unrecognized or incomplete section remains
+`unknown` or is quarantined; it never clears a prior checkpoint by assumption.
+Rows outside a statement's declared period or with an incomplete option
+contract are likewise quarantined until the model can represent the variant
+(for example, a pending transaction) without guessing.
 
 ## Staged identity resolution
 
@@ -94,14 +107,16 @@ unresolved/audited, never become a guessed ticker.
 
 ## Known contract violations
 
-- All four bank parsers contain quantity `parsed or 0.0` paths; CIBC/RBC/HSBC
-  also contain cash closing-balance fallbacks to zero.
-- Existing parser implementations have not yet declared child currency/section
-  scopes or proved completeness, even though the type can express them.
 - The database still accepts arbitrary transaction text, although new parser
   output is checked against `TxnType` before persistence.
-- Plain text extraction loses column geometry needed for defensible debit/
-  credit signs in some layouts.
+- Layout coordinates are preserved when available, but the bank parsers still
+  use broker-specific text state machines rather than a general table engine.
+  Debit/credit coverage must be spot-checked for each new layout.
+- A `complete` declaration proves a recognized printed section and valid parsed
+  rows; it is not yet independently validated against every broker total.
+- Existing active/live runs predate parser v2. They retain their historical
+  evidence, scope, and numeric quality until a reviewed re-ingest/shadow
+  rebuild is approved.
 
 ## Test requirements
 
@@ -113,9 +128,8 @@ for statement splitting, currencies, signs, instruments/options, positions,
 cash, quarantine, and source evidence. Real PDFs remain private and read-only;
 full-corpus audits are local acceptance checks.
 
-`tests/test_refactor_acceptance.py` uses strict xfails for later-phase target
-behavior. An unexpected pass fails the suite until the marker is removed and
-the fixed behavior becomes a normal regression.
+`tests/test_refactor_acceptance.py` keeps the previously failing collision and
+zero-fallback cases as ordinary regressions once a phase implements them.
 
 See institution files under `spec/parsers/` and cross-cutting lessons in
 [EXTRACTION-CORNER-CASES.md](EXTRACTION-CORNER-CASES.md).

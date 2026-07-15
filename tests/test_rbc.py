@@ -5,47 +5,46 @@ from ledger.parsers.validation import validate_parse_result
 from .fixture_loader import load_fixture
 
 
-def test_rbc_dual_currency_output_exposes_current_key_collision():
+def test_rbc_dual_currency_blocks_form_one_statement_with_complete_scopes():
     result = RBCParser().parse(load_fixture("rbc/monthly_dual_currency.txt"))
     assert result.errors == []
-    assert len(result.statements) == 2
-    assert sorted(statement.account.base_currency for statement in result.statements) == [
-        "CAD",
-        "USD",
-    ]
-    for statement in result.statements:
-        assert statement.account.account_number == "111-22222-3-4"
-        assert statement.period_start == "2026-01-01"
-        assert statement.period_end == "2026-01-30"
-
-    report = validate_parse_result(result)
-    assert not report.is_valid
-    assert any(issue.code == "duplicate_statement_key" for issue in report.errors)
+    assert len(result.statements) == 1
+    statement = result.statements[0]
+    assert statement.account.account_number == "111-22222-3-4"
+    assert statement.account.base_currency == "CAD"
+    assert statement.period_start == "2026-01-01"
+    assert statement.period_end == "2026-01-30"
+    assert {
+        (scope.currency, scope.section_type, scope.completeness)
+        for scope in statement.snapshot_sets
+    } == {
+        ("CAD", "cash", "complete"),
+        ("CAD", "positions", "complete"),
+        ("USD", "cash", "complete"),
+        ("USD", "positions", "complete"),
+    }
+    assert validate_parse_result(result).is_valid
 
 
 def test_rbc_holdings_dividend_option_and_cash():
     result = RBCParser().parse(load_fixture("rbc/monthly_dual_currency.txt"))
-    cad = next(
-        statement
-        for statement in result.statements
-        if statement.account.base_currency == "CAD"
-    )
-    usd = next(
-        statement
-        for statement in result.statements
-        if statement.account.base_currency == "USD"
-    )
-    assert {row.instrument.asset_type for row in cad.positions} == {
+    statement = result.statements[0]
+    cad_positions = [row for row in statement.positions if row.currency == "CAD"]
+    assert {row.instrument.asset_type for row in cad_positions} == {
         "equity",
         "mutual_fund",
     }
-    dividend = next(row for row in cad.transactions if row.txn_type == "dividend")
+    dividend = next(
+        row
+        for row in statement.transactions
+        if row.txn_type == "dividend" and row.currency == "CAD"
+    )
     assert dividend.net_amount == 50.0
-    assert cad.cash_balances[0].closing_balance == 1055.0
+    assert next(cash for cash in statement.cash_balances if cash.currency == "CAD").closing_balance == 1055.0
 
     option_transactions = [
         row
-        for row in usd.transactions
+        for row in statement.transactions
         if row.instrument and row.instrument.asset_type == "option"
     ]
     assert option_transactions
@@ -53,6 +52,7 @@ def test_rbc_holdings_dividend_option_and_cash():
     assert option.option_expiry == "2026-02-20"
     assert option.option_strike == 35.0
     assert option.option_type == "CALL"
+    assert all(row.source_span for row in statement.transactions)
 
 
 def test_rbc_annual_performance_report():

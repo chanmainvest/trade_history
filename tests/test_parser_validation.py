@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import cast
 
+from ledger.parsers.layout import quarantine_unsupported_rows
 from ledger.parsers.types import (
     ParsedAccount,
     ParsedCashBalance,
@@ -132,6 +133,39 @@ def test_option_identity_and_currency_mismatch_are_fatal():
         "invalid_option_type",
         "missing_numeric",
     }
+
+
+def test_unsupported_pending_and_incomplete_option_rows_are_quarantined():
+    result = _result()
+    statement = result.statements[0]
+    statement.snapshot_sets = [
+        ParsedSnapshotSet("CAD", "positions", "complete"),
+        ParsedSnapshotSet("CAD", "cash", "complete"),
+    ]
+    statement.transactions[0].trade_date = "2024-02-01"
+    statement.positions[0].instrument = ParsedInstrument(
+        asset_type="option",
+        symbol="AAA",
+        currency="CAD",
+        option_root="AAA",
+        option_expiry=None,
+        option_strike=None,
+        option_type="CALL",
+    )
+
+    quarantine_unsupported_rows(result)
+
+    assert statement.transactions == []
+    assert statement.positions == []
+    assert {
+        item.reason
+        for item in statement.quarantine
+    } == {
+        "transaction date is outside the statement period; pending-row model unavailable",
+        "option identity is incomplete: option_expiry, option_strike",
+    }
+    assert statement.snapshot_sets[0].completeness == "unknown"
+    assert validate_parse_result(result).is_valid
 
 
 def test_parser_reported_errors_are_fatal():

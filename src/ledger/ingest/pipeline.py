@@ -677,6 +677,8 @@ def activate_source_result(
     written.  Readers see either the previous committed extraction or the new
     fully activated extraction; an exception rolls every operation back.
     """
+    if result.status != "parsed":
+        raise ValueError("cannot activate a skipped parser result")
     validation = validate_parse_result(result)
     if not validation.is_valid:
         messages = "; ".join(issue.message for issue in validation.errors[:3])
@@ -958,6 +960,17 @@ def run_ingest(*, institution: str | None = None, limit: int | None = None, forc
                     status="failed",
                     error_summary=f"parser crash: {type(exc).__name__}: {exc}"[:1000],
                 )
+                continue
+
+            if result.status == "skipped":
+                _record_attempt(
+                    pdf,
+                    parser_name=parser.NAME,
+                    parser_version=parser.VERSION,
+                    status="skipped",
+                    error_summary=result.skip_reason,
+                )
+                log.info("Skipped %s: %s", pdf.relpath, result.skip_reason)
                 continue
 
             validation = validate_parse_result(result)

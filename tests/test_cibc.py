@@ -34,6 +34,18 @@ def test_cibc_dual_currency_activity_holdings_and_cash():
         "mutual_fund",
         "option",
     }
+    assert {
+        (scope.currency, scope.section_type, scope.completeness)
+        for scope in statement.snapshot_sets
+    } == {
+        ("CAD", "cash", "complete"),
+        ("CAD", "positions", "complete"),
+        ("USD", "cash", "complete"),
+        ("USD", "positions", "complete"),
+    }
+    assert all(row.source_span and row.source_span.page_number == 1 for row in statement.transactions)
+    assert all(row.source_span and row.source_span.page_number == 1 for row in statement.positions)
+    assert all(row.source_span and row.source_span.page_number == 1 for row in statement.cash_balances)
     assert validate_parse_result(result).is_valid
 
 
@@ -49,3 +61,15 @@ def test_cibc_tfsa_and_option_position():
     assert option.option_root == "BCE"
     assert option.option_expiry == "2022-09-16"
     assert option.option_strike == 65.0
+
+
+def test_cibc_tax_documents_are_explicitly_skipped_not_invalid():
+    pdf = load_fixture("cibc/tfsa_option.txt")
+    pdf.relpath = "tests/fixtures/cibc/Tax-Document_123.pdf"
+
+    result = CIBCParser().parse(pdf)
+
+    assert result.status == "skipped"
+    assert result.skip_reason == "tax document; no brokerage statement extraction"
+    assert result.errors == []
+    assert result.statements == []

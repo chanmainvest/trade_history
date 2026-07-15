@@ -28,6 +28,11 @@ from datetime import date
 
 from ..pdf_text import PdfText
 from .helpers import parse_money, parse_option_expiry
+from .layout import (
+    attach_source_spans,
+    declare_snapshot_scopes,
+    quarantine_unsupported_rows,
+)
 from .registry import register
 from .types import (
     ParsedAccount,
@@ -35,6 +40,7 @@ from .types import (
     ParsedCashBalance,
     ParsedInstrument,
     ParsedPosition,
+    ParsedQuarantine,
     ParsedStatement,
     ParsedTxn,
     ParseResult,
@@ -60,7 +66,9 @@ RE_ANNUAL_PERIOD = re.compile(
     r"For the period from\s+([A-Z][a-z]+)\s*(\d{1,2}),\s*(\d{4})\s+"
     r"to\s+([A-Z][a-z]+)\s*(\d{1,2}),\s*(\d{4})",
 )
-RE_ACCT_NUM = re.compile(r"Your Account Number:\s+(\d{3}[- ]?\d{5}-\d-\d)")
+RE_ACCT_NUM = re.compile(
+    r"Your Account Number:\s+(\d{3}[- ]?\d{5}(?:-\d-\d)?)"
+)
 RE_ACCT_TYPE = re.compile(r"^\s*(Margin|Cash|RRSP|TFSA|RRIF|RESP|LIRA)\s*-\s*(Long|Short)?",
                           re.IGNORECASE | re.MULTILINE)
 
@@ -284,21 +292,28 @@ def _classify_activity(verb: str, desc: str = "") -> str | None:
     return None
 
 
-def _parse_asset_review(body: str, currency: str, stmt: ParsedStatement) -> None:
+def _parse_asset_review(body: str, currency: str, stmt: ParsedStatement) -> bool:
     section = "Common Shares"
+    saw_section = False
     for ln in body.splitlines():
         s = ln.strip()
         if not s or s.startswith("___") or s.startswith("Total ") or "Asset Review" in s \
            or s.startswith("SECURITY") or s.startswith("SYMBOL") or "Exchange rate" in s:
             continue
         if s in {"Common Shares", "Preferred Shares", "Foreign Securities",
-                 "Mutual Funds", "Fixed Income", "Other"}:
+                  "Mutual Funds", "Fixed Income", "Other"}:
             section = s
+            saw_section = True
             continue
 
         if section == "Other":
             mo = RE_RBC_OPT_POS.match(s)
             if not mo:
+                if re.search(r"\d", s):
+                    stmt.quarantine.append(ParsedQuarantine(
+                        raw_line=ln,
+                        reason="unrecognized option asset-review row",
+                    ))
                 continue
             cp, root, ddstr, strike_s, qty_s, mp_s, book_s, mv_s = mo.groups()
             expiry = parse_option_expiry(ddstr)
@@ -307,9 +322,16 @@ def _parse_asset_review(body: str, currency: str, stmt: ParsedStatement) -> None
                 option_root=root, option_expiry=expiry, option_strike=float(strike_s),
                 option_type=cp, option_multiplier=100,
             )
+            quantity = parse_money(qty_s)
+            if quantity is None:
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="option holding has no valid quantity",
+                ))
+                continue
             stmt.positions.append(ParsedPosition(
                 instrument=instr,
-                quantity=parse_money(qty_s) or 0.0,
+                quantity=quantity,
                 avg_cost=None, book_value=parse_money(book_s),
                 market_price=parse_money(mp_s), market_value=parse_money(mv_s),
                 unrealized_pnl=None, currency=currency, raw_line=ln,
@@ -325,6 +347,11 @@ def _parse_asset_review(body: str, currency: str, stmt: ParsedStatement) -> None
             s,
         )
         if not m:
+            if re.search(r"\d", s):
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="unrecognized asset-review row",
+                ))
             continue
         name, sym, qty_s, price_s, book_s, mv_s = m.groups()
         atype = ("mutual_fund" if section == "Mutual Funds" else
@@ -332,18 +359,27 @@ def _parse_asset_review(body: str, currency: str, stmt: ParsedStatement) -> None
         instr = ParsedInstrument(
             asset_type=atype, symbol=sym, currency=currency, name=name.strip()[:120],
         )
+        quantity = parse_money(qty_s)
+        if quantity is None:
+            stmt.quarantine.append(ParsedQuarantine(
+                raw_line=ln,
+                reason="holding has no valid quantity",
+            ))
+            continue
         stmt.positions.append(ParsedPosition(
-            instrument=instr, quantity=parse_money(qty_s) or 0.0,
+            instrument=instr, quantity=quantity,
             avg_cost=None, book_value=parse_money(book_s),
             market_price=parse_money(price_s), market_value=parse_money(mv_s),
             unrealized_pnl=None, currency=currency, raw_line=ln,
         ))
+    return saw_section
 
 
 def _parse_activity(body: str, currency: str, year: int,
-                    stmt: ParsedStatement) -> None:
+                    stmt: ParsedStatement) -> bool:
     opening = closing = None
     cash_lines: list[str] = []
+    cash_complete = False
     for ln in body.splitlines():
         s = ln.strip()
         if not s:
@@ -365,7 +401,20 @@ def _parse_activity(body: str, currency: str, year: int,
         mc = RE_CLOSING_BAL.search(s)
         if mc:
             closing = parse_money(mc.group(1))
-            cash_lines.append(ln)
+            if closing is None:
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="closing cash balance has no valid amount",
+                ))
+            else:
+                cash_lines.append(ln)
+                cash_complete = True
+            continue
+        if "closing balance" in s.lower():
+            stmt.quarantine.append(ParsedQuarantine(
+                raw_line=ln,
+                reason="closing cash balance has no valid amount",
+            ))
             continue
 
         m = RE_ACT_DATE.match(s)
@@ -397,7 +446,10 @@ def _parse_activity(body: str, currency: str, year: int,
                     if txn_type:
                         break
         if txn_type is None:
-            stmt.quarantine.append((ln, f"unknown verb: {verb_part}"))
+            stmt.quarantine.append(ParsedQuarantine(
+                raw_line=ln,
+                reason=f"unknown verb: {verb_part}",
+            ))
             continue
 
         # Pull DEBIT and CREDIT trailing numbers.
@@ -426,9 +478,16 @@ def _parse_activity(body: str, currency: str, year: int,
                 amount = -amount
             # Open vs close: RBC doesn't say, infer by sign.
             if txn_type == "buy":
-                txn_type = "option_buy_to_open" if (qty or 0) > 0 else "option_buy_to_close"
-            else:
-                txn_type = "option_sell_to_open" if (qty or 0) < 0 else "option_sell_to_close"
+                if qty is not None:
+                    if qty > 0:
+                        txn_type = "option_buy_to_open"
+                    elif qty < 0:
+                        txn_type = "option_buy_to_close"
+            elif qty is not None:
+                if qty < 0:
+                    txn_type = "option_sell_to_open"
+                elif qty > 0:
+                    txn_type = "option_sell_to_close"
             stmt.transactions.append(ParsedTxn(
                 trade_date=trade_date, settle_date=None, txn_type=txn_type,
                 instrument=instrument, quantity=qty, price=price,
@@ -512,18 +571,24 @@ def _parse_activity(body: str, currency: str, year: int,
             description=full, raw_line=ln,
         ))
 
-    if opening is not None or closing is not None:
+    if closing is not None:
         stmt.cash_balances.append(ParsedCashBalance(
             currency=currency, opening_balance=opening,
-            closing_balance=closing or 0.0,
+            closing_balance=closing,
             raw_line="\n".join(cash_lines) or None,
         ))
+    elif opening is not None:
+        stmt.quarantine.append(ParsedQuarantine(
+            raw_line="\n".join(cash_lines),
+            reason="opening cash balance has no valid closing balance",
+        ))
+    return cash_complete
 
 
 # ----------------------------------------------------------------- Parser
 class RBCParser:
     NAME = "rbc"
-    VERSION = "1.0.0"
+    VERSION = "2.0.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "RBC Invest Direct":
@@ -561,6 +626,12 @@ class RBCParser:
                 ))
             return result
 
+        # RBC's CAD and USD blocks are scopes of one physical broker account
+        # and period, not independent statements.  Preserve both blocks under
+        # one ParsedStatement so persistence cannot overwrite either currency.
+        statements: dict[tuple[str, str, str], ParsedStatement] = {}
+        scope_state: dict[tuple[str, str, str], tuple[dict[str, str], dict[str, str]]] = {}
+
         # Year is in the block header line.
         for block in _split_currency_blocks(text):
             ym = re.search(r"Statement\s+(\d{4})", block.text)
@@ -582,27 +653,44 @@ class RBCParser:
             atype_m = RE_ACCT_TYPE.search(block.text)
             atype = atype_m.group(1).title() if atype_m else None
 
-            stmt = ParsedStatement(
-                account=ParsedAccount(account_number=acct, account_type=atype,
-                                      base_currency=block.currency),
-                period_start=ps, period_end=pe, statement_type="monthly",
-            )
+            key = (acct, ps, pe)
+            stmt = statements.get(key)
+            if stmt is None:
+                stmt = ParsedStatement(
+                    account=ParsedAccount(account_number=acct, account_type=atype,
+                                          base_currency="CAD"),
+                    period_start=ps, period_end=pe, statement_type="monthly",
+                )
+                statements[key] = stmt
+                scope_state[key] = ({}, {})
+            position_scopes, cash_scopes = scope_state[key]
 
             # Asset Review block
             ar = re.search(r"Asset Review", block.text)
             ac = re.search(r"Account Activity", block.text)
             if ar and ac and ac.start() > ar.start():
-                _parse_asset_review(block.text[ar.end():ac.start()],
-                                    block.currency, stmt)
+                if _parse_asset_review(block.text[ar.end():ac.start()],
+                                       block.currency, stmt):
+                    position_scopes[block.currency] = "complete"
                 # Activity body extends until FOOTNOTES heading. The
                 # "-CONTINUEDONNEXTPAGE-" markers are page footers, not
                 # section terminators — we filter them out at the line level.
                 tail = block.text[ac.end():]
                 fn = re.search(r"\bFOOTNOTES\b", tail)
                 act_body = tail[:fn.start()] if fn else tail
-                _parse_activity(act_body, block.currency, year, stmt)
+                if _parse_activity(act_body, block.currency, year, stmt):
+                    cash_scopes[block.currency] = "complete"
 
+        for key, stmt in statements.items():
+            position_scopes, cash_scopes = scope_state[key]
+            declare_snapshot_scopes(
+                stmt,
+                position_scopes=position_scopes,
+                cash_scopes=cash_scopes,
+            )
             result.statements.append(stmt)
+        quarantine_unsupported_rows(result)
+        attach_source_spans(pdf, result, parser_name=self.NAME)
         return result
 
 

@@ -1,40 +1,44 @@
 # RBC parser
 
-Implementation: `src/ledger/parsers/rbc.py`, parser name `rbc`, current version
-`1.0.0`.
+Implementation: `src/ledger/parsers/rbc.py`, parser name `rbc`, current
+version `2.0.0`.
 
-## Recognition and formats
+## Recognition and account shape
 
 The parser handles monthly Direct Investing statements and annual investment
-performance reports. Monthly text is split at `CDN $` / `U.S. $` account
-blocks. Annual reports emit annual statement summaries for available CAD/USD
-money-weighted return sections and do not create monthly movements/positions.
+performance reports. Monthly text is split at `CDN $` / `U.S. $` blocks; annual
+reports emit annual performance summaries and do not create monthly movements
+or positions.
 
-Options use RBC's printed call/put, root, expiry, strike, multiplier/quantity
-layout. Activity verbs are mapped to the common transaction vocabulary.
+For a monthly PDF, all CAD and USD blocks for the same physical account and
+period are aggregated into **one** `ParsedStatement`. They are represented as
+separate native-currency positions/cash snapshot scopes, so a source cannot
+overwrite the first currency while writing the second.
 
-## Critical current defect
+## State and evidence handling
 
-For a monthly PDF, CAD and USD blocks are emitted as separate
-`ParsedStatement` objects with the same account and period. The SQLite key is
-`(source_file_id, account_id, period_end)`, so the second block rewrites the
-statement and deletes the first block's children. The live audit found no RBC
-monthly statement retaining both position currencies; recent rows generally
-retain only USD.
+- Asset Review and Account Activity are separate state-machine sections.
+  Continued page markers are ignored and continuation text remains attached to
+  the open activity row rather than becoming a new verb.
+- Printed call/put, root, expiry, strike, multiplier, and quantity form the
+  option identity. Unknown numeric holding/activity rows are quarantined.
+- Debit/credit direction uses RBC event semantics plus printed signs, including
+  trailing negatives. Invalid quantity or closing-cash text is quarantined;
+  no numeric parse failure becomes zero.
+- A recognized Asset Review currency block declares a complete positions scope;
+  a cash scope is complete only with a valid printed closing balance.
+- Parsed transactions, positions, cash, and quarantines receive source spans,
+  including coordinate/word evidence when extraction exposes it.
 
-The fix is not to invent separate broker accounts. The target model is one
-physical account/period statement with explicit CAD/USD child scopes.
+## Remaining limits
 
-## Other known risks
+- RBC has historical column variants. A new debit/credit layout needs a
+  fixture or source spot-check before its sign mapping is trusted.
+- `TRANSFER TO/FROM` and ambiguous journals remain event-specific and must not
+  be paired or balanced by parser invention.
+- Complete parser scopes still need Phase 5 residual calculation and an
+  approved re-ingest/shadow rebuild before they improve the dated live ledger.
 
-- Plain extracted text loses debit/credit column meaning, so cash signs are not
-  defensible for every activity layout.
-- Trailing negative values and `TRANSFER TO/FROM` wording require event-aware
-  direction handling.
-- Quantity and closing-cash parse failures can become zero.
-- Unrecognized holding rows may be skipped without occurrence-level quarantine.
-- Period parsing and page continuations need fixtures across format generations.
-
-The parser must be refactored with word coordinates/state, validated unique
-statement output, both currency scopes, and cash/position roll-forward tests
-before rebuilding the ledger.
+Fixtures cover one dual-currency monthly account, multi-page activity, option
+transactions, cash, and annual-performance parsing. See
+[PARSER-CONTRACT.md](../PARSER-CONTRACT.md) for the shared output rules.

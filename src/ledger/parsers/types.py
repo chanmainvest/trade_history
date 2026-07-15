@@ -187,3 +187,5 @@ class ParseResult:
     parser_version: str
     statements: list[ParsedStatement] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    status: Literal["parsed", "skipped"] = "parsed"
+    skip_reason: str | None = None

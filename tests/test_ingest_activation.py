@@ -12,6 +12,7 @@ from ledger.ingest.pipeline import (
     activate_source_result,
     export_active_ingestion_logs,
 )
+from ledger.parsers.td import TDParser
 from ledger.parsers.types import (
     ParsedAccount,
     ParsedCashBalance,
@@ -113,7 +114,7 @@ def _statement(
 def _result(*statements: ParsedStatement) -> ParseResult:
     return ParseResult(
         parser_name="td",
-        parser_version="1.0.0",
+        parser_version=TDParser.VERSION,
         statements=list(statements),
     )
 
@@ -124,7 +125,7 @@ def _activate(conn, result: ParseResult, *, pdf: PdfText | None = None) -> dict:
         pdf=pdf or _pdf(),
         institution_code="TST",
         parser_name="td",  # a registered parser, so the cache contract is testable
-        parser_version="1.0.0",
+        parser_version=TDParser.VERSION,
         result=result,
     )
 
@@ -246,8 +247,8 @@ def test_cache_invalidation_includes_parser_and_reviewed_resolver_state(tmp_path
         )
         assert _unchanged_source_file_id(conn, relpath=_pdf().relpath, sha256=_pdf().sha256) is None
         conn.execute(
-            "UPDATE ingestion_runs SET parser_version = '1.0.0' WHERE ingestion_run_id = ?",
-            (activation["ingestion_run_id"],),
+            "UPDATE ingestion_runs SET parser_version = ? WHERE ingestion_run_id = ?",
+            (TDParser.VERSION, activation["ingestion_run_id"]),
         )
 
         institution_id = sqlite_db.upsert_institution(conn, "TST", "Test")

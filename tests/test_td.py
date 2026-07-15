@@ -19,6 +19,13 @@ def test_td_modern_dual_account_holdings_activity_and_cash():
         assert statement.transactions
         assert statement.cash_balances
 
+    cad = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "CAD"
+    )
+    assert next(row for row in cad.transactions if row.txn_type == "buy").net_amount == -200.0
+
     usd = next(
         statement
         for statement in result.statements
@@ -59,16 +66,83 @@ def test_td_legacy_bundle_splits_every_month_and_currency():
     assert validate_parse_result(result).is_valid
 
 
-def test_td_full_header_bundle_is_detected_as_current_failure():
+def test_td_full_header_bundle_splits_every_month_with_complete_scopes():
     result = TDParser().parse(
         load_fixture("td/full_header_bundle_known_broken.txt")
     )
-    report = validate_parse_result(result)
-    assert not report.is_valid
-    assert any(
-        issue.code == "transaction_date_outside_period"
-        for issue in report.errors
+    assert result.errors == []
+    assert {
+        (statement.period_start, statement.period_end)
+        for statement in result.statements
+    } == {
+        ("2020-01-01", "2020-01-31"),
+        ("2020-02-01", "2020-02-29"),
+    }
+    assert all(
+        {
+            (scope.currency, scope.section_type, scope.completeness)
+            for scope in statement.snapshot_sets
+        } == {
+            ("CAD", "cash", "complete"),
+            ("CAD", "positions", "complete"),
+        }
+        for statement in result.statements
     )
+    assert all(
+        transaction.source_span and transaction.source_span.page_number == 1
+        for statement in result.statements
+        for transaction in statement.transactions
+    )
+    assert validate_parse_result(result).is_valid
+
+
+def test_td_repeated_account_fragments_merge_into_one_scope_per_currency():
+    result = TDParser().parse(load_fixture("td/repeated_account_fragment.txt"))
+    assert result.errors == []
+    assert len(result.statements) == 2
+    cad = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "CAD"
+    )
+    assert len(cad.positions) == 1
+    assert len(cad.transactions) == 2
+    assert len(cad.cash_balances) == 1
+    assert cad.cash_balances[0].opening_balance == 100.0
+    assert cad.cash_balances[0].closing_balance == 115.0
+    assert cad.transactions[-1].source_span and cad.transactions[-1].source_span.page_number == 3
+    assert {
+        (scope.currency, scope.section_type, scope.completeness)
+        for scope in cad.snapshot_sets
+    } == {
+        ("CAD", "cash", "complete"),
+        ("CAD", "positions", "complete"),
+    }
+    assert validate_parse_result(result).is_valid
+
+
+def test_td_option_holding_skips_harmless_intervening_header_lines():
+    pdf = load_fixture("td/modern_monthly.txt")
+    pdf.pages = [
+        page.replace(
+            "\n20FE@35",
+            "\nPage 1 of 2\nDescription Quantity\n20FE@35",
+        )
+        for page in pdf.pages
+    ]
+    result = TDParser().parse(pdf)
+    usd = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "USD"
+    )
+    option = next(
+        position.instrument
+        for position in usd.positions
+        if position.instrument.asset_type == "option"
+    )
+    assert option.option_expiry == "2026-02-20"
+    assert validate_parse_result(result).is_valid
 
 
 def test_td_summary_filename_emits_annual_statement():

@@ -1,0 +1,27 @@
+# Synthetic fixture: repeated CAD page fragment separated by the USD account.
+TD Direct Investing
+March 1, 2024 to March 31, 2024
+Account number: GH34JK
+Account type: Direct Trading - CDN
+Holdings in your account
+Canadian common shares
+ALPHA CORP (AAA) 10 SEG 20.00 200.00 210.00 10.00 100.00%
+Activity in your account this period
+Beginning cash balance $100.00
+Mar 5 Dividend ALPHA CORP (AAA) 10.00 110.00
+----- PAGE BREAK -----
+Account number: GH34JK
+Account type: Direct Trading - US
+Holdings in your account
+US common shares
+BETA CORP (BBB) 5 SEG 30.00 150.00 160.00 10.00 100.00%
+Activity in your account this period
+Beginning cash balance $50.00
+Mar 5 Dividend BETA CORP (BBB) 5.00 55.00
+Ending cash balance $55.00
+----- PAGE BREAK -----
+Account number: GH34JK
+Account type: Direct Trading - CDN
+Activity in your account this period
+Mar 6 Dividend ALPHA CORP (AAA) 5.00 115.00
+Ending cash balance $115.00

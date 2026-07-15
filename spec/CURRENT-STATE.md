@@ -1,10 +1,9 @@
 # Current state
 
-Audit date: **2026-07-12**. The live counts below are a dated diagnostic
-snapshot, not a release promise. Re-run the audit before relying on them.
-The implementation-status notes below include the Phase 3 source-activation
-change completed on 2026-07-13; they do not claim that the dated live ledger
-has been rebuilt.
+Implementation review: **2026-07-14**. The live-ledger counts below remain a
+dated diagnostic snapshot from **2026-07-12**, not a release promise. Parser
+v2 was validated by fresh read-only corpus audits on 2026-07-14; the live
+SQLite ledger has not been re-ingested or shadow-rebuilt with that output.
 
 ## Product surface
 
@@ -13,23 +12,35 @@ has been rebuilt.
   Verify extraction, and Settings tabs.
 - Statement/PDF review endpoints are read-only. Preferences are written to
   `data/config.json`; ledger mutation is CLI-only.
-- The intended data model is native-currency ledger data in SQLite plus public
-  market/fundamental data in DuckDB.
-- Ingestion now stages one validated PDF source in a savepoint and activates it
-  atomically. A failed parse, validation, or staged write retains the prior
-  active extraction. This protects new ingests; it does not repair the dated
-  live derived rows.
+- Ingestion stages one validated PDF source in a savepoint and activates it
+  atomically. A failed parse, validation, staged write, or explicit skip keeps
+  the prior active extraction.
+- CIBC, HSBC, RBC, and TD parsers report version `2.0.0`. They retain source
+  page/line evidence, available word/box geometry, explicit snapshot scopes,
+  and quarantine rather than fabricate unsupported values.
 
-## Validation baseline
+## Validation and corpus audits
 
-- `uv run python -m pytest -q`: 45 tests passed and three later-phase
-  acceptance requirements are recorded as strict xfails.
-- `uv run ruff check src tests`: passed.
-- `npm run build` in `frontend/`: passed with Vite's large-bundle warning.
-- Parser tests use ten committed synthetic fixtures and no ignored private
-  text dumps.
+- The committed synthetic-fixture suite covers 11 files. Its extraction audit
+  emits 17 statements with zero duplicate keys, zero contract errors, zero
+  calculable cash residuals, and zero calculable position residuals. One annual
+  RBC fixture is intentionally unclaimed because the generic fixture folder is
+  not a production broker folder.
+- The 324 stored text dumps produced 323 valid parses and one explicit tax
+  document skip; there were zero invalid, unclaimed, or failed files, zero
+  contract errors/warnings, and zero duplicate statement keys. The audit still
+  reports 287 unbalanced calculable cash checks, 196 incomplete cash checks,
+  and 574 unbalanced position intervals: these are unresolved quality findings,
+  not hidden adjustments.
+- All 338 source PDFs produced 337 valid parses and one explicit tax document
+  skip; there were zero invalid, unclaimed, or failed files, zero contract
+  errors/warnings, and zero duplicate statement keys. It reports 298 unbalanced
+  calculable cash checks, 205 incomplete cash checks, and 588 unbalanced
+  position intervals. Phase 5 must persist and explain those residuals.
+- The normal structural checks are run before a phase is completed: Python
+  tests, Ruff, the frontend production build, and generated-docs build/check.
 
-## Measured live ledger
+## Measured live ledger (2026-07-12)
 
 | Item | Count |
 |---|---:|
@@ -47,73 +58,54 @@ has been rebuilt.
 | account links | 7 |
 | position/transaction links | 483 |
 
-## Confirmed correctness defects
+## Implemented parser repairs; live rebuild still pending
 
-1. **The dated live ledger still has broken instrument identity.** Schema v6
-   gives new/migrated rows one non-null canonical key and collapses duplicate
-   references, but the 2026-07-12 live snapshot has not been migrated or
-   shadow-rebuilt. That snapshot contains 803 duplicate logical groups, 31,567
-   excess IDs, and 28,587 unreferenced instrument rows.
-2. **RBC CAD and USD blocks are not yet represented correctly.** Both parser
-   outputs use the same logical statement key. Phase 3 now rejects that source
-   before persistence and retains any prior active run, rather than overwriting
-   one block with the other; Phase 4 must emit one statement with both scopes.
-3. **TD 2018–2022 bundled months are not split correctly.** Repeated statement
-   keys are rejected before persistence rather than silently overwriting
-   segments; 470 audited TD transactions fall outside their assigned statement
-   period.
-4. **“Reconciliation” is still link attribution only.** Schema v6 can persist
-   expected/actual close, residual, tolerance, and status, but no engine
-   computes or stores those results yet.
-5. **Cash does not reliably roll forward.** Using
-   `closing = opening + SUM(net_amount)`, 198 of 459 live rows differ by more
-   than one cent; the text-corpus check fails 316 statement/currency cases.
-6. **Positions do not reliably roll forward.** Grouped by logical instrument,
-   492 of 5,517 consecutive snapshot intervals have a quantity residual.
-7. **Holdings consumers are only partly aligned.** Monthly now keys movements
-   and diff rows by canonical identity/currency; Performance respects complete
-   scoped checkpoints. Visualisations and the broader shared-holdings refactor
-   remain pending, and post-checkpoint rows can still be unpriced.
-8. **Parser completeness is still unproven.** Schema v6 represents scoped
-   completeness and Monthly/Performance refuse to clear from partial/unknown
-   scopes, but current parser outputs are stored as `unknown` until Phase 4
-   can prove their sections complete.
-9. **Unknown numbers can become zero.** Parsers contain `parsed or 0.0`
-    fallbacks for quantities and cash, making parse failure indistinguishable
-    from a reported zero.
-10. **Legacy/live provenance remains weak.** New rows carry deterministic
-    evidence records and cash raw lines; parser v1 still lacks page/word
-    coordinates and the live snapshot retains 4,620 exact duplicate quarantine
-    rows under its old coarse identity.
+1. **RBC CAD/USD retention is fixed for parser v2.** One monthly physical
+   account/period now contains native CAD and USD child scopes; the committed
+   fixture and both full audits emit no duplicate statement identities. Existing
+   active rows were produced earlier and remain unchanged until re-ingest.
+2. **TD bundled-period splitting is fixed for parser v2.** Full and legacy
+   period headers split before account scopes, and repeated account fragments
+   merge into one logical statement. The full audits report no duplicate keys
+   or contract date violations; rows outside a statement period are quarantined
+   until a pending-transaction model exists.
+3. **No parser v2 numeric fallback turns a failed parse into zero.** Invalid
+   quantities, closing balances, incomplete option contracts, and unmodelled
+   activity rows are evidence-linked quarantine items. Historical live rows may
+   still contain the old parser output.
+4. **New parser output has scoped evidence.** Recognized holdings sections and
+   cash sections with a valid printed close can be `complete`; unrecognized or
+   incomplete sections remain `unknown`. Text-only extraction supplies stable
+   page/line evidence, and `pdfplumber` extraction supplies available
+   coordinates/words.
 
-## Corpus evidence
+## Confirmed remaining correctness work
 
-Phase 1 added `ledger audit extraction`, which parses without opening SQLite
-and writes deterministic JSONL without raw statement text.
+1. **The dated live ledger still has broken historical instrument identity.**
+   Schema v6 gives new/migrated rows one canonical key, but the 2026-07-12 live
+   snapshot has not been shadow-rebuilt. It contains 803 duplicate logical
+   groups, 31,567 excess IDs, and 28,587 unreferenced instrument rows.
+2. **Reconciliation is still link attribution, not persisted reconciliation.**
+   The schema can store expected/actual close, residual, tolerance, and status,
+   but no engine computes or stores those results yet.
+3. **Full-corpus cash and position residuals remain material.** The current
+   parser audit exposes them without fabricating balancing rows; Phase 5 must
+   classify and persist them, and a later review must spot-check the sources.
+4. **Holdings consumers are only partly aligned.** Monthly uses canonical
+   identity and complete scopes, but Performance and Visualisations still have
+   separate state engines; post-checkpoint rows can remain unpriced.
+5. **Live scopes/provenance are historical.** Parser v2 can produce complete
+   scope and coordinate-aware evidence, but currently active v1-derived rows
+   remain conservative/legacy until an approved re-ingest and shadow rebuild.
 
-- The 324 stored text dumps emitted 593 statements: 171 duplicate statement
-  keys, 263 unbalanced calculable cash checks, 205 incomplete cash checks, and
-  519 unbalanced position intervals out of 5,585.
-- All 338 source PDFs completed in about five minutes and emitted 617
-  statements: 178 duplicate statement keys, 270 unbalanced calculable cash
-  checks, 214 incomplete cash checks, and 533 unbalanced position intervals out
-  of 5,941.
-- No source was unclaimed and no parser crashed in either run.
-
-The larger emitted counts are pre-persistence and expose segments that the
-current writer would overwrite. They are a defect baseline, not validated
-ledger rows.
-
-## Operational/documentation debt
+## Operational and documentation limits
 
 - `ingestion_attempts.jsonl`, `quarantine.jsonl`, and `skipped_pdfs.log` are
-  now regenerated attempt/active-row indexes; none contains raw statement text.
-  Existing historical files may still need local cleanup.
-- The current cache includes source hash, parser/contract/schema versions, and
-  a reviewed-identity resolver fingerprint. A parser implementation that
-  changes without bumping its declared version can still evade invalidation.
-- The current source activation code has content hashes/counts and rollback
-  coverage, but it has not yet been used as the approved shadow rebuild/cutover
-  for the dated live ledger.
-- The target repair and cutover are defined in
+  regenerated indexes without raw statement text. Historical local log files
+  may still need cleanup.
+- Cache validity includes source hash, parser version, parser contract, schema,
+  and reviewed-identity resolver state. The v2 parser bump makes v1 active
+  output stale for a reviewed re-ingest.
+- The target reconciliation, shared holdings service, shadow rebuild, and
+  cutover remain defined in
   `plan/EXTRACTION_RECONCILIATION_REFACTOR.md`; they are not implemented yet.

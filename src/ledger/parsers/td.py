@@ -27,11 +27,16 @@ Option formats:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 from ..pdf_text import PdfText
 from .helpers import _OPT_MON, _third_friday, parse_money
+from .layout import (
+    attach_source_spans,
+    declare_snapshot_scopes,
+    quarantine_unsupported_rows,
+)
 from .name_resolver import resolve_ticker
 from .registry import register
 from .types import (
@@ -39,6 +44,7 @@ from .types import (
     ParsedCashBalance,
     ParsedInstrument,
     ParsedPosition,
+    ParsedQuarantine,
     ParsedStatement,
     ParsedTxn,
     ParseResult,
@@ -129,8 +135,31 @@ ACT_VERBS = {
     "Adjustment": "adjustment",
     "Journal": "journal",
     "Return of capital": "return_of_capital",
-    "Stock split": "split",
+    "Stock split": "stock_split",
     "Stock dividend": "dividend",
+}
+
+# TD's activity layouts often print debit/credit columns without a sign.  Use
+# the printed event only where it unambiguously establishes the cash direction;
+# leave ambiguous events (journals, adjustments, assignments) as printed.
+_CASH_OUTFLOW_TYPES = {
+    "buy",
+    "option_buy_to_open",
+    "option_buy_to_close",
+    "withdrawal",
+    "fee",
+    "tax_withholding",
+}
+_CASH_INFLOW_TYPES = {
+    "sell",
+    "option_sell_to_open",
+    "option_sell_to_close",
+    "dividend",
+    "distribution",
+    "interest_income",
+    "deposit",
+    "transfer_in",
+    "return_of_capital",
 }
 
 
@@ -139,6 +168,23 @@ class _Sub:
     currency: str
     account_number: str
     text: str
+
+
+@dataclass
+class _CashState:
+    """Carry an activity cash opening across a repeated page fragment."""
+
+    opening: float | None = None
+    lines: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _ScopeState:
+    positions_seen: bool = False
+    positions_complete: bool = False
+    cash_seen: bool = False
+    cash_complete: bool = False
+    cash: _CashState = field(default_factory=_CashState)
 
 
 def _is_summary(relpath: str) -> bool:
@@ -194,22 +240,42 @@ def _legacy_period_from_match(match: re.Match[str]) -> tuple[str, str] | None:
         return None
 
 
+def _full_period_from_match(match: re.Match[str]) -> tuple[str, str] | None:
+    try:
+        sm = _MON_FULL[match.group(1)]
+        sd = int(match.group(2))
+        sy = int(match.group(3))
+        em = _MON_FULL[match.group(4)]
+        ed = int(match.group(5))
+        ey = int(match.group(6))
+        return date(sy, sm, sd).isoformat(), date(ey, em, ed).isoformat()
+    except (KeyError, ValueError):
+        return None
+
+
 def _statement_chunks(text: str) -> list[tuple[str, str, str]]:
-    matches = list(RE_PERIOD_LEGACY.finditer(text))
-    if not matches:
+    markers: list[tuple[int, tuple[str, str]]] = []
+    for match in RE_PERIOD_LEGACY.finditer(text):
+        period = _legacy_period_from_match(match)
+        if period is not None:
+            markers.append((match.start(), period))
+    for match in RE_PERIOD_FULL.finditer(text):
+        period = _full_period_from_match(match)
+        if period is not None:
+            markers.append((match.start(), period))
+    markers.sort(key=lambda item: item[0])
+    if not markers:
         period = _parse_period(text)
         return [(period[0], period[1], text)] if period else []
 
     chunks: list[tuple[str, str, str]] = []
-    current_period = _legacy_period_from_match(matches[0])
-    current_start = matches[0].start()
-    for match in matches[1:]:
-        period = _legacy_period_from_match(match)
-        if period and current_period and period != current_period:
-            chunks.append((current_period[0], current_period[1], text[current_start:match.start()]))
+    current_start, current_period = markers[0]
+    for start, period in markers[1:]:
+        if period != current_period:
+            chunks.append((current_period[0], current_period[1], text[current_start:start]))
             current_period = period
-            current_start = match.start()
-    if current_period:
+            current_start = start
+    if current_period is not None:
         chunks.append((current_period[0], current_period[1], text[current_start:]))
     return chunks
 
@@ -298,9 +364,28 @@ def _instrument_from_description(desc: str, currency: str) -> ParsedInstrument |
     )
 
 
-def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> None:
-    """Parse holdings table. Tracks current asset_type by subsection header."""
+def _is_option_interstitial(line: str) -> bool:
+    """Return whether a line can safely occur between option head and tail."""
+    lower = line.lower()
+    return (
+        lower.startswith("page ")
+        or lower.startswith("td direct investing")
+        or lower.startswith("td waterhouse")
+        or lower.startswith("account number:")
+        or lower.startswith("account type:")
+        or lower.startswith("holdings in")
+        or lower.startswith("description")
+        or lower.startswith("quantity")
+        or lower.startswith("market price")
+        or lower.startswith("book value")
+        or lower.startswith("(continued")
+    )
+
+
+def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
+    """Parse one holdings state machine and quarantine unclaimed data rows."""
     section = None
+    saw_holdings = False
     lines = body.splitlines()
     i = 0
     while i < len(lines):
@@ -310,7 +395,6 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> None:
         if not s:
             continue
 
-        # Section detection
         sl = s.lower()
         if sl.startswith("cash") and not RE_HOLDING_LINE.match(s):
             section = "cash"
@@ -318,21 +402,27 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> None:
         if (("common shares" in sl or "commonshares" in sl)
                 and ("canadian" in sl or "foreign" in sl or "us " in sl)):
             section = "equity"
+            saw_holdings = True
             continue
         if "preferred" in sl and "shares" in sl:
             section = "equity"
+            saw_holdings = True
             continue
         if "mutual fund" in sl or "mutualfund" in sl:
             section = "mutual_fund"
+            saw_holdings = True
             continue
         if "exchange traded fund" in sl or "etf" in sl:
             section = "etf"
+            saw_holdings = True
             continue
         if sl.startswith("options") or sl == "options":
             section = "option"
+            saw_holdings = True
             continue
         if sl.startswith("fixed income") or "bond" in sl:
             section = "bond"
+            saw_holdings = True
             continue
         if sl.startswith("equities") or "(continued)" in sl or sl.startswith("total ") \
            or sl.startswith("description") or sl.startswith("quantity") \
@@ -345,6 +435,17 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> None:
         if legacy_holding:
             qty_s, name, symbol, price_s, book_s, mv_s, _pct_s = legacy_holding.groups()
             if price_s == "N/D" or mv_s == "N/D":
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="legacy holding has unavailable price or market value",
+                ))
+                continue
+            quantity = parse_money(qty_s)
+            if quantity is None:
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="legacy holding has no valid quantity",
+                ))
                 continue
             atype = section if section in {"equity", "etf", "mutual_fund", "bond"} else "equity"
             instr = ParsedInstrument(
@@ -352,57 +453,74 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> None:
                 name=name.strip()[:120],
             )
             stmt.positions.append(ParsedPosition(
-                instrument=instr, quantity=parse_money(qty_s) or 0.0,
+                instrument=instr, quantity=quantity,
                 avg_cost=None, book_value=parse_money(book_s),
                 market_price=parse_money(price_s), market_value=parse_money(mv_s),
                 unrealized_pnl=None, currency=currency, raw_line=ln,
             ))
             continue
 
-        # Option holding line — first line has "(CALL|PUT)[-\s]?100 ROOT'YY[-US]?"
-        # then numeric columns; the strike "[dd]MM@strike" is on the next line.
         opt_head = re.match(
             r"^(CALL|PUT)\s*[- ]\s*(?:-)?100\s+([A-Z][A-Z0-9.]{0,5})'(\d{2})(?:-US)?\s+(.*)$",
             s,
         )
         if opt_head:
             cp, root, yy, num_part = opt_head.groups()
-            tail_line = ""
             j = i
-            while j < len(lines) and not lines[j].strip():
-                j += 1
-            if j < len(lines):
-                tail_line = lines[j].strip()
-            tm = RE_OPT_TAIL.match(tail_line)
+            tail_line = ""
+            tm = None
+            while j < len(lines) and j < i + 8:
+                candidate = lines[j].strip()
+                if not candidate or _is_option_interstitial(candidate):
+                    j += 1
+                    continue
+                tail_line = candidate
+                tm = RE_OPT_TAIL.match(tail_line)
+                break
             if tm:
                 dd, mon, strike = tm.groups()
                 expiry = _option_expiry(yy, dd, mon)
                 nums = re.findall(r"-?[\d,]+(?:\.\d+)?", num_part)
-                qty = parse_money(nums[0]) if nums else None
-                price = parse_money(nums[1]) if len(nums) > 1 else None
-                book = parse_money(nums[2]) if len(nums) > 2 else None
-                mv = parse_money(nums[3]) if len(nums) > 3 else None
+                quantity = parse_money(nums[0]) if nums else None
+                if quantity is None:
+                    stmt.quarantine.append(ParsedQuarantine(
+                        raw_line=ln,
+                        reason="option holding has no valid quantity",
+                    ))
+                    i = j + 1
+                    continue
                 instr = ParsedInstrument(
                     asset_type="option", symbol=root, currency=currency,
                     option_root=root, option_expiry=expiry,
-                    option_strike=float(strike) if strike else None,
-                    option_type=cp, option_multiplier=100,
+                    option_strike=float(strike), option_type=cp,
+                    option_multiplier=100,
                 )
                 stmt.positions.append(ParsedPosition(
-                    instrument=instr, quantity=qty or 0.0,
-                    avg_cost=None, book_value=book, market_price=price,
-                    market_value=mv, unrealized_pnl=None, currency=currency,
-                    raw_line=ln,
+                    instrument=instr,
+                    quantity=quantity,
+                    avg_cost=None,
+                    book_value=parse_money(nums[2]) if len(nums) > 2 else None,
+                    market_price=parse_money(nums[1]) if len(nums) > 1 else None,
+                    market_value=parse_money(nums[3]) if len(nums) > 3 else None,
+                    unrealized_pnl=None,
+                    currency=currency,
+                    raw_line="\n".join([ln, tail_line]),
                 ))
                 i = j + 1
                 continue
-            # No tail; quarantine
-            stmt.quarantine.append((ln, "option holding without strike tail"))
+            stmt.quarantine.append(ParsedQuarantine(
+                raw_line=ln,
+                reason="option holding without strike tail",
+            ))
             continue
 
-        # Equity / fund holding row. Symbol may be in parens on this line OR next line.
         m = RE_HOLDING_LINE.match(s)
         if not m:
+            if section is not None and re.search(r"\d", s):
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="unrecognized holding row",
+                ))
             continue
         name_part, qty_s, price_s, book_s, mv_s, _unr_s, _pct_s = m.groups()
         sym_match = RE_TRAIL_SYM.search(name_part)
@@ -410,7 +528,6 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> None:
             symbol = sym_match.group(1)
             name = name_part[:sym_match.start()].strip()
         else:
-            # Symbol on a following line (may span 1-3 lines, e.g. "CHECK POINT\nSOFTWARE TECH\n(CHKP)").
             j = i
             extra = ""
             symbol = None
@@ -420,7 +537,6 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> None:
                 if not nxt:
                     j += 1
                     continue
-                # If the next line itself looks like a new holding row, stop.
                 if RE_HOLDING_LINE.match(nxt):
                     break
                 sm2 = RE_TRAIL_SYM.search(nxt)
@@ -432,30 +548,46 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> None:
                 extra = (extra + " " + nxt).strip()
                 j += 1
             if not symbol:
-                stmt.quarantine.append((ln, "holding without symbol"))
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="holding without printed symbol",
+                ))
                 continue
             name = (name_part + " " + extra).strip()
             i = consumed
 
         if section == "cash":
-            continue  # cash row handled separately below if needed
+            continue
+        quantity = parse_money(qty_s)
+        if quantity is None:
+            stmt.quarantine.append(ParsedQuarantine(
+                raw_line=ln,
+                reason="holding has no valid quantity",
+            ))
+            continue
         atype = section if section in {"equity", "etf", "mutual_fund", "bond"} else "equity"
         instr = ParsedInstrument(
             asset_type=atype, symbol=symbol, currency=currency,
             name=name[:120],
         )
         stmt.positions.append(ParsedPosition(
-            instrument=instr, quantity=parse_money(qty_s) or 0.0,
+            instrument=instr, quantity=quantity,
             avg_cost=None, book_value=parse_money(book_s),
             market_price=parse_money(price_s), market_value=parse_money(mv_s),
             unrealized_pnl=None, currency=currency, raw_line=ln,
         ))
+    return saw_holdings
 
 
 def _parse_activity(body: str, currency: str, year_end: int,
-                    period_end_month: int, stmt: ParsedStatement) -> None:
-    opening = closing = None
-    cash_lines: list[str] = []
+                    period_end_month: int, stmt: ParsedStatement,
+                    *, cash_state: _CashState | None = None) -> bool:
+    """Parse one activity state machine without inventing cash or quantities."""
+    shared_cash_state = cash_state is not None
+    state = cash_state or _CashState()
+    closing = None
+    cash_lines = state.lines
+    cash_complete = False
     cur: ParsedTxn | None = None
     for ln in body.splitlines():
         s = ln.strip()
@@ -463,13 +595,41 @@ def _parse_activity(body: str, currency: str, year_end: int,
             continue
         mb = RE_BEGIN_BAL.search(s) or RE_LEGACY_BEGIN_BAL.search(s)
         if mb:
-            opening = parse_money(mb.group(1))
-            cash_lines.append(ln)
+            amount = parse_money(mb.group(1))
+            if amount is None:
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="opening cash balance has no valid amount",
+                ))
+            else:
+                state.opening = amount
+                cash_lines.append(ln)
             continue
         me = RE_END_BAL.search(s) or RE_LEGACY_END_BAL.search(s)
         if me:
-            closing = parse_money(me.group(1))
-            cash_lines.append(ln)
+            amount = parse_money(me.group(1))
+            if amount is None:
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="closing cash balance has no valid amount",
+                ))
+            else:
+                closing = amount
+                cash_lines.append(ln)
+                cash_complete = True
+            continue
+        low = s.lower()
+        if "beginning cash balance" in low or "cash-opening balance" in low:
+            stmt.quarantine.append(ParsedQuarantine(
+                raw_line=ln,
+                reason="opening cash balance has no valid amount",
+            ))
+            continue
+        if "ending cash balance" in low or "cash-closing balance" in low:
+            stmt.quarantine.append(ParsedQuarantine(
+                raw_line=ln,
+                reason="closing cash balance has no valid amount",
+            ))
             continue
         # noise
         if (s.startswith("Order-Execution-Only") or s.startswith("TD Waterhouse")
@@ -485,8 +645,22 @@ def _parse_activity(body: str, currency: str, year_end: int,
         m = RE_ACT_DATE.match(s)
         if not m:
             # continuation
+            if cur is None:
+                cur = next(
+                    (
+                        transaction
+                        for transaction in reversed(stmt.transactions)
+                        if transaction.currency == currency
+                    ),
+                    None,
+                )
             if cur is not None:
                 cur.description = (cur.description or "") + " | " + s
+            elif re.search(r"\d", s):
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="unrecognized activity row",
+                ))
             continue
         mon_s, dd_s, rest = m.groups()
         mn = _MON.get(mon_s[:3].upper())
@@ -497,11 +671,18 @@ def _parse_activity(body: str, currency: str, year_end: int,
         try:
             trade_date = date(ty, mn, int(dd_s)).isoformat()
         except ValueError:
+            stmt.quarantine.append(ParsedQuarantine(
+                raw_line=ln,
+                reason="activity row has an invalid date",
+            ))
             continue
 
         txn_type = _classify(rest)
         if txn_type is None:
-            stmt.quarantine.append((ln, f"unknown verb in '{rest[:60]}'"))
+            stmt.quarantine.append(ParsedQuarantine(
+                raw_line=ln,
+                reason=f"unknown verb in '{rest[:60]}'",
+            ))
             cur = None
             continue
 
@@ -527,24 +708,65 @@ def _parse_activity(body: str, currency: str, year_end: int,
             )
             tail = desc[m_opt.end():]
             tnums = re.findall(r"-?[\d,]+(?:\.\d+)?", tail)
-            if txn_type in {"buy", "sell"} and len(tnums) >= 4:
+            if txn_type in {"buy", "sell"}:
+                if len(tnums) < 4:
+                    stmt.quarantine.append(ParsedQuarantine(
+                        raw_line=ln,
+                        reason="option buy/sell row has no complete numeric tail",
+                    ))
+                    cur = None
+                    continue
                 qty = parse_money(tnums[0])
                 price = parse_money(tnums[1])
                 amount = parse_money(tnums[2])
+                if qty is None:
+                    stmt.quarantine.append(ParsedQuarantine(
+                        raw_line=ln,
+                        reason="option buy/sell row has no valid quantity",
+                    ))
+                    cur = None
+                    continue
                 # Map to canonical option_*_to_open/close: open if direction
                 # adds to a position, close if reduces. With TD we don't know
                 # prior position; leave generic and let downstream infer.
                 if txn_type == "buy":
-                    txn_type = "option_buy_to_open" if (qty or 0) > 0 else "option_buy_to_close"
+                    if qty > 0:
+                        txn_type = "option_buy_to_open"
+                    elif qty < 0:
+                        txn_type = "option_buy_to_close"
                 else:
-                    txn_type = "option_sell_to_open" if (qty or 0) < 0 else "option_sell_to_close"
+                    if qty < 0:
+                        txn_type = "option_sell_to_open"
+                    elif qty > 0:
+                        txn_type = "option_sell_to_close"
             elif txn_type in {"option_expiration", "option_exercise", "option_assignment"} and tnums:
                 qty = parse_money(tnums[0])
-        elif txn_type in {"buy", "sell"} and len(nums) >= 4:
+        elif txn_type in {"buy", "sell"}:
+            if len(nums) < 4:
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="buy/sell row has no complete numeric tail",
+                ))
+                cur = None
+                continue
             qty = parse_money(nums[-4])
             price = parse_money(nums[-3])
             amount = parse_money(nums[-2])
             instrument = _instrument_from_description(desc, currency)
+            if qty is None:
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="buy/sell row has no valid quantity",
+                ))
+                cur = None
+                continue
+            if instrument is None:
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="buy/sell row has no printed or reviewed instrument identity",
+                ))
+                cur = None
+                continue
         elif txn_type in {"dividend", "distribution", "interest_income",
                           "tax_withholding", "return_of_capital"} and nums:
             # Last number is running cash balance; second-last is amount.
@@ -556,6 +778,12 @@ def _parse_activity(body: str, currency: str, year_end: int,
         elif nums:
             amount = parse_money(nums[-2]) if len(nums) >= 2 else parse_money(nums[-1])
 
+        if amount is not None:
+            if txn_type in _CASH_OUTFLOW_TYPES:
+                amount = -abs(amount)
+            elif txn_type in _CASH_INFLOW_TYPES:
+                amount = abs(amount)
+
         cur = ParsedTxn(
             trade_date=trade_date, settle_date=None, txn_type=txn_type,
             instrument=instrument, quantity=qty, price=price,
@@ -565,18 +793,39 @@ def _parse_activity(body: str, currency: str, year_end: int,
         )
         stmt.transactions.append(cur)
 
-    if opening is not None or closing is not None:
-        stmt.cash_balances.append(ParsedCashBalance(
-            currency=currency, opening_balance=opening,
-            closing_balance=closing if closing is not None else 0.0,
-            raw_line="\n".join(cash_lines) or None,
+    if closing is not None:
+        raw_line = "\n".join(cash_lines) or None
+        existing = next(
+            (cash for cash in stmt.cash_balances if cash.currency == currency),
+            None,
+        )
+        if existing is None:
+            stmt.cash_balances.append(ParsedCashBalance(
+                currency=currency, opening_balance=state.opening,
+                closing_balance=closing,
+                raw_line=raw_line,
+            ))
+        else:
+            if existing.opening_balance is None:
+                existing.opening_balance = state.opening
+            existing.closing_balance = closing
+            existing.raw_line = "\n".join(
+                part for part in (existing.raw_line, raw_line) if part
+            ) or None
+        state.opening = None
+        state.lines.clear()
+    elif state.opening is not None and not shared_cash_state:
+        stmt.quarantine.append(ParsedQuarantine(
+            raw_line="\n".join(cash_lines),
+            reason="opening cash balance has no matching valid closing balance",
         ))
+    return cash_complete
 
 
 # ---------------------------------------------------------------- Parser
 class TDParser:
     NAME = "td"
-    VERSION = "1.0.0"
+    VERSION = "2.0.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "TD Webbroker":
@@ -603,46 +852,107 @@ class TDParser:
                     period_end=f"{year}-12-31",
                     statement_type="annual",
                 ))
+            attach_source_spans(pdf, result, parser_name=self.NAME)
             return result
 
         chunks = _statement_chunks(text)
         if not chunks:
             result.errors.append("could not parse period")
             return result
+
+        # A statement may repeat an account/currency header after a page break.
+        # Aggregate all of those fragments before declaring its snapshot scopes so
+        # a source cannot emit duplicate account-period statement identities.
+        statements: dict[tuple[str, str, str, str], ParsedStatement] = {}
+        scope_state: dict[tuple[str, str, str, str], _ScopeState] = {}
         for ps, pe, chunk_text in chunks:
             period_end_month = int(pe[5:7])
             period_end_year = int(pe[:4])
 
             for sub in _split_subs(chunk_text):
-                stmt = ParsedStatement(
-                    account=ParsedAccount(
-                        account_number=f"{sub.account_number}-{sub.currency[:3]}",
-                        account_type="Direct Trading",
-                        base_currency=sub.currency,
-                    ),
-                    period_start=ps, period_end=pe, statement_type="monthly",
-                )
+                key = (ps, pe, sub.account_number, sub.currency)
+                stmt = statements.get(key)
+                if stmt is None:
+                    stmt = ParsedStatement(
+                        account=ParsedAccount(
+                            account_number=f"{sub.account_number}-{sub.currency[:3]}",
+                            account_type="Direct Trading",
+                            base_currency=sub.currency,
+                        ),
+                        period_start=ps, period_end=pe, statement_type="monthly",
+                    )
+                    statements[key] = stmt
+                    scope_state[key] = _ScopeState()
+                state = scope_state[key]
                 hm = re.search(r"Holdings in your account|^Holdings\b", sub.text, re.MULTILINE)
                 am = re.search(
                     r"Activity in your account this period|^Activities\b",
                     sub.text,
                     re.MULTILINE,
                 )
-                if hm and am and am.start() > hm.start():
-                    _parse_holdings(sub.text[hm.end():am.start()], sub.currency, stmt)
+                if hm:
+                    state.positions_seen = True
+                    holdings_end = am.start() if am and am.start() > hm.start() else len(sub.text)
+                    try:
+                        if _parse_holdings(
+                            sub.text[hm.end():holdings_end], sub.currency, stmt
+                        ):
+                            state.positions_complete = True
+                    except Exception as exc:
+                        stmt.quarantine.append(ParsedQuarantine(
+                            raw_line="<holdings section>",
+                            reason=f"holdings section parse error: {exc}",
+                        ))
+                if am:
+                    state.cash_seen = True
                     tail = sub.text[am.end():]
+                    if hm and hm.start() > am.start():
+                        tail = tail[:hm.start() - am.end()]
                     end = re.search(r"Details of investment income|^\s*Disclosures",
                                     tail, re.MULTILINE)
                     act_body = tail[:end.start()] if end else tail
-                    _parse_activity(act_body, sub.currency, period_end_year,
-                                    period_end_month, stmt)
-                elif hm:
-                    _parse_holdings(sub.text[hm.end():], sub.currency, stmt)
-                elif am:
-                    tail = sub.text[am.end():]
-                    _parse_activity(tail, sub.currency, period_end_year,
-                                    period_end_month, stmt)
-                result.statements.append(stmt)
+                    try:
+                        if _parse_activity(
+                            act_body, sub.currency, period_end_year,
+                            period_end_month, stmt, cash_state=state.cash,
+                        ):
+                            state.cash_complete = True
+                    except Exception as exc:
+                        stmt.quarantine.append(ParsedQuarantine(
+                            raw_line="<activity section>",
+                            reason=f"activity section parse error: {exc}",
+                        ))
+
+        for key, stmt in statements.items():
+            state = scope_state[key]
+            currency = stmt.account.base_currency
+            if state.cash.opening is not None:
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line="\n".join(state.cash.lines),
+                    reason="opening cash balance has no matching valid closing balance",
+                ))
+            position_scopes = {}
+            if state.positions_seen or any(
+                position.currency == currency for position in stmt.positions
+            ):
+                position_scopes[currency] = (
+                    "complete" if state.positions_complete else "unknown"
+                )
+            cash_scopes = {}
+            if state.cash_seen or any(
+                cash.currency == currency for cash in stmt.cash_balances
+            ):
+                cash_scopes[currency] = (
+                    "complete" if state.cash_complete else "unknown"
+                )
+            declare_snapshot_scopes(
+                stmt,
+                position_scopes=position_scopes,
+                cash_scopes=cash_scopes,
+            )
+            result.statements.append(stmt)
+        quarantine_unsupported_rows(result)
+        attach_source_spans(pdf, result, parser_name=self.NAME)
         return result
 
 

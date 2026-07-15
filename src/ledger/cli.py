@@ -171,6 +171,7 @@ def audit_extraction_command(
     )
     click.echo(
         f"Audited {summary['files']} files: {summary['parsed_files']} valid, "
+        f"{summary['skipped_files']} skipped, "
         f"{summary['invalid_files']} invalid, {summary['unclaimed_files']} unclaimed, "
         f"{summary['failed_files']} failed."
     )

@@ -37,9 +37,28 @@ Use `ingest.fund_lookup.lookup_fund_code()` / `lookup_fund_instrument_id()` inst
 
 Statement page footers and continuation text can append unrelated holdings to an activity description. Resolver matches should prefer the leading transaction description and direct known-name matches before using broad same-statement holding correlation.
 
+## Layout Evidence and Numeric Gaps
+
+- `PdfText` preserves the raw page text and, when `pdfplumber` supplies it,
+  page-local word coordinates and reconstructed visual lines. Matching may
+  normalize whitespace/dash artifacts, but stored evidence keeps the original
+  source text and never invents a box.
+- Text-only fixtures and the `pypdf` fallback use deterministic page/line
+  evidence with no bounding box or word list. This is weaker evidence, not a
+  synthetic coordinate.
+- A failed quantity, amount, or closing-cash parse is not a zero. Keep it
+  absent and quarantine the candidate source row with its parser rule/span.
+- A parser may declare a scope complete only after it recognized the full
+  relevant section; a valid closing balance is required for a complete cash
+  scope.
+
 ## Legacy Bundled Statements
 
-- TD WebBroker 2016-2017 PDFs bundle multiple monthly statements into one PDF. Split on each new `Statement for <month> ...` period before splitting CAD/USD sub-accounts, so later months do not overwrite the first month during ingest.
+- TD WebBroker bundles use both 2016–2017 `Statement for <month> ...` headers
+  and 2018–2022-style full period headers. Split every period before splitting
+  CDN/US subaccounts, then aggregate repeated page fragments for the same
+  period/account/currency. Later months must not overwrite the first month
+  during ingest.
 - RBC annual investment performance reports are annual statements with no holdings table. Parse their money-weighted return summaries into `annual_performance_reports`; do not fabricate monthly transactions or position snapshots from those summaries.
 
 ## Current Verified Examples

@@ -29,13 +29,13 @@ not mutate the ledger.
 src/ledger/
   config.py                 workspace paths and institution folders
   cli.py                    Click command tree
-  pdf_text.py               PDF text extraction and fingerprinting
+  pdf_text.py               raw PDF text, optional word/line geometry, fingerprinting
   quantity.py               transaction-type quantity movement rules
   db/
     schema.sql              canonical SQLite DDL
     sqlite.py               connections, initialization, upserts
     duckdb_store.py          canonical market-data DDL
-  parsers/                  common types, registry, four bank parsers
+  parsers/                  common types, layout/provenance bridge, four bank parsers
   ingest/
     pipeline.py             discovery, validate, staged source activation, audit export
     identity_resolution.py  conservative in-stage printed/alias/holding resolution

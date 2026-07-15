@@ -10,19 +10,24 @@ from ledger.ingest.audit import audit_extraction
 from .fixture_loader import FIXTURES
 
 
-def test_fixture_corpus_audit_is_read_only_deterministic_and_finds_known_failures(
+def test_fixture_corpus_audit_is_read_only_deterministic_and_passes_phase_four_parser_gates(
     tmp_path,
 ):
     output = tmp_path / "audit.jsonl"
     summary = audit_extraction(statements_dir=FIXTURES, output=output)
     first_bytes = output.read_bytes()
 
-    assert summary["files"] == 10
-    assert summary["duplicate_statement_keys"] >= 1
-    assert summary["invalid_files"] >= 2
-    assert summary["validation_errors"] >= 2
-    assert summary["counts"]["statements"] >= 12
+    assert summary["files"] == 11
+    assert summary["duplicate_statement_keys"] == 0
+    assert summary["invalid_files"] == 0
+    assert summary["validation_errors"] == 0
+    assert summary["counts"]["statements"] == 17
     assert summary["cash_checks"] > 0
+    assert summary["cash_unbalanced"] == 0
+    assert summary["position_unbalanced"] == 0
+    # The annual RBC fixture is intentionally in a generic fixture folder;
+    # parser selection only receives real broker folder names in production.
+    assert summary["unclaimed_files"] == 1
 
     repeated = audit_extraction(statements_dir=FIXTURES, output=output)
     assert repeated == summary

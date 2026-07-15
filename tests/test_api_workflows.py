@@ -10,6 +10,7 @@ from ledger.api.routes.monthly import _holdings_at
 from ledger.api.routes.performance import _total_rows
 from ledger.db import sqlite as sqlite_db
 from ledger.ingest.pipeline import _record_source_file, _unchanged_source_file_id, _write_statement
+from ledger.parsers.td import TDParser
 from ledger.parsers.types import ParsedAccount, ParsedStatement
 from ledger.pdf_text import PdfText
 
@@ -79,7 +80,7 @@ def test_quarantine_rows_are_replaced_on_reingest(tmp_path):
             conn,
             pdf,
             parser_name="td",
-            parser_version="1.0.0",
+            parser_version=TDParser.VERSION,
             parse_status="partial",
         )
         _write_statement(conn, source_file_id=source_file_id, institution_code="TST", stmt=statement)
@@ -103,7 +104,7 @@ def test_unchanged_source_file_is_skippable_only_after_successful_parse(tmp_path
             conn,
             pdf,
             parser_name="td",
-            parser_version="1.0.0",
+            parser_version=TDParser.VERSION,
             parse_status="ok",
         )
         assert _unchanged_source_file_id(conn, relpath=pdf.relpath, sha256="abc") == source_file_id
@@ -111,7 +112,7 @@ def test_unchanged_source_file_is_skippable_only_after_successful_parse(tmp_path
             conn,
             pdf,
             parser_name="td",
-            parser_version="2.0.0",
+            parser_version="future-version",
             parse_status="failed",
         )
         assert _unchanged_source_file_id(conn, relpath=pdf.relpath, sha256="abc") == source_file_id

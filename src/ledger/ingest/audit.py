@@ -212,7 +212,11 @@ def _record_for_result(
         "sha256": pdf.sha256,
         "page_count": pdf.page_count,
         "image_only": pdf.is_image_only,
-        "status": "invalid" if not validation.is_valid else "parsed",
+        "status": (
+            "skipped"
+            if result.status == "skipped"
+            else "invalid" if not validation.is_valid else "parsed"
+        ),
         "parser": {"name": result.parser_name, "version": result.parser_version},
         "statement_keys": [list(statement_key(statement)) for statement in statements],
         "counts": {
@@ -224,6 +228,7 @@ def _record_for_result(
             "quarantine": sum(len(statement.quarantine) for statement in statements),
         },
         "parser_errors": list(result.errors),
+        "skip_reason": result.skip_reason,
         "validation": validation.to_dict(),
         "identity_quality": _identity_quality(statements),
         "source_coverage": _source_coverage(pdf, statements),
@@ -300,6 +305,7 @@ def _summary(records: list[dict], position_checks: list[dict]) -> dict:
         "record_type": "summary",
         "files": len(records),
         "parsed_files": sum(record.get("status") == "parsed" for record in records),
+        "skipped_files": sum(record.get("status") == "skipped" for record in records),
         "invalid_files": sum(record.get("status") == "invalid" for record in records),
         "unclaimed_files": sum(record.get("status") == "unclaimed" for record in records),
         "failed_files": sum(record.get("status") == "failed" for record in records),

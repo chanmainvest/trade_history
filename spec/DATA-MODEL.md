@@ -56,9 +56,10 @@ complete source output.
 `source_evidence` has a deterministic non-content-revealing key, source/run,
 row occurrence, raw text, optional page/line/coordinates/words, and parser
 rule/version. New transactions, holdings, cash balances, and quarantine rows
-link to evidence. Coordinates remain optional until the layout-aware parser
-phase. Legacy migrated cash evidence explicitly has no raw source text rather
-than a fabricated line.
+link to evidence. Parser v2 rows carry page/line evidence and retain available
+`pdfplumber` coordinates/words; text-only extraction uses no invented box.
+Legacy migrated cash evidence explicitly has no raw source text rather than a
+fabricated line.
 
 ### Transactions and normalized effects
 
@@ -80,9 +81,10 @@ are unique within `(snapshot_set_id, instrument_id)` and cash balances within a
 cash snapshot set. `can_clear_omitted` is true only for a complete set.
 
 Monthly and Performance now refuse to clear earlier holdings from partial or
-unknown scopes. Current parsers do not yet prove scope completeness, so their
-implicit sets are stored as `unknown`; a parser must explicitly declare a
-complete set before it becomes a clearing checkpoint.
+unknown scopes. Parser v2 explicitly declares a recognized holdings section
+and a cash section with a valid closing balance as `complete`; incomplete or
+unrecognized sections remain `unknown`. Existing migrated/live rows retain
+their historical `unknown` scopes until a reviewed re-ingest or shadow rebuild.
 
 ### Reconciliation storage
 
@@ -121,7 +123,6 @@ it as a live-data correctness cutover.
 
 ## Still pending
 
-The remaining phases populate layout coordinates and proved-complete scopes,
-repair broker parsers, calculate and persist reconciliation results, unify all
+The remaining phases calculate and persist reconciliation results, unify all
 holdings consumers, and rebuild/cut over a shadow ledger. See the plan for
 sequencing.

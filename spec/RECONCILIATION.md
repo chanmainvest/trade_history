@@ -77,8 +77,9 @@ Known failures:
 
 - a movement-only row has no anchor price/value;
 - Performance and visualisation still have separate holdings engines; and
-- parser v1 scopes are `unknown`, so a shadow rebuild/parser repair is needed
-  before the live ledger gains trusted complete checkpoints.
+- parser v2 can declare recognized complete scopes, but existing active/live
+  rows predate that work and remain `unknown` until a reviewed re-ingest or
+  shadow rebuild gives the live ledger trusted checkpoints.
 
 ## Other holdings consumers
 
