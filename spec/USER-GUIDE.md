@@ -12,8 +12,9 @@ This guide is written for **humans**. Technical context starts at
 > **Current data-quality notice (2026-07-14):** the GUI is operational and
 > source ingestion preserves the prior active extraction if parsing or staging
 > fails. Parser v2 fixes the audited RBC dual-currency and TD bundled layouts,
-> but the dated live ledger has not been re-ingested or shadow-rebuilt, and
-> month-end reconciliation is not implemented yet. Review
+> and the CLI now persists month-end reconciliation results, but the dated live
+> ledger has not been re-ingested or shadow-rebuilt and the GUI does not yet
+> display reconciliation status. Review
 > [CURRENT-STATE.md](CURRENT-STATE.md) before relying on totals as reconciled.
 
 ---
@@ -171,17 +172,18 @@ just close the terminal.
     uv run ledger ingest repair-symbols
     ```
 
-6. *(Optional after manual DB edits)* Rebuild automatic transfer and
-    position-to-transaction links:
+6. *(Optional after manual DB edits)* Rebuild automatic transfer links,
+    position-to-transaction links, and reconciliation results:
 
     ```powershell
     uv run ledger ingest reconcile
     ```
 
-   Normal `ingest run` performs this after active source activation; the command
-   is mainly for manual maintenance. Despite its name, it only
-    pairs transfers and attributes transactions to snapshots today. It does not
-    compute expected-versus-reported month-end residuals.
+    Normal `ingest run` performs this after active source activation; the command
+    is mainly for manual maintenance. It stores expected-versus-reported
+    position, cash, and printed-total equations, including incomplete inputs and
+    unexplained residuals. It does not alter a reported transaction or create a
+    balancing entry.
 
 7. Reload the browser. The Transactions tab should now have data.
 
@@ -336,7 +338,7 @@ uv run ledger ingest run
 # infer opening holdings before the first statement
 uv run ledger ingest infer-initials
 
-# rebuild transfer counterpart + position-to-transaction links after manual edits
+# rebuild transfer counterpart, movement links, and reconciliation results after manual edits
 uv run ledger ingest reconcile
 
 # repair symbols (resolve aliases, fund-code lookups, etc.)

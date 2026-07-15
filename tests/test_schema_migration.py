@@ -346,7 +346,22 @@ def test_writer_persists_canonical_identity_scoped_rows_and_evidence(tmp_path):
                 currency="CAD",
                 description="buy ABC",
                 raw_line="Jan 10 Buy ABC 5 10.00 -50.00",
-            )
+            ),
+            ParsedTxn(
+                trade_date="2024-01-15",
+                settle_date=None,
+                txn_type="stock_split",
+                instrument=ParsedInstrument("equity", "ABC", "CAD"),
+                quantity=2,
+                price=None,
+                gross_amount=None,
+                commission=None,
+                other_fees=None,
+                net_amount=None,
+                currency="CAD",
+                description="generic stock split",
+                raw_line="Jan 15 ABC stock split 2",
+            ),
         ],
         positions=[
             ParsedPosition(
@@ -402,11 +417,15 @@ def test_writer_persists_canonical_identity_scoped_rows_and_evidence(tmp_path):
                    ss.completeness, ss.can_clear_omitted
               FROM transactions t
               JOIN instruments i ON i.instrument_id = t.instrument_id
-              JOIN position_snapshots ps ON ps.statement_id = t.statement_id
-              JOIN cash_balances cb ON cb.statement_id = t.statement_id
-              JOIN snapshot_sets ss ON ss.snapshot_set_id = ps.snapshot_set_id
+               JOIN position_snapshots ps ON ps.statement_id = t.statement_id
+               JOIN cash_balances cb ON cb.statement_id = t.statement_id
+               JOIN snapshot_sets ss ON ss.snapshot_set_id = ps.snapshot_set_id
+             WHERE t.txn_type = 'buy'
             """
         ).fetchone()
+        generic_split_delta = conn.execute(
+            "SELECT position_delta FROM transactions WHERE txn_type = 'stock_split'"
+        ).fetchone()[0]
         cash_evidence = conn.execute(
             """
             SELECT raw_text FROM source_evidence
@@ -430,6 +449,7 @@ def test_writer_persists_canonical_identity_scoped_rows_and_evidence(tmp_path):
     assert row["completeness"] == "complete"
     assert row["can_clear_omitted"] == 1
     assert cash_evidence == "Opening 100.00\nClosing 50.00"
+    assert generic_split_delta is None
 
 
 def test_failed_attempt_keeps_active_run_pointer(tmp_path):

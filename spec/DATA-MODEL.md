@@ -20,7 +20,7 @@ All dates are ISO text and monetary values remain in the row's native
 | Checkpoints | `snapshot_sets`, `position_snapshots`, `cash_balances` | independently complete currency/section checkpoints |
 | Pre-history | `initial_positions`, `initial_cash` | user-curated or tagged inferred anchors |
 | Reports | `annual_performance_reports` | annual statement totals/returns, not movements |
-| Reconciliation | `position_transaction_links`, `reconciliation_results`, `reconciliation_components` | legacy attribution plus explicit result/equation storage |
+| Reconciliation | `position_transaction_links`, `reconciliation_results`, `reconciliation_components` | movement attribution plus generated, source-traceable checkpoint equations |
 | Metadata | `schema_meta` | current schema version |
 
 ### Canonical instrument identity
@@ -66,6 +66,9 @@ fabricated line.
 `transactions.quantity` and amount fields retain the reported parser values.
 `position_delta`, `cash_delta`, and `cash_effective_date` hold the normalized
 effects used by new consumers; `net_amount` remains a compatibility field.
+When a generic split, name change, spinoff, or merger has no explicit safe
+position effect, `position_delta` remains null rather than being fabricated as
+zero.
 Resolution method/confidence and an optional resolution-evidence link are also
 available. Phase 3 writes these through its conservative staged resolver:
 explicit printed identities, reviewed aliases/fund lookups, and unambiguous
@@ -88,11 +91,18 @@ their historical `unknown` scopes until a reviewed re-ingest or shadow rebuild.
 
 ### Reconciliation storage
 
-`reconciliation_results` can store a position, cash, statement-total, or
-transfer equation with checkpoints, deltas, expected/reported close, residual,
-tolerance, status, and reason. `reconciliation_components` can point to the
-contributing transactions. No reconciliation engine writes these records yet;
-the existing command still builds transfer and attribution links only.
+`reconciliation_results` stores a position, cash, statement-total, or transfer
+equation with checkpoints, deltas, expected/reported close, residual,
+tolerance, status, and reason. `reconciliation_components` identifies the
+contributing transaction rows and their signed contribution.
+
+`rebuild_reconciliation_results()` writes only generated keys prefixed
+`recon:v1:`. It replaces that generated subset on every run, retaining any
+reviewed/manual result that uses another key. The engine runs after an ingest
+scan and through `ledger ingest reconcile`; it calculates scoped position
+roll-forwards, direct and adjacent cash equations, and printed section or
+portfolio totals. Results point to snapshot sets/statements, while components
+point to evidence-linked transactions. No result creates an adjustment row.
 
 ## DuckDB market store
 
@@ -123,6 +133,6 @@ it as a live-data correctness cutover.
 
 ## Still pending
 
-The remaining phases calculate and persist reconciliation results, unify all
-holdings consumers, and rebuild/cut over a shadow ledger. See the plan for
-sequencing.
+The remaining phases unify all holdings consumers, surface reconciliation
+quality read-only in the GUI, and rebuild/cut over a shadow ledger. See the
+plan for sequencing.

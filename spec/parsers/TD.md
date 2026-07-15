@@ -36,8 +36,9 @@ scope.
 
 - New TD statement generations and non-standard pending rows require a fixture
   or PDF spot-check before their date and sign rules are trusted.
-- A complete parser scope is not yet proof that a broker portfolio total or
-  roll-forward reconciles; Phase 5 owns that calculation.
+- A complete parser scope is not proof that a broker portfolio total or
+  roll-forward reconciles; the engine records that calculation and source
+  review remains necessary for any residual.
 - Existing active/live TD rows were produced by earlier parser versions and
   require a reviewed re-ingest/shadow rebuild to gain these fixes.
 

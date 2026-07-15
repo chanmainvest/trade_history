@@ -2,8 +2,9 @@
 
 Implementation review: **2026-07-14**. The live-ledger counts below remain a
 dated diagnostic snapshot from **2026-07-12**, not a release promise. Parser
-v2 was validated by fresh read-only corpus audits on 2026-07-14; the live
-SQLite ledger has not been re-ingested or shadow-rebuilt with that output.
+v2 and the reconciliation engine were validated in fixtures and read-only
+corpus audits on 2026-07-14; the live SQLite ledger has not been re-ingested,
+reconciled, or shadow-rebuilt with that output.
 
 ## Product surface
 
@@ -34,9 +35,16 @@ SQLite ledger has not been re-ingested or shadow-rebuilt with that output.
   not hidden adjustments.
 - All 338 source PDFs produced 337 valid parses and one explicit tax document
   skip; there were zero invalid, unclaimed, or failed files, zero contract
-  errors/warnings, and zero duplicate statement keys. It reports 298 unbalanced
-  calculable cash checks, 205 incomplete cash checks, and 588 unbalanced
-  position intervals. Phase 5 must persist and explain those residuals.
+  errors/warnings, and zero duplicate statement keys. The read-only parser
+  audit reports 298 unbalanced calculable cash checks, 205 incomplete cash
+  checks, and 588 unbalanced position intervals. The reconciliation engine now
+  persists equivalent scoped outcomes when the ledger is ingested or rebuilt;
+  these audit counts are not a rerun against the dated live database.
+- Reconciliation regressions cover persisted position components and residuals,
+  cash settlement dates across statement ownership, adjacent cash continuity,
+  position and portfolio totals, incomplete scopes, idempotent rebuilding, and
+  a TD bundled-period golden fixture with no unexplained cash or position
+  result.
 - The normal structural checks are run before a phase is completed: Python
   tests, Ruff, the frontend production build, and generated-docs build/check.
 
@@ -85,12 +93,15 @@ SQLite ledger has not been re-ingested or shadow-rebuilt with that output.
    Schema v6 gives new/migrated rows one canonical key, but the 2026-07-12 live
    snapshot has not been shadow-rebuilt. It contains 803 duplicate logical
    groups, 31,567 excess IDs, and 28,587 unreferenced instrument rows.
-2. **Reconciliation is still link attribution, not persisted reconciliation.**
-   The schema can store expected/actual close, residual, tolerance, and status,
-   but no engine computes or stores those results yet.
-3. **Full-corpus cash and position residuals remain material.** The current
-   parser audit exposes them without fabricating balancing rows; Phase 5 must
-   classify and persist them, and a later review must spot-check the sources.
+2. **The reconciliation engine is implemented, but the dated live ledger has
+   not been rebuilt with it.** `ledger ingest reconcile` now stores
+   source-traceable position, cash, and printed-total equations. This phase did
+   not mutate the live database, and the GUI does not yet surface those results.
+3. **Full-corpus cash and position residuals remain material.** The parser
+   audit exposes them without fabricating balancing rows. A reviewed ingest or
+   shadow rebuild will classify the active rows as reconciled, rounding,
+   incomplete, or unexplained; the largest residuals still need source
+   spot-checks.
 4. **Holdings consumers are only partly aligned.** Monthly uses canonical
    identity and complete scopes, but Performance and Visualisations still have
    separate state engines; post-checkpoint rows can remain unpriced.
@@ -106,6 +117,6 @@ SQLite ledger has not been re-ingested or shadow-rebuilt with that output.
 - Cache validity includes source hash, parser version, parser contract, schema,
   and reviewed-identity resolver state. The v2 parser bump makes v1 active
   output stale for a reviewed re-ingest.
-- The target reconciliation, shared holdings service, shadow rebuild, and
-  cutover remain defined in
-  `plan/EXTRACTION_RECONCILIATION_REFACTOR.md`; they are not implemented yet.
+- The shared holdings service, shadow rebuild, GUI quality surface, and cutover
+  remain defined in `plan/EXTRACTION_RECONCILIATION_REFACTOR.md`; they are not
+  implemented yet.

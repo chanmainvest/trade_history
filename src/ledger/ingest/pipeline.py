@@ -22,7 +22,7 @@ from ..parsers.types import (
 )
 from ..parsers.validation import validate_parse_result
 from ..pdf_text import PdfText, extract_pdf
-from ..quantity import quantity_delta
+from ..quantity import normalized_position_delta
 from .identity_resolution import resolve_parse_result, resolver_cache_version
 
 log = get_logger("ingest")
@@ -422,9 +422,7 @@ def _write_statement(
         position_effect = (
             t.position_delta
             if t.position_delta is not None
-            else quantity_delta(t.txn_type, t.quantity)
-            if t.quantity is not None
-            else None
+            else normalized_position_delta(t.txn_type, t.quantity)
         )
         cash_effect = t.cash_delta if t.cash_delta is not None else t.net_amount
         conn.execute(

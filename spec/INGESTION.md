@@ -30,7 +30,7 @@ discover path
   -> conservatively resolve printed identities
   -> stage one source in a SQLite savepoint
   -> atomically activate the fully written source run
-  -> pair transfers and rebuild position/transaction links
+  -> pair transfers, rebuild movement links, and persist checkpoint equations
   -> regenerate derived ingestion audit indexes
 ```
 
@@ -106,9 +106,11 @@ old derived data, but normal ingest no longer invokes it.
 ## Post-processing
 
 After a scan, `reconcile_after_ingest()` pairs unambiguous transfers and
-recreates position/transaction attribution links for the active output. It
-does not yet calculate cash/position/statement residuals. A limited scan still
-finishes this active-output maintenance rather than returning mid-command.
+recreates position/transaction attribution links for complete scopes, then
+rebuilds generated position, cash, and statement-total results. The
+reconciliation rebuild replaces only its `recon:v1:*` derived rows; it never
+changes a source transaction, reported checkpoint, or balance. A limited scan
+still finishes this active-output maintenance rather than returning mid-command.
 
 ## Logs
 
@@ -135,8 +137,10 @@ On 2026-07-14 parser v2 audited all 324 stored text dumps (323 parsed, one
 explicit tax-document skip) and all 338 PDFs (337 parsed, one skip). Both runs
 had zero invalid/unclaimed/failed sources, zero contract errors/warnings, and
 zero duplicate statement keys. They still report cash/position residuals and
-incomplete cash scopes; those are Phase 5 reconciliation findings, not grounds
-for fabricated parser rows. Current counts are maintained in
+incomplete cash scopes; those remain source-quality findings, not grounds for
+fabricated parser rows. A ledger reconciliation run persists its own
+source-linked status records, while the parser audit remains read-only. Current
+counts are maintained in
 [CURRENT-STATE.md](CURRENT-STATE.md).
 
 The 2026-07-12 Phase 1 run is retained only as the pre-v2 defect baseline: it

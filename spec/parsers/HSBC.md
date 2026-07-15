@@ -35,8 +35,9 @@ a continued account page does not create a duplicate account-period statement.
   ingest step.
 - New account-header variants and broker column changes require a fixture or
   PDF spot-check before declaring their sections complete.
-- Complete scopes are parser evidence, not a substitute for Phase 5 cash or
-  position reconciliation.
+- Complete scopes are parser evidence, not proof that a cash or position
+  equation balances. They feed the reconciliation engine and still require
+  source review when it reports a residual.
 
 Fixtures cover two accounts/currencies, parentheses negatives, compact options,
 continued account pages, cash, and source evidence. See

@@ -1,6 +1,6 @@
 # Extraction, Reconciliation, and Month-End Refactor Plan
 
-Status: in progress — Phases 0–4 completed and validated 2026-07-14
+Status: in progress — Phases 0–5 completed and validated 2026-07-14
 Baseline audit date: 2026-07-12
 Scope: documentation truth reset, statement extraction, ingestion, security/cash reconciliation, and the Monthly/Performance read models
 
@@ -581,6 +581,32 @@ Transfer pairing is a related but distinct problem. Match on canonical identity 
 - Golden fixtures have zero unexplained residuals outside documented rounding.
 - Live unresolved residuals are enumerated by statement/source span and never silently converted into adjustments.
 - Re-running reconciliation is deterministic and does not duplicate results.
+
+### Phase 5 completion record (2026-07-14)
+
+- `ledger ingest reconcile` and post-ingest maintenance now rebuild generated
+  `recon:v1:*` position, direct-cash, cash-continuity, and printed-total
+  equations. It preserves non-generated reviewed result rows and never creates
+  a balancing transaction.
+- Position results use consecutive scoped checkpoints and canonical instrument
+  identity, retain every contributing transaction, mark incomplete scope or
+  underdetermined corporate-action input explicitly, and record missing-first
+  checkpoints without inventing an opening quantity.
+- Cash results use the normalized `cash_effective_date` within the statement
+  period, so a transaction can contribute to the statement in which it settles
+  rather than only the statement which printed the trade. Adjacent opening/close
+  continuity is stored separately.
+- Section and portfolio totals are persisted only when matching complete
+  components are available. Unexplained residuals retain their tolerance/reason;
+  snapshot and component links retain source provenance.
+- Regressions cover components, idempotent rebuilds and reviewed-row retention,
+  incomplete inputs, settlement timing across statement ownership, corporate
+  action uncertainty, section/portfolio totals, and a TD bundled-period golden
+  fixture with zero unexplained cash or position result.
+- The full structural gate passed: 61 tests, Ruff, frontend production build,
+  and docs build/check. The dated live database was intentionally not rebuilt;
+  its read-only corpus-audit residuals still require the planned shadow rebuild
+  and source review.
 
 ## Phase 6 — Replace Monthly/Performance reconstruction with one holdings service
 

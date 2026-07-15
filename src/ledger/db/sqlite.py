@@ -13,7 +13,7 @@ from ..identity import (
     canonical_instrument_key,
     canonical_statement_key,
 )
-from ..quantity import quantity_delta
+from ..quantity import normalized_position_delta
 
 _SCHEMA = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
 SCHEMA_VERSION = 6
@@ -667,11 +667,7 @@ def _migrate_transactions(conn: sqlite3.Connection) -> None:
                 raw_text=row["raw_line"],
                 parser_rule="migration:v5",
             )
-        position_effect = (
-            quantity_delta(row["txn_type"], row["quantity"])
-            if row["quantity"] is not None
-            else None
-        )
+        position_effect = normalized_position_delta(row["txn_type"], row["quantity"])
         conn.execute(
             """
             UPDATE transactions

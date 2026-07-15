@@ -42,7 +42,7 @@ src/ledger/
     repair_symbols.py       legacy/manual post-parse identity repair
     fund_lookup.py          reviewed fund-code lookup workflow
     initials.py             inferred pre-history anchors
-    reconcile.py            transfer and movement-link attribution
+    reconcile.py            transfer pairing, movement links, and scoped checkpoint equations
   market/                   prices, actions, profiles, financials, FX
   api/
     app.py                  FastAPI application and route registration
@@ -60,7 +60,7 @@ inside the API route modules.
 ## Storage split
 
 - SQLite (`<DATA_DIR>/ledger.sqlite`) contains private account, statement,
-  transaction, checkpoint, quarantine, and reconciliation-link data.
+  transaction, checkpoint, quarantine, reconciliation-link, and reconciliation-result data.
 - DuckDB (`<DATA_DIR>/market.duckdb`) contains replaceable public price,
   corporate-action, profile, financial, earnings, and FX data.
 - `data/config.json` contains UI preferences and named account portfolios.

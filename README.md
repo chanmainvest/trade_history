@@ -5,10 +5,10 @@ and TD statements. It extracts read-only PDFs into a native-currency SQLite
 ledger, combines them with public market data in DuckDB, and exposes a FastAPI
 backend plus a React dashboard.
 
-> **Data-quality status (2026-07-12):** the app and GUI run, but the current
-> extraction, instrument identity, and month-end reconciliation paths have
-> confirmed correctness defects. Do not treat the current database as fully
-> reconciled. See [Current state](spec/CURRENT-STATE.md) and the
+> **Data-quality status (2026-07-14):** the app and GUI run, and the CLI now
+> persists scoped month-end reconciliation results. The dated live database has
+> not been re-ingested or rebuilt with the repaired parser output, so do not
+> treat it as fully reconciled. See [Current state](spec/CURRENT-STATE.md) and the
 > [implementation plan](plan/EXTRACTION_RECONCILIATION_REFACTOR.md).
 
 ## Architecture at a glance
@@ -72,7 +72,7 @@ uv run ledger ingest run
 # deliberately bypass the contract-aware ingest cache
 uv run ledger ingest run --force
 
-# legacy/manual derived-data repair, then link maintenance
+# legacy/manual derived-data repair, then derived reconciliation rebuild
 uv run ledger ingest repair-symbols
 uv run ledger ingest reconcile
 uv run ledger ingest infer-initials
@@ -89,9 +89,10 @@ uv run ruff check src tests
 cd frontend; npm run build
 ```
 
-`ingest reconcile` currently pairs transfers and builds movement-attribution
-links; it does **not** calculate or persist month-end residuals. See
-[Reconciliation](spec/RECONCILIATION.md).
+`ingest reconcile` pairs conservative transfer candidates, rebuilds
+position-to-transaction links, and persists position, cash, and printed-total
+equations. It reports residuals and incomplete inputs but never creates a
+balancing row. See [Reconciliation](spec/RECONCILIATION.md).
 
 ## Docker
 

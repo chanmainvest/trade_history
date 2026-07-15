@@ -292,12 +292,25 @@ def ingest_repair_symbols() -> None:
 
 @ingest.command("reconcile")
 def ingest_reconcile() -> None:
-    """Link transfer counterparts and rebuild snapshot transaction links."""
+    """Rebuild transfer links, movement attribution, and reconciliation results."""
     from .ingest.reconcile import reconcile_after_ingest
 
     out = reconcile_after_ingest()
     transfers = out["transfers"]
     positions = out["positions"]
+    results = out["results"]
+    result_sections = (
+        results["positions"],
+        results["cash"],
+        results["statement_totals"],
+    )
+    result_count = sum(section.get("results", 0) for section in result_sections)
+    unresolved = sum(
+        section.get("unexplained_residual", 0) for section in result_sections
+    )
+    incomplete = sum(
+        section.get("incomplete_input", 0) for section in result_sections
+    )
     click.echo(
         f"Linked {transfers['matched']} transfer pairs "
         f"({transfers['ambiguous']} ambiguous skipped)."
@@ -305,6 +318,10 @@ def ingest_reconcile() -> None:
     click.echo(
         f"Rebuilt {positions['links']} position-to-transaction links "
         f"across {positions['snapshots']} snapshots."
+    )
+    click.echo(
+        f"Rebuilt {result_count} reconciliation results "
+        f"({unresolved} unexplained residuals, {incomplete} incomplete inputs)."
     )
 
 

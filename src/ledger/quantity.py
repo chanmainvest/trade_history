@@ -29,6 +29,9 @@ _CLOSE_SIGNED_POSITION = {
     "option_exercise",
     "option_expiration",
 }
+LEGACY_UNDERIVABLE_POSITION_TYPES = frozenset(
+    {"stock_split", "name_change", "spinoff", "merger"}
+)
 
 
 def quantity_delta(txn_type: str, quantity: float | None) -> float:
@@ -46,3 +49,16 @@ def quantity_delta(txn_type: str, quantity: float | None) -> float:
     if txn_type in _CLOSE_SIGNED_POSITION:
         return -q
     return 0.0
+
+
+def normalized_position_delta(txn_type: str, quantity: float | None) -> float | None:
+    """Return a safe normalized effect, preserving underdetermined legacy rows.
+
+    The legacy helper intentionally returns zero for unsupported types to keep
+    older read models running. A generic split, name change, spinoff, or merger
+    cannot be inferred from a raw quantity alone, so persistence and
+    reconciliation must retain the unknown value instead.
+    """
+    if quantity is None or txn_type in LEGACY_UNDERIVABLE_POSITION_TYPES:
+        return None
+    return quantity_delta(txn_type, quantity)

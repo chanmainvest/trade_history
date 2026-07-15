@@ -36,8 +36,8 @@ overwrite the first currency while writing the second.
   fixture or source spot-check before its sign mapping is trusted.
 - `TRANSFER TO/FROM` and ambiguous journals remain event-specific and must not
   be paired or balanced by parser invention.
-- Complete parser scopes still need Phase 5 residual calculation and an
-  approved re-ingest/shadow rebuild before they improve the dated live ledger.
+- Complete parser scopes feed the residual engine. An approved re-ingest/shadow
+  rebuild is still required before they improve the dated live ledger.
 
 Fixtures cover one dual-currency monthly account, multi-page activity, option
 transactions, cash, and annual-performance parsing. See

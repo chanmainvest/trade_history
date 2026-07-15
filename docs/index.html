@@ -109,8 +109,9 @@ family's accounts.</p>
 <p><strong>Current data-quality notice (2026-07-14):</strong> the GUI is operational and
 source ingestion preserves the prior active extraction if parsing or staging
 fails. Parser v2 fixes the audited RBC dual-currency and TD bundled layouts,
-but the dated live ledger has not been re-ingested or shadow-rebuilt, and
-month-end reconciliation is not implemented yet. Review
+and the CLI now persists month-end reconciliation results, but the dated live
+ledger has not been re-ingested or shadow-rebuilt and the GUI does not yet
+display reconciliation status. Review
 <a href="#current-state">CURRENT-STATE.md</a> before relying on totals as reconciled.</p>
 </blockquote>
 <hr />
@@ -226,18 +227,19 @@ first monthly cash snapshot for each account/currency.</p>
 </code></pre></div>
 </li>
 <li>
-<p><em>(Optional after manual DB edits)</em> Rebuild automatic transfer and
-    position-to-transaction links:</p>
+<p><em>(Optional after manual DB edits)</em> Rebuild automatic transfer links,
+    position-to-transaction links, and reconciliation results:</p>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">reconcile</span>
 </code></pre></div>
-</li>
-</ol>
 <p>Normal <code>ingest run</code> performs this after active source activation; the command
-   is mainly for manual maintenance. Despite its name, it only
-    pairs transfers and attributes transactions to snapshots today. It does not
-    compute expected-versus-reported month-end residuals.</p>
-<ol>
-<li>Reload the browser. The Transactions tab should now have data.</li>
+is mainly for manual maintenance. It stores expected-versus-reported
+position, cash, and printed-total equations, including incomplete inputs and
+unexplained residuals. It does not alter a reported transaction or create a
+balancing entry.</p>
+</li>
+<li>
+<p>Reload the browser. The Transactions tab should now have data.</p>
+</li>
 </ol>
 <h2 id="4-the-tabs">4. The tabs</h2>
 <h3 id="41-transactions">4.1 Transactions</h3>
@@ -373,7 +375,7 @@ MCP server's allowlisted CLI commands):</p>
 <span class="c"># infer opening holdings before the first statement</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">infer-initials</span>
 
-<span class="c"># rebuild transfer counterpart + position-to-transaction links after manual edits</span>
+<span class="c"># rebuild transfer counterpart, movement links, and reconciliation results after manual edits</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">reconcile</span>
 
 <span class="c"># repair symbols (resolve aliases, fund-code lookups, etc.)</span>
@@ -576,8 +578,9 @@ the owner rather than copy it.</p>
   <h1 id="current-state">Current state</h1>
 <p>Implementation review: <strong>2026-07-14</strong>. The live-ledger counts below remain a
 dated diagnostic snapshot from <strong>2026-07-12</strong>, not a release promise. Parser
-v2 was validated by fresh read-only corpus audits on 2026-07-14; the live
-SQLite ledger has not been re-ingested or shadow-rebuilt with that output.</p>
+v2 and the reconciliation engine were validated in fixtures and read-only
+corpus audits on 2026-07-14; the live SQLite ledger has not been re-ingested,
+reconciled, or shadow-rebuilt with that output.</p>
 <h2 id="product-surface">Product surface</h2>
 <ul>
 <li>The FastAPI backend and React GUI build and run.</li>
@@ -607,9 +610,16 @@ SQLite ledger has not been re-ingested or shadow-rebuilt with that output.</p>
   not hidden adjustments.</li>
 <li>All 338 source PDFs produced 337 valid parses and one explicit tax document
   skip; there were zero invalid, unclaimed, or failed files, zero contract
-  errors/warnings, and zero duplicate statement keys. It reports 298 unbalanced
-  calculable cash checks, 205 incomplete cash checks, and 588 unbalanced
-  position intervals. Phase 5 must persist and explain those residuals.</li>
+  errors/warnings, and zero duplicate statement keys. The read-only parser
+  audit reports 298 unbalanced calculable cash checks, 205 incomplete cash
+  checks, and 588 unbalanced position intervals. The reconciliation engine now
+  persists equivalent scoped outcomes when the ledger is ingested or rebuilt;
+  these audit counts are not a rerun against the dated live database.</li>
+<li>Reconciliation regressions cover persisted position components and residuals,
+  cash settlement dates across statement ownership, adjacent cash continuity,
+  position and portfolio totals, incomplete scopes, idempotent rebuilding, and
+  a TD bundled-period golden fixture with no unexplained cash or position
+  result.</li>
 <li>The normal structural checks are run before a phase is completed: Python
   tests, Ruff, the frontend production build, and generated-docs build/check.</li>
 </ul>
@@ -703,12 +713,15 @@ SQLite ledger has not been re-ingested or shadow-rebuilt with that output.</p>
    Schema v6 gives new/migrated rows one canonical key, but the 2026-07-12 live
    snapshot has not been shadow-rebuilt. It contains 803 duplicate logical
    groups, 31,567 excess IDs, and 28,587 unreferenced instrument rows.</li>
-<li><strong>Reconciliation is still link attribution, not persisted reconciliation.</strong>
-   The schema can store expected/actual close, residual, tolerance, and status,
-   but no engine computes or stores those results yet.</li>
-<li><strong>Full-corpus cash and position residuals remain material.</strong> The current
-   parser audit exposes them without fabricating balancing rows; Phase 5 must
-   classify and persist them, and a later review must spot-check the sources.</li>
+<li><strong>The reconciliation engine is implemented, but the dated live ledger has
+   not been rebuilt with it.</strong> <code>ledger ingest reconcile</code> now stores
+   source-traceable position, cash, and printed-total equations. This phase did
+   not mutate the live database, and the GUI does not yet surface those results.</li>
+<li><strong>Full-corpus cash and position residuals remain material.</strong> The parser
+   audit exposes them without fabricating balancing rows. A reviewed ingest or
+   shadow rebuild will classify the active rows as reconciled, rounding,
+   incomplete, or unexplained; the largest residuals still need source
+   spot-checks.</li>
 <li><strong>Holdings consumers are only partly aligned.</strong> Monthly uses canonical
    identity and complete scopes, but Performance and Visualisations still have
    separate state engines; post-checkpoint rows can remain unpriced.</li>
@@ -724,9 +737,9 @@ SQLite ledger has not been re-ingested or shadow-rebuilt with that output.</p>
 <li>Cache validity includes source hash, parser version, parser contract, schema,
   and reviewed-identity resolver state. The v2 parser bump makes v1 active
   output stale for a reviewed re-ingest.</li>
-<li>The target reconciliation, shared holdings service, shadow rebuild, and
-  cutover remain defined in
-  <code>plan/EXTRACTION_RECONCILIATION_REFACTOR.md</code>; they are not implemented yet.</li>
+<li>The shared holdings service, shadow rebuild, GUI quality surface, and cutover
+  remain defined in <code>plan/EXTRACTION_RECONCILIATION_REFACTOR.md</code>; they are not
+  implemented yet.</li>
 </ul>
 </div>
 
@@ -768,7 +781,7 @@ not mutate the ledger.</p>
     repair_symbols.py       legacy/manual post-parse identity repair
     fund_lookup.py          reviewed fund-code lookup workflow
     initials.py             inferred pre-history anchors
-    reconcile.py            transfer and movement-link attribution
+    reconcile.py            transfer pairing, movement links, and scoped checkpoint equations
   market/                   prices, actions, profiles, financials, FX
   api/
     app.py                  FastAPI application and route registration
@@ -784,7 +797,7 @@ inside the API route modules.</p>
 <h2 id="storage-split">Storage split</h2>
 <ul>
 <li>SQLite (<code>&lt;DATA_DIR&gt;/ledger.sqlite</code>) contains private account, statement,
-  transaction, checkpoint, quarantine, and reconciliation-link data.</li>
+  transaction, checkpoint, quarantine, reconciliation-link, and reconciliation-result data.</li>
 <li>DuckDB (<code>&lt;DATA_DIR&gt;/market.duckdb</code>) contains replaceable public price,
   corporate-action, profile, financial, earnings, and FX data.</li>
 <li><code>data/config.json</code> contains UI preferences and named account portfolios.</li>
@@ -892,7 +905,7 @@ owned by <code>src/ledger/db/schema.sql</code>; exact DuckDB DDL is the <code>DD
 <tr>
 <td>Reconciliation</td>
 <td><code>position_transaction_links</code>, <code>reconciliation_results</code>, <code>reconciliation_components</code></td>
-<td>legacy attribution plus explicit result/equation storage</td>
+<td>movement attribution plus generated, source-traceable checkpoint equations</td>
 </tr>
 <tr>
 <td>Metadata</td>
@@ -936,6 +949,9 @@ fabricated line.</p>
 <p><code>transactions.quantity</code> and amount fields retain the reported parser values.
 <code>position_delta</code>, <code>cash_delta</code>, and <code>cash_effective_date</code> hold the normalized
 effects used by new consumers; <code>net_amount</code> remains a compatibility field.
+When a generic split, name change, spinoff, or merger has no explicit safe
+position effect, <code>position_delta</code> remains null rather than being fabricated as
+zero.
 Resolution method/confidence and an optional resolution-evidence link are also
 available. Phase 3 writes these through its conservative staged resolver:
 explicit printed identities, reviewed aliases/fund lookups, and unambiguous
@@ -953,11 +969,17 @@ and a cash section with a valid closing balance as <code>complete</code>; incomp
 unrecognized sections remain <code>unknown</code>. Existing migrated/live rows retain
 their historical <code>unknown</code> scopes until a reviewed re-ingest or shadow rebuild.</p>
 <h3 id="reconciliation-storage">Reconciliation storage</h3>
-<p><code>reconciliation_results</code> can store a position, cash, statement-total, or
-transfer equation with checkpoints, deltas, expected/reported close, residual,
-tolerance, status, and reason. <code>reconciliation_components</code> can point to the
-contributing transactions. No reconciliation engine writes these records yet;
-the existing command still builds transfer and attribution links only.</p>
+<p><code>reconciliation_results</code> stores a position, cash, statement-total, or transfer
+equation with checkpoints, deltas, expected/reported close, residual,
+tolerance, status, and reason. <code>reconciliation_components</code> identifies the
+contributing transaction rows and their signed contribution.</p>
+<p><code>rebuild_reconciliation_results()</code> writes only generated keys prefixed
+<code>recon:v1:</code>. It replaces that generated subset on every run, retaining any
+reviewed/manual result that uses another key. The engine runs after an ingest
+scan and through <code>ledger ingest reconcile</code>; it calculates scoped position
+roll-forwards, direct and adjacent cash equations, and printed section or
+portfolio totals. Results point to snapshot sets/statements, while components
+point to evidence-linked transactions. No result creates an adjustment row.</p>
 <h2 id="duckdb-market-store">DuckDB market store</h2>
 <table>
 <thead>
@@ -1030,9 +1052,9 @@ creates legacy source runs/evidence, and marks migrated snapshot scopes
 <code>unknown</code>. It is not a replacement for the planned shadow rebuild; do not use
 it as a live-data correctness cutover.</p>
 <h2 id="still-pending">Still pending</h2>
-<p>The remaining phases calculate and persist reconciliation results, unify all
-holdings consumers, and rebuild/cut over a shadow ledger. See the plan for
-sequencing.</p>
+<p>The remaining phases unify all holdings consumers, surface reconciliation
+quality read-only in the GUI, and rebuild/cut over a shadow ledger. See the
+plan for sequencing.</p>
 </div>
 
 <div class="doc-section" id="ingestion">
@@ -1061,7 +1083,7 @@ are derived artifacts.</p>
   -&gt; conservatively resolve printed identities
   -&gt; stage one source in a SQLite savepoint
   -&gt; atomically activate the fully written source run
-  -&gt; pair transfers and rebuild position/transaction links
+  -&gt; pair transfers, rebuild movement links, and persist checkpoint equations
   -&gt; regenerate derived ingestion audit indexes
 </code></pre></div>
 <p>The registered parsers are CIBC, HSBC, RBC, and TD, all currently reporting
@@ -1125,9 +1147,11 @@ source span is available; instrument rows retain their identity provenance.
 old derived data, but normal ingest no longer invokes it.</p>
 <h2 id="post-processing">Post-processing</h2>
 <p>After a scan, <code>reconcile_after_ingest()</code> pairs unambiguous transfers and
-recreates position/transaction attribution links for the active output. It
-does not yet calculate cash/position/statement residuals. A limited scan still
-finishes this active-output maintenance rather than returning mid-command.</p>
+recreates position/transaction attribution links for complete scopes, then
+rebuilds generated position, cash, and statement-total results. The
+reconciliation rebuild replaces only its <code>recon:v1:*</code> derived rows; it never
+changes a source transaction, reported checkpoint, or balance. A limited scan
+still finishes this active-output maintenance rather than returning mid-command.</p>
 <h2 id="logs">Logs</h2>
 <ul>
 <li>standard logs are configured under <code>logs/</code>;</li>
@@ -1150,8 +1174,10 @@ text from the report.</p>
 explicit tax-document skip) and all 338 PDFs (337 parsed, one skip). Both runs
 had zero invalid/unclaimed/failed sources, zero contract errors/warnings, and
 zero duplicate statement keys. They still report cash/position residuals and
-incomplete cash scopes; those are Phase 5 reconciliation findings, not grounds
-for fabricated parser rows. Current counts are maintained in
+incomplete cash scopes; those remain source-quality findings, not grounds for
+fabricated parser rows. A ledger reconciliation run persists its own
+source-linked status records, while the parser audit remains read-only. Current
+counts are maintained in
 <a href="#current-state">CURRENT-STATE.md</a>.</p>
 <p>The 2026-07-12 Phase 1 run is retained only as the pre-v2 defect baseline: it
 reported 178 duplicate statement keys across the PDF audit. It is not evidence
@@ -1285,21 +1311,101 @@ zero-fallback cases as ordinary regressions once a phase implements them.</p>
   <div class="section-banner">Reconciliation</div>
   <h1 id="reconciliation-and-holdings">Reconciliation and holdings</h1>
 <p>This document owns movement rules, checkpoint reconciliation, and holdings at
-a date. Schema support for financial reconciliation exists, but the current
-command still performs link-building rather than calculating residuals.</p>
-<h2 id="intended-equations">Intended equations</h2>
-<p>For one account and canonical instrument between complete checkpoints:</p>
-<div class="highlight"><pre><span></span><code>expected_close_quantity = prior_close_quantity + SUM(position_delta)
-position_residual        = reported_close_quantity - expected_close_quantity
+a date. <code>ledger ingest reconcile</code> now writes deterministic, source-linked
+checkpoint equations; it never creates a balancing transaction or changes a
+reported balance.</p>
+<h2 id="persisted-checkpoint-equations">Persisted checkpoint equations</h2>
+<p>Each generated result belongs to a current <code>snapshot_set</code>, its statement, and
+the statement's ingestion run. Position and cash components point to the exact
+transaction rows used in the equation; those rows in turn point to source
+evidence. A result can therefore be traced back to a source statement without
+copying statement contents into logs.</p>
+<h3 id="positions">Positions</h3>
+<p>For each chronological <code>(account, currency, position scope)</code> checkpoint pair,
+the engine compares the union of canonical <code>instrument_key</code> values in the
+prior and current scopes:</p>
+<div class="highlight"><pre><span></span><code>expected_close_quantity = prior_reported_quantity
+                        + SUM(position_delta after prior checkpoint through current)
+position_residual        = current_reported_quantity - expected_close_quantity
 </code></pre></div>
-<p>For one account/currency cash scope:</p>
-<div class="highlight"><pre><span></span><code>expected_close_cash = opening_or_prior_close + SUM(cash_delta)
-cash_residual        = reported_close_cash - expected_close_cash
+<p>An instrument missing from a <strong>complete</strong> current scope has a reported close of
+zero. A newly reported instrument starts from zero. The engine only evaluates
+the equation when both scopes are complete. A first checkpoint is
+<code>missing_prior_checkpoint</code>; an incomplete current or immediate prior scope is
+<code>incomplete_input</code>. Transactions which could affect a position but lack an
+instrument or a usable quantity/delta also make the interval incomplete rather
+than silently contributing zero.</p>
+<p>For an empty scope, one scope-level result is stored. It records the same
+missing-prior or incomplete condition, or <code>not_applicable</code> when both complete
+checkpoints are known empty and no unresolved movement is present.</p>
+<h3 id="cash">Cash</h3>
+<p>The direct cash equation is evaluated for each cash scope with a printed
+opening and closing balance:</p>
+<div class="highlight"><pre><span></span><code>expected_close_cash = reported_opening_cash + SUM(cash_delta)
+cash_residual       = reported_closing_cash - expected_close_cash
 </code></pre></div>
-<p>A result needs prior/reported values, included movements, expected close,
-residual, tolerance, status, and incomplete/unresolved reasons. No residual may
-be hidden with a fabricated adjustment.</p>
-<h2 id="current-quantity-rules">Current quantity rules</h2>
+<p>Cash movements are selected by account, currency, and the statement's calendar
+period using <code>cash_effective_date</code> (falling back to <code>trade_date</code> for legacy
+rows), not merely by the statement that contains the trade. This preserves the
+broker-specific settlement contract: a trade shown in one statement can be a
+cash component of the next statement if it settles there. A missing cash effect
+or printed opening makes the direct result <code>incomplete_input</code>.
+Known non-cash corporate-action row types are excluded unless their cash effect
+is represented as a separate cash transaction; they are not treated as a zero
+balancing adjustment.</p>
+<p>A second, independent cash result compares the prior scoped closing balance to
+the current printed opening balance. Its expected close is the prior reported
+close and its summed delta is zero. That continuity check is
+<code>missing_prior_checkpoint</code> for the first scope and <code>incomplete_input</code> whenever
+one of the adjacent scopes or balances is unavailable.</p>
+<h3 id="statement-totals">Statement totals</h3>
+<p>Where <code>snapshot_sets.reported_total</code> is present, the engine stores a
+<code>statement_total</code> result:</p>
+<div class="highlight"><pre><span></span><code>reported securities total ~= SUM(position market values in that scope)
+reported cash total       ~= cash closing balance in that scope
+reported portfolio total  ~= matching complete position scope + cash scope
+</code></pre></div>
+<p>Portfolio-summary totals only use matching statement/currency/scope-key
+components. Missing, incomplete, or unpriced components remain
+<code>incomplete_input</code>; the engine does not guess that a partial section is a full
+portfolio.</p>
+<h2 id="result-status-and-tolerance">Result status and tolerance</h2>
+<p><code>reconciliation_results</code> uses these statuses:</p>
+<ul>
+<li><code>reconciled</code> — absolute residual at most <code>1e-9</code>;</li>
+<li><code>within_rounding</code> — non-zero residual within the documented tolerance;</li>
+<li><code>unexplained_residual</code> — a calculable residual outside tolerance;</li>
+<li><code>incomplete_input</code> — a scope, required balance, or required movement is
+  unavailable or untrusted;</li>
+<li><code>missing_prior_checkpoint</code> — the first comparison has no prior scope;</li>
+<li><code>ambiguous_transfer</code> — reserved for conservative transfer-pairing outcomes;
+  and</li>
+<li><code>not_applicable</code> — a known-empty scope or total has no applicable equation.</li>
+</ul>
+<p>Position tolerance is <code>1e-8</code>; cash and statement-total tolerance is one cent.
+These are rounding tolerances, not a mechanism for absorbing missing rows.
+<code>unexplained_residual</code> rows retain a reason with the residual and tolerance;
+incomplete rows retain the missing-input reason.</p>
+<h2 id="ingest-reconcile-and-rebuild-behavior"><code>ingest reconcile</code> and rebuild behavior</h2>
+<p>The CLI command performs three separate derived-data passes:</p>
+<ol>
+<li>pair unambiguous transfer counterparts;</li>
+<li>rebuild <code>position_transaction_links</code> for complete position scopes; and</li>
+<li>replace generated <code>recon:v1:*</code> result rows and their components with the
+   position, cash, and total equations described above.</li>
+</ol>
+<p>The generated-key prefix preserves any future reviewed/manual result rows with
+another key. Rebuilding is deterministic and idempotent: it deletes only the
+previous generated result set before writing the same equations again. Normal
+<code>ledger ingest run</code> invokes these passes after an active source scan; the
+standalone command is useful after manual database maintenance.</p>
+<p>Transfer pairing remains separate from checkpoint reconciliation. Candidates
+must have opposite direction, different accounts, equal absolute cash amount or
+the same canonical instrument/quantity/currency, and dates within seven days.
+Equally near candidates are skipped as ambiguous. A journal such as DLR/DLR.U
+requires a reviewed relation; reconciliation never treats different canonical
+keys as identical just to make an equation balance.</p>
+<h2 id="quantity-movement-rules">Quantity movement rules</h2>
 <p><code>quantity.quantity_delta()</code> converts transaction type plus parsed quantity:</p>
 <ul>
 <li>buys, buy-to-cover, transfer-in, reinvestment, split credit, and option buys
@@ -1311,37 +1417,23 @@ be hidden with a fabricated adjustment.</p>
 <li>all other types and missing quantity contribute zero in the legacy helper.</li>
 </ul>
 <p>New writes store <code>transactions.position_delta</code> and preserve the reported
-quantity separately. Missing position quantity is represented as absent in the
-new writer; the helper remains for legacy/manual compatibility.</p>
-<h2 id="current-ingest-reconcile">Current <code>ingest reconcile</code></h2>
-<p>The command performs two operations:</p>
-<ol>
-<li>It rebuilds automatically generated transfer pairs. Candidates need
-   opposite direction, different accounts, equal absolute cash amount or the
-   same <code>instrument_id</code>/quantity/currency, and dates within seven days.
-   Equally near candidates are skipped as ambiguous.</li>
-<li>It deletes and rebuilds <code>position_transaction_links</code>, assigning every
-   non-zero same-account/<strong>same-instrument-ID</strong> movement since the previous
-   snapshot to the current snapshot.</li>
-</ol>
-<p>It does not compare quantities, cash, or statement totals and does not yet
-write <code>reconciliation_results</code>. That table can now persist residual/status
-records without a balancing adjustment. Transfer pairing and position links
-now compare canonical <code>instrument_key</code> values rather than vulnerable raw
-instrument-ID equality.</p>
+quantity separately. A generic split, name change, spinoff, or merger with no
+explicit normalized effect remains absent rather than receiving the legacy
+zero. The reconciliation engine treats a missing or underdetermined
+position-affecting effect as incomplete.</p>
 <h2 id="current-monthly-holdings">Current Monthly holdings</h2>
 <p>For securities, <code>/monthly/snapshot</code> chooses the latest <strong>complete</strong> position
 scope per account/currency at or before the requested day and adds later
 normalized (or legacy-derived) quantity deltas by canonical instrument key.
-Partial/unknown scopes cannot clear an earlier complete scope. Before a
-complete checkpoint it uses <code>initial_positions</code> plus movements. Cost/price/
-value come from the anchor row when one exists.</p>
+Partial/unknown scopes cannot clear an earlier complete scope. Before a complete
+checkpoint it uses <code>initial_positions</code> plus movements. Cost/price/value come
+from the anchor row when one exists.</p>
 <p>For cash, it independently chooses the latest complete cash scope and adds
 later non-corporate-action <code>cash_delta</code> values using <code>cash_effective_date</code>
 (falling back to legacy fields). It falls back to <code>initial_cash</code> before the
 first complete checkpoint. Native totals are primary; available DuckDB FX rates
 also produce CAD/USD combined totals.</p>
-<p>Known failures:</p>
+<p>Known failures remain:</p>
 <ul>
 <li>a movement-only row has no anchor price/value;</li>
 <li>Performance and visualisation still have separate holdings engines; and</li>
@@ -1358,15 +1450,9 @@ Therefore Monthly, Performance, and Visualisations are not guaranteed to agree.<
 <p><code>ingest infer-initials</code> derives pre-history positions/cash only from the
 earliest <strong>complete</strong> snapshot minus prior parsed movements. Tagged inferred
 rows are replaceable; user-curated rows are intended to survive. Because
-extraction and signs are currently unreliable, inference must be rerun only
+extraction and signs still require source review, inference must be rerun only
 after the canonical ledger rebuild and must never be used to mask a
 reconciliation residual.</p>
-<h2 id="persisted-result-vocabulary-engine-pending">Persisted result vocabulary; engine pending</h2>
-<p><code>reconciliation_results</code> accepts <code>reconciled</code>, <code>within_rounding</code>,
-<code>unexplained_residual</code>, <code>incomplete_input</code>, <code>missing_prior_checkpoint</code>,
-<code>ambiguous_transfer</code>, and <code>not_applicable</code>, with optional transaction
-components. Phase 5 will calculate these deterministically within explicit
-complete scopes and Phase 6 will move all consumers to one holdings service.</p>
 </div>
 
 <div class="doc-section" id="api-ui">
@@ -1716,8 +1802,9 @@ a continued account page does not create a duplicate account-period statement.</
   ingest step.</li>
 <li>New account-header variants and broker column changes require a fixture or
   PDF spot-check before declaring their sections complete.</li>
-<li>Complete scopes are parser evidence, not a substitute for Phase 5 cash or
-  position reconciliation.</li>
+<li>Complete scopes are parser evidence, not proof that a cash or position
+  equation balances. They feed the reconciliation engine and still require
+  source review when it reports a residual.</li>
 </ul>
 <p>Fixtures cover two accounts/currencies, parentheses negatives, compact options,
 continued account pages, cash, and source evidence. See
@@ -1759,8 +1846,8 @@ overwrite the first currency while writing the second.</p>
   fixture or source spot-check before its sign mapping is trusted.</li>
 <li><code>TRANSFER TO/FROM</code> and ambiguous journals remain event-specific and must not
   be paired or balanced by parser invention.</li>
-<li>Complete parser scopes still need Phase 5 residual calculation and an
-  approved re-ingest/shadow rebuild before they improve the dated live ledger.</li>
+<li>Complete parser scopes feed the residual engine. An approved re-ingest/shadow
+  rebuild is still required before they improve the dated live ledger.</li>
 </ul>
 <p>Fixtures cover one dual-currency monthly account, multi-page activity, option
 transactions, cash, and annual-performance parsing. See
@@ -1802,8 +1889,9 @@ scope.</p>
 <ul>
 <li>New TD statement generations and non-standard pending rows require a fixture
   or PDF spot-check before their date and sign rules are trusted.</li>
-<li>A complete parser scope is not yet proof that a broker portfolio total or
-  roll-forward reconciles; Phase 5 owns that calculation.</li>
+<li>A complete parser scope is not proof that a broker portfolio total or
+  roll-forward reconciles; the engine records that calculation and source
+  review remains necessary for any residual.</li>
 <li>Existing active/live TD rows were produced by earlier parser versions and
   require a reviewed re-ingest/shadow rebuild to gain these fixes.</li>
 </ul>
