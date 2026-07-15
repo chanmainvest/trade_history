@@ -10,8 +10,8 @@ it updates preferences in JSON, not SQLite.
 |---|---|---|
 | root | `GET /health` | liveness and app identity |
 | `/transactions` | list, accounts, symbols, transaction types, latest date | Transactions/filter controls |
-| `/monthly` | `GET /snapshot`, `GET /diff` | point-in-time holdings and comparison |
-| `/performance` | `GET /total`, `GET /cash` | forward-filled value and reported cash |
+| `/monthly` | `GET /snapshot`, `GET /diff` | canonical point-in-time holdings and comparison |
+| `/performance` | `GET /total`, `GET /cash` | canonical holdings value series and reported cash checkpoints |
 | `/research` | `GET /prices`, `/trades`, `/financials` | security research |
 | `/viz` | `GET /holdings_by_sector`, `/correlation`, `/rrg` | visual analytics |
 | `/config` | `GET`, `PUT` | portfolios/theme/hide-money/language |
@@ -56,14 +56,18 @@ can match multiple boxes. Coordinates are not stored as ingestion provenance.
 An empty `account_ids` list means all accounts. Legacy `display_currency` and
 `llm_keys` keys are removed on read/write.
 
-## Known read-model problems
+## Holdings API contract
 
-The Monthly, Performance, and Visualisation paths do not share a holdings
-engine. Monthly now uses canonical identity/currency diff keys and
-Monthly/Performance refuse to clear from partial or unknown scopes, but
-Visualisation remains separate and no route yet returns reconciliation/pricing
-quality. The refactor must still replace these with one canonical read service
-without adding ledger writes to the GUI.
+Monthly, Performance, and Visualisation routes share the read-only
+`ledger.holdings.holdings_at()` service. It anchors only on complete scoped
+checkpoints, applies normalized position/cash movements afterward, and never
+writes SQLite. Monthly rows include a stable `holding_key` made from account,
+canonical instrument key, and currency; diff rows use the same identity.
+
+Each holdings row also returns checkpoint statement/scope identifiers,
+reported-versus-reconstructed state, reconciliation status/reason, price/date
+status, and quality warnings. The current React UI uses stable identity keys but
+does not yet render the quality fields; Phase 8 owns that read-only surface.
 
 ## Frontend rules
 

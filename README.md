@@ -113,9 +113,9 @@ PDF beside parsed rows and highlights fuzzy-matched text-line boxes. Settings
 manages named account portfolios; theme, language, and hide-money controls are
 in the top bar.
 
-Known limitations are shown in [Current state](spec/CURRENT-STATE.md). In
-particular, Monthly, Performance, and Visualisations do not yet share one
-canonical holdings engine.
+Known limitations are shown in [Current state](spec/CURRENT-STATE.md). Monthly,
+Performance, and Visualisations now share one canonical read-only holdings
+engine, but the GUI does not yet show its reconciliation/pricing quality fields.
 
 ## Repository map
 

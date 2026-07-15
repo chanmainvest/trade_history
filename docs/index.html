@@ -258,10 +258,11 @@ balancing entry.</p>
 <p>Default view: holdings as of the most recent statement date in the
 database, across all accounts in the active portfolio.</p>
 <ul>
-<li><strong>As of</strong> date — pick any day; the app starts from the latest account
-  holdings snapshot checkpoint and replays transactions after it. Empty
-  statement rows without holdings are ignored as checkpoints. Before the
-  first snapshot, it uses inferred/manual initial holdings.</li>
+<li><strong>As of</strong> date — pick any day; the app starts from the latest explicitly
+  complete account/currency holdings checkpoint and replays transactions after
+  it. A complete empty scope clears only that scope; a partial/unknown scope
+  never clears an earlier complete checkpoint. Before the first snapshot, it
+  uses inferred/manual initial holdings.</li>
 <li><strong>Compare to</strong> — picking a second date adds a <code>Δ</code> column. Rows where
   the position grew are tinted green, rows that shrank are tinted red,
   in git-diff style. Positions that disappeared between the two dates
@@ -285,12 +286,13 @@ database, across all accounts in the active portfolio.</p>
 <li>The separate cash chart remains available as a cash-only breakdown and
   toggles off automatically when "Hide $ values" is on.</li>
 </ul>
-<p>The chart forward-fills accounts whose statement dates do not line up and
-clears an account/currency scope only when its later checkpoint is explicitly
-complete. Parser v2 can emit complete scopes for recognized sections; existing
-active/live v1 rows remain conservatively <code>unknown</code>, so they may carry an old
-holding forward until a reviewed re-ingest or shadow rebuild. See
-<a href="#reconciliation">RECONCILIATION.md</a>.</p>
+<p>The chart evaluates the same complete-scoped holdings rules as Monthly and
+Visualisations, so accounts with different statement dates carry their most
+recent trusted state forward consistently. Parser v2 can emit complete scopes
+for recognized sections; existing active/live v1 rows remain conservatively
+<code>unknown</code>, so they may carry an old holding forward until a reviewed re-ingest
+or shadow rebuild. Quality and reconciliation details remain API data until the
+read-only UI surface is added. See <a href="#reconciliation">RECONCILIATION.md</a>.</p>
 <h3 id="44-research">4.4 Research</h3>
 <p>Per-symbol deep dive.</p>
 <ul>
@@ -576,7 +578,7 @@ the owner rather than copy it.</p>
 <div class="doc-section" id="current-state">
   <div class="section-banner">Current State</div>
   <h1 id="current-state">Current state</h1>
-<p>Implementation review: <strong>2026-07-14</strong>. The live-ledger counts below remain a
+<p>Implementation review: <strong>2026-07-15</strong>. The live-ledger counts below remain a
 dated diagnostic snapshot from <strong>2026-07-12</strong>, not a release promise. Parser
 v2 and the reconciliation engine were validated in fixtures and read-only
 corpus audits on 2026-07-14; the live SQLite ledger has not been re-ingested,
@@ -594,6 +596,10 @@ reconciled, or shadow-rebuilt with that output.</p>
 <li>CIBC, HSBC, RBC, and TD parsers report version <code>2.0.0</code>. They retain source
   page/line evidence, available word/box geometry, explicit snapshot scopes,
   and quarantine rather than fabricate unsupported values.</li>
+<li>Monthly, Performance, and Visualisations now consume one read-only scoped
+  holdings service. Its API rows include checkpoint/provenance, reconciliation,
+  pricing, and incomplete/unpriced quality fields; the GUI does not yet display
+  those fields.</li>
 </ul>
 <h2 id="validation-and-corpus-audits">Validation and corpus audits</h2>
 <ul>
@@ -722,9 +728,11 @@ reconciled, or shadow-rebuilt with that output.</p>
    shadow rebuild will classify the active rows as reconciled, rounding,
    incomplete, or unexplained; the largest residuals still need source
    spot-checks.</li>
-<li><strong>Holdings consumers are only partly aligned.</strong> Monthly uses canonical
-   identity and complete scopes, but Performance and Visualisations still have
-   separate state engines; post-checkpoint rows can remain unpriced.</li>
+<li><strong>The holdings engine is shared, but live data quality is still historical.</strong>
+   Monthly, Performance, and Visualisations now use canonical identity,
+   complete scopes, normalized movements, and explicit stale/unpriced status.
+   The dated live ledger has not been re-ingested or reconciled with parser v2,
+   and the GUI does not yet surface the returned quality fields.</li>
 <li><strong>Live scopes/provenance are historical.</strong> Parser v2 can produce complete
    scope and coordinate-aware evidence, but currently active v1-derived rows
    remain conservative/legacy until an approved re-ingest and shadow rebuild.</li>
@@ -737,9 +745,8 @@ reconciled, or shadow-rebuilt with that output.</p>
 <li>Cache validity includes source hash, parser version, parser contract, schema,
   and reviewed-identity resolver state. The v2 parser bump makes v1 active
   output stale for a reviewed re-ingest.</li>
-<li>The shared holdings service, shadow rebuild, GUI quality surface, and cutover
-  remain defined in <code>plan/EXTRACTION_RECONCILIATION_REFACTOR.md</code>; they are not
-  implemented yet.</li>
+<li>The GUI quality surface, shadow rebuild, and cutover remain defined in
+  <code>plan/EXTRACTION_RECONCILIATION_REFACTOR.md</code>; they are not implemented yet.</li>
 </ul>
 </div>
 
@@ -770,6 +777,7 @@ not mutate the ledger.</p>
   cli.py                    Click command tree
   pdf_text.py               raw PDF text, optional word/line geometry, fingerprinting
   quantity.py               transaction-type quantity movement rules
+  holdings.py               canonical read-only scoped holdings reconstruction
   db/
     schema.sql              canonical SQLite DDL
     sqlite.py               connections, initialization, upserts
@@ -820,15 +828,15 @@ as completed behavior.</p>
 <h2 id="main-read-paths">Main read paths</h2>
 <ul>
 <li>Transactions directly query normalized ledger rows.</li>
-<li>Monthly selects each account's latest position date, replays later
-  transaction movements, and performs a parallel cash calculation.</li>
-<li>Performance independently forward-fills account snapshots.</li>
-<li>Visualisations and Research combine SQLite holdings/trades with DuckDB data.</li>
+<li><code>holdings.py</code> selects complete scoped checkpoints, replays normalized
+  movements, prices reconstructed quantities, and returns provenance/quality.</li>
+<li>Monthly, Performance, and Visualisations consume that same holdings service;
+  Research combines its holdings/trades context with DuckDB data.</li>
 <li>Verify serves the original PDF and fuzzy-matches stored <code>raw_line</code> values to
   <code>pdfplumber</code> text-line boxes.</li>
 </ul>
-<p>The independent holdings implementations are a known source of disagreement;
-see <a href="#reconciliation">RECONCILIATION.md</a>.</p>
+<p>The GUI does not yet render holdings quality/reconciliation warnings; see
+<a href="#reconciliation">RECONCILIATION.md</a>.</p>
 <h2 id="detailed-context">Detailed context</h2>
 <ul>
 <li>Extraction and activation: <a href="#ingestion">INGESTION.md</a></li>
@@ -963,11 +971,14 @@ validator own it.</p>
 <code>complete</code>, <code>partial</code>, <code>absent</code>, or <code>unknown</code> completeness. Position snapshots
 are unique within <code>(snapshot_set_id, instrument_id)</code> and cash balances within a
 cash snapshot set. <code>can_clear_omitted</code> is true only for a complete set.</p>
-<p>Monthly and Performance now refuse to clear earlier holdings from partial or
-unknown scopes. Parser v2 explicitly declares a recognized holdings section
-and a cash section with a valid closing balance as <code>complete</code>; incomplete or
-unrecognized sections remain <code>unknown</code>. Existing migrated/live rows retain
-their historical <code>unknown</code> scopes until a reviewed re-ingest or shadow rebuild.</p>
+<p>The canonical holdings service uses <code>snapshot_sets</code> as read-only anchors for
+Monthly, Performance, and Visualisations. It clears omitted rows only from a
+complete scope; a newer partial/unknown scope leaves the prior anchor intact
+and returns a quality warning. Parser v2 explicitly declares a recognized
+holdings section and a cash section with a valid closing balance as <code>complete</code>;
+incomplete or unrecognized sections remain <code>unknown</code>. Existing migrated/live
+rows retain their historical <code>unknown</code> scopes until a reviewed re-ingest or
+shadow rebuild.</p>
 <h3 id="reconciliation-storage">Reconciliation storage</h3>
 <p><code>reconciliation_results</code> stores a position, cash, statement-total, or transfer
 equation with checkpoints, deltas, expected/reported close, residual,
@@ -1052,9 +1063,8 @@ creates legacy source runs/evidence, and marks migrated snapshot scopes
 <code>unknown</code>. It is not a replacement for the planned shadow rebuild; do not use
 it as a live-data correctness cutover.</p>
 <h2 id="still-pending">Still pending</h2>
-<p>The remaining phases unify all holdings consumers, surface reconciliation
-quality read-only in the GUI, and rebuild/cut over a shadow ledger. See the
-plan for sequencing.</p>
+<p>The remaining phases surface reconciliation/holdings quality read-only in the
+GUI and rebuild/cut over a shadow ledger. See the plan for sequencing.</p>
 </div>
 
 <div class="doc-section" id="ingestion">
@@ -1421,31 +1431,52 @@ quantity separately. A generic split, name change, spinoff, or merger with no
 explicit normalized effect remains absent rather than receiving the legacy
 zero. The reconciliation engine treats a missing or underdetermined
 position-affecting effect as incomplete.</p>
-<h2 id="current-monthly-holdings">Current Monthly holdings</h2>
-<p>For securities, <code>/monthly/snapshot</code> chooses the latest <strong>complete</strong> position
-scope per account/currency at or before the requested day and adds later
-normalized (or legacy-derived) quantity deltas by canonical instrument key.
-Partial/unknown scopes cannot clear an earlier complete scope. Before a complete
-checkpoint it uses <code>initial_positions</code> plus movements. Cost/price/value come
-from the anchor row when one exists.</p>
-<p>For cash, it independently chooses the latest complete cash scope and adds
-later non-corporate-action <code>cash_delta</code> values using <code>cash_effective_date</code>
-(falling back to legacy fields). It falls back to <code>initial_cash</code> before the
-first complete checkpoint. Native totals are primary; available DuckDB FX rates
-also produce CAD/USD combined totals.</p>
-<p>Known failures remain:</p>
+<h2 id="canonical-holdings-service">Canonical holdings service</h2>
+<p><code>ledger.holdings.holdings_at()</code> is the read-only source of truth for Monthly,
+Performance, and all Visualisation holdings/symbol selection. It returns one
+row per <code>(account_id, instrument_key, currency)</code> with a stable <code>holding_key</code>.
+<code>/monthly/diff</code> and the React table use that key, so a CAD and USD position with
+the same display symbol cannot overwrite one another.</p>
+<p>For securities, the service chooses the latest <strong>complete</strong> position scope per
+<code>(account, currency, scope_key)</code> on or before the requested day and adds later
+normalized position movements by canonical instrument key. A complete empty
+scope clears only that scope. A partial/unknown later scope does not clear the
+prior anchor; it is returned as an <code>incomplete_position_scope_after_checkpoint</code>
+quality warning. Before a complete checkpoint the service uses the latest
+<code>initial_positions</code> row plus later movements.</p>
+<p>Transactions do not have a snapshot-scope field. If several complete scopes
+for one account/currency are candidates, the service does not fan one movement
+out across them; it leaves the quantities unchanged and marks the affected
+rows incomplete with an ambiguity warning.</p>
+<p>Cash is reconstructed independently from a complete cash scope plus later
+non-corporate-action <code>cash_delta</code> values by <code>cash_effective_date</code> (falling back
+to <code>trade_date</code> for legacy rows). It falls back to <code>initial_cash</code> before the
+first complete cash checkpoint. Native totals remain primary; Monthly can add
+dated DuckDB FX totals for presentation.</p>
+<p>Every holding includes <code>checkpoint_date</code>, checkpoint statement/scope IDs,
+<code>is_reported</code>/<code>is_reconstructed</code>, <code>holding_state</code>, reconciliation status/reason,
+<code>price_date</code>, <code>price_status</code>, and <code>quality_warnings</code>. At an exact statement
+checkpoint it preserves broker-reported price/value. Afterward it uses the
+latest available market close (falling back to adjusted close only where that
+is all the market store contains) on or before the requested date. Option
+contracts are not repriced from an underlying equity quote. If no applicable
+market price exists, the service may use a clearly marked stale checkpoint
+price/value; otherwise the holding is unpriced. A post-checkpoint position
+movement leaves cost basis and unrealized P/L unavailable rather than
+recomputing them from an old average cost.</p>
+<p>Performance evaluates the same service on each complete checkpoint date and
+optionally today, so its carried-forward state follows the same scoped rules.
+Visualisation sector, correlation, and RRG symbol selection call the same
+service. The GUI does not yet display the provenance/quality fields; that is
+Phase 8 work.</p>
+<p>Remaining limits:</p>
 <ul>
-<li>a movement-only row has no anchor price/value;</li>
-<li>Performance and visualisation still have separate holdings engines; and</li>
 <li>parser v2 can declare recognized complete scopes, but existing active/live
   rows predate that work and remain <code>unknown</code> until a reviewed re-ingest or
-  shadow rebuild gives the live ledger trusted checkpoints.</li>
+  shadow rebuild gives the live ledger trusted checkpoints; and</li>
+<li>DuckDB price identity is still symbol/date only, so exchange/currency-specific
+  market-price disambiguation remains a data-model limitation.</li>
 </ul>
-<h2 id="other-holdings-consumers">Other holdings consumers</h2>
-<p>Performance has a separate state machine that clears an account's prior
-securities whenever any later account checkpoint date appears, then
-forward-fills values. Visualisation routes have their own holdings queries.
-Therefore Monthly, Performance, and Visualisations are not guaranteed to agree.</p>
 <h2 id="initial-rows">Initial rows</h2>
 <p><code>ingest infer-initials</code> derives pre-history positions/cash only from the
 earliest <strong>complete</strong> snapshot minus prior parsed movements. Tagged inferred
@@ -1484,12 +1515,12 @@ it updates preferences in JSON, not SQLite.</p>
 <tr>
 <td><code>/monthly</code></td>
 <td><code>GET /snapshot</code>, <code>GET /diff</code></td>
-<td>point-in-time holdings and comparison</td>
+<td>canonical point-in-time holdings and comparison</td>
 </tr>
 <tr>
 <td><code>/performance</code></td>
 <td><code>GET /total</code>, <code>GET /cash</code></td>
-<td>forward-filled value and reported cash</td>
+<td>canonical holdings value series and reported cash checkpoints</td>
 </tr>
 <tr>
 <td><code>/research</code></td>
@@ -1544,13 +1575,16 @@ can match multiple boxes. Coordinates are not stored as ingestion provenance.</p
 </code></pre></div>
 <p>An empty <code>account_ids</code> list means all accounts. Legacy <code>display_currency</code> and
 <code>llm_keys</code> keys are removed on read/write.</p>
-<h2 id="known-read-model-problems">Known read-model problems</h2>
-<p>The Monthly, Performance, and Visualisation paths do not share a holdings
-engine. Monthly now uses canonical identity/currency diff keys and
-Monthly/Performance refuse to clear from partial or unknown scopes, but
-Visualisation remains separate and no route yet returns reconciliation/pricing
-quality. The refactor must still replace these with one canonical read service
-without adding ledger writes to the GUI.</p>
+<h2 id="holdings-api-contract">Holdings API contract</h2>
+<p>Monthly, Performance, and Visualisation routes share the read-only
+<code>ledger.holdings.holdings_at()</code> service. It anchors only on complete scoped
+checkpoints, applies normalized position/cash movements afterward, and never
+writes SQLite. Monthly rows include a stable <code>holding_key</code> made from account,
+canonical instrument key, and currency; diff rows use the same identity.</p>
+<p>Each holdings row also returns checkpoint statement/scope identifiers,
+reported-versus-reconstructed state, reconciliation status/reason, price/date
+status, and quality warnings. The current React UI uses stable identity keys but
+does not yet render the quality fields; Phase 8 owns that read-only surface.</p>
 <h2 id="frontend-rules">Frontend rules</h2>
 <ul>
 <li>Use React Query for server data and component state only for UI concerns.</li>

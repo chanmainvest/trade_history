@@ -208,10 +208,11 @@ Click a symbol cell to jump to the Research tab.
 Default view: holdings as of the most recent statement date in the
 database, across all accounts in the active portfolio.
 
-- **As of** date — pick any day; the app starts from the latest account
-  holdings snapshot checkpoint and replays transactions after it. Empty
-  statement rows without holdings are ignored as checkpoints. Before the
-  first snapshot, it uses inferred/manual initial holdings.
+- **As of** date — pick any day; the app starts from the latest explicitly
+  complete account/currency holdings checkpoint and replays transactions after
+  it. A complete empty scope clears only that scope; a partial/unknown scope
+  never clears an earlier complete checkpoint. Before the first snapshot, it
+  uses inferred/manual initial holdings.
 - **Compare to** — picking a second date adds a `Δ` column. Rows where
   the position grew are tinted green, rows that shrank are tinted red,
   in git-diff style. Positions that disappeared between the two dates
@@ -236,12 +237,13 @@ Total portfolio value over time, including cash.
 - The separate cash chart remains available as a cash-only breakdown and
   toggles off automatically when "Hide $ values" is on.
 
-The chart forward-fills accounts whose statement dates do not line up and
-clears an account/currency scope only when its later checkpoint is explicitly
-complete. Parser v2 can emit complete scopes for recognized sections; existing
-active/live v1 rows remain conservatively `unknown`, so they may carry an old
-holding forward until a reviewed re-ingest or shadow rebuild. See
-[RECONCILIATION.md](RECONCILIATION.md).
+The chart evaluates the same complete-scoped holdings rules as Monthly and
+Visualisations, so accounts with different statement dates carry their most
+recent trusted state forward consistently. Parser v2 can emit complete scopes
+for recognized sections; existing active/live v1 rows remain conservatively
+`unknown`, so they may carry an old holding forward until a reviewed re-ingest
+or shadow rebuild. Quality and reconciliation details remain API data until the
+read-only UI surface is added. See [RECONCILIATION.md](RECONCILIATION.md).
 
 ### 4.4 Research
 

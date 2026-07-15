@@ -83,11 +83,14 @@ validator own it.
 are unique within `(snapshot_set_id, instrument_id)` and cash balances within a
 cash snapshot set. `can_clear_omitted` is true only for a complete set.
 
-Monthly and Performance now refuse to clear earlier holdings from partial or
-unknown scopes. Parser v2 explicitly declares a recognized holdings section
-and a cash section with a valid closing balance as `complete`; incomplete or
-unrecognized sections remain `unknown`. Existing migrated/live rows retain
-their historical `unknown` scopes until a reviewed re-ingest or shadow rebuild.
+The canonical holdings service uses `snapshot_sets` as read-only anchors for
+Monthly, Performance, and Visualisations. It clears omitted rows only from a
+complete scope; a newer partial/unknown scope leaves the prior anchor intact
+and returns a quality warning. Parser v2 explicitly declares a recognized
+holdings section and a cash section with a valid closing balance as `complete`;
+incomplete or unrecognized sections remain `unknown`. Existing migrated/live
+rows retain their historical `unknown` scopes until a reviewed re-ingest or
+shadow rebuild.
 
 ### Reconciliation storage
 
@@ -133,6 +136,5 @@ it as a live-data correctness cutover.
 
 ## Still pending
 
-The remaining phases unify all holdings consumers, surface reconciliation
-quality read-only in the GUI, and rebuild/cut over a shadow ledger. See the
-plan for sequencing.
+The remaining phases surface reconciliation/holdings quality read-only in the
+GUI and rebuild/cut over a shadow ledger. See the plan for sequencing.

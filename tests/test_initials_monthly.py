@@ -225,4 +225,6 @@ def test_holdings_reconstruct_before_first_snapshot_and_after_empty_statement(tm
     assert before_first[0]["quantity"] == 60.0
     assert before_first[0]["as_of_date"] == "2024-01-15"
     assert after_empty_statement[0]["quantity"] == 80.0
-    assert after_empty_statement[0]["as_of_date"] == "2024-01-31"
+    assert after_empty_statement[0]["as_of_date"] == "2024-03-01"
+    assert after_empty_statement[0]["checkpoint_date"] == "2024-01-31"
+    assert after_empty_statement[0]["is_reconstructed"] is True

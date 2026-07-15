@@ -10,6 +10,8 @@ from pathlib import Path
 from ..db import sqlite as sqlite_db
 from ..quantity import (
     LEGACY_UNDERIVABLE_POSITION_TYPES,
+    NON_CASH_TXN_TYPES,
+    POSITION_AFFECTING_TYPES,
     normalized_position_delta,
     quantity_delta,
 )
@@ -20,37 +22,7 @@ RECONCILIATION_KEY_PREFIX = "recon:v1:"
 EXACT_TOLERANCE = 1e-9
 POSITION_TOLERANCE = 1e-8
 CASH_TOLERANCE = 0.01
-NON_CASH_TXN_TYPES = {
-    "stock_split",
-    "stock_split_credit",
-    "stock_split_debit",
-    "name_change",
-    "spinoff",
-    "merger",
-}
-POSITION_EFFECT_TYPES = {
-    "buy",
-    "sell",
-    "short_sell",
-    "buy_to_cover",
-    "transfer_in",
-    "transfer_out",
-    "journal",
-    "reinvest_dividend",
-    "stock_split",
-    "stock_split_credit",
-    "stock_split_debit",
-    "name_change",
-    "spinoff",
-    "merger",
-    "option_buy_to_open",
-    "option_sell_to_open",
-    "option_buy_to_close",
-    "option_sell_to_close",
-    "option_assignment",
-    "option_exercise",
-    "option_expiration",
-}
+POSITION_EFFECT_TYPES = POSITION_AFFECTING_TYPES
 
 
 def _parse_date(value: str | None) -> date | None:

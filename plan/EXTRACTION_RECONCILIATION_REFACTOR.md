@@ -1,6 +1,6 @@
 # Extraction, Reconciliation, and Month-End Refactor Plan
 
-Status: in progress — Phases 0–5 completed and validated 2026-07-14
+Status: in progress — Phases 0–6 completed and validated 2026-07-15
 Baseline audit date: 2026-07-12
 Scope: documentation truth reset, statement extraction, ingestion, security/cash reconciliation, and the Monthly/Performance read models
 
@@ -660,6 +660,28 @@ Remove the independent account-level “clear and forward-fill” interpretation
 - Same-symbol CAD/USD holdings remain distinct in snapshot and diff responses.
 - Monthly, Performance, and visualization symbol sets agree for the same date/accounts.
 - Every row explains whether it is broker-reported, reconstructed, or incomplete.
+
+### Phase 6 completion record (2026-07-15)
+
+- Added read-only `ledger.holdings.holdings_at()` plus date helpers as the
+  shared source of truth for Monthly, Performance, and Visualisation holdings
+  selection. It anchors each complete `(account, currency, scope)` checkpoint,
+  rolls forward only normalized movements, and reconstructs cash separately.
+- Each returned row now has a stable account/instrument/currency key,
+  checkpoint/provenance identifiers, reported/reconstructed/incomplete state,
+  reconciliation result, price/date status, and explicit quality warnings.
+  Exact checkpoints retain broker values; later ordinary securities use the
+  latest available market close, while stale/unpriced values and unavailable
+  cost basis are stated rather than inferred.
+- Unscoped movements are never fanned out across several complete scopes. They
+  leave the affected state unchanged and emit an ambiguity warning; option
+  contracts are not repriced from underlying equity quotes.
+- `/monthly/diff`, React keys, Performance, and Visualisation now use the same
+  canonical identities and state transitions. Regression coverage includes
+  post-checkpoint pricing, CAD/USD identity, partial scopes, cross-consumer
+  agreement, scope ambiguity, and option valuation safety.
+- The structural gate passed: 66 tests, Ruff, frontend production build, and
+  docs build/check. The live ledger was not changed.
 
 ## Phase 7 — Rebuild safely in a shadow database
 

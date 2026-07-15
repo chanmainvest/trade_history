@@ -29,6 +29,41 @@ _CLOSE_SIGNED_POSITION = {
     "option_exercise",
     "option_expiration",
 }
+POSITION_AFFECTING_TYPES = frozenset(
+    {
+        "buy",
+        "sell",
+        "short_sell",
+        "buy_to_cover",
+        "option_buy_to_open",
+        "option_sell_to_open",
+        "option_buy_to_close",
+        "option_sell_to_close",
+        "option_assignment",
+        "option_exercise",
+        "option_expiration",
+        "transfer_in",
+        "transfer_out",
+        "journal",
+        "reinvest_dividend",
+        "stock_split",
+        "stock_split_credit",
+        "stock_split_debit",
+        "name_change",
+        "spinoff",
+        "merger",
+    }
+)
+NON_CASH_TXN_TYPES = frozenset(
+    {
+        "stock_split",
+        "stock_split_credit",
+        "stock_split_debit",
+        "name_change",
+        "spinoff",
+        "merger",
+    }
+)
 LEGACY_UNDERIVABLE_POSITION_TYPES = frozenset(
     {"stock_split", "name_change", "spinoff", "merger"}
 )

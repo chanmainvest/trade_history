@@ -1,6 +1,6 @@
 # Current state
 
-Implementation review: **2026-07-14**. The live-ledger counts below remain a
+Implementation review: **2026-07-15**. The live-ledger counts below remain a
 dated diagnostic snapshot from **2026-07-12**, not a release promise. Parser
 v2 and the reconciliation engine were validated in fixtures and read-only
 corpus audits on 2026-07-14; the live SQLite ledger has not been re-ingested,
@@ -19,6 +19,10 @@ reconciled, or shadow-rebuilt with that output.
 - CIBC, HSBC, RBC, and TD parsers report version `2.0.0`. They retain source
   page/line evidence, available word/box geometry, explicit snapshot scopes,
   and quarantine rather than fabricate unsupported values.
+- Monthly, Performance, and Visualisations now consume one read-only scoped
+  holdings service. Its API rows include checkpoint/provenance, reconciliation,
+  pricing, and incomplete/unpriced quality fields; the GUI does not yet display
+  those fields.
 
 ## Validation and corpus audits
 
@@ -102,9 +106,11 @@ reconciled, or shadow-rebuilt with that output.
    shadow rebuild will classify the active rows as reconciled, rounding,
    incomplete, or unexplained; the largest residuals still need source
    spot-checks.
-4. **Holdings consumers are only partly aligned.** Monthly uses canonical
-   identity and complete scopes, but Performance and Visualisations still have
-   separate state engines; post-checkpoint rows can remain unpriced.
+4. **The holdings engine is shared, but live data quality is still historical.**
+   Monthly, Performance, and Visualisations now use canonical identity,
+   complete scopes, normalized movements, and explicit stale/unpriced status.
+   The dated live ledger has not been re-ingested or reconciled with parser v2,
+   and the GUI does not yet surface the returned quality fields.
 5. **Live scopes/provenance are historical.** Parser v2 can produce complete
    scope and coordinate-aware evidence, but currently active v1-derived rows
    remain conservative/legacy until an approved re-ingest and shadow rebuild.
@@ -117,6 +123,5 @@ reconciled, or shadow-rebuilt with that output.
 - Cache validity includes source hash, parser version, parser contract, schema,
   and reviewed-identity resolver state. The v2 parser bump makes v1 active
   output stale for a reviewed re-ingest.
-- The shared holdings service, shadow rebuild, GUI quality surface, and cutover
-  remain defined in `plan/EXTRACTION_RECONCILIATION_REFACTOR.md`; they are not
-  implemented yet.
+- The GUI quality surface, shadow rebuild, and cutover remain defined in
+  `plan/EXTRACTION_RECONCILIATION_REFACTOR.md`; they are not implemented yet.

@@ -118,8 +118,7 @@ export default function Monthly() {
   const diffMap = useMemo(() => {
     const m = new Map<string, number>();
     for (const d of diffQ.data?.rows ?? []) {
-      const k = `${d.account_number}::${d.symbol}::${d.option_expiry || ""}::${d.option_strike ?? ""}::${d.option_type || ""}`;
-      m.set(k, d.qty_delta);
+      m.set(d.holding_key, d.qty_delta);
     }
     return m;
   }, [diffQ.data]);
@@ -181,15 +180,15 @@ export default function Monthly() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r: HoldingRow, i: number) => {
-              const k = `${r.account_number}::${r.symbol}::${r.option_expiry || ""}::${r.option_strike ?? ""}::${r.option_type || ""}`;
+            {filtered.map((r: HoldingRow) => {
+              const k = r.holding_key;
               const delta = diffMap.get(k);
               const showDelta = effectiveA !== effectiveB;
               const rowClass = showDelta && delta != null
                 ? (delta > 0 ? "diff-add" : delta < 0 ? "diff-del" : "")
                 : "";
               return (
-                <tr key={i} className={rowClass}>
+                <tr key={r.holding_key} className={rowClass}>
                   <td>{r.institution_code}</td>
                   <td>{r.account_number}</td>
                   <td>{activePortfolio?.name || "All accounts"}</td>
@@ -208,8 +207,8 @@ export default function Monthly() {
             })}
             {/* Rows present at A but missing at B (sold) */}
             {effectiveA !== effectiveB && (diffQ.data?.rows ?? []).filter((d) =>
-              d.qty_b === 0 && d.qty_a !== 0).map((d, i) => (
-              <tr key={`gone-${i}`} className="diff-del">
+              d.qty_b === 0 && d.qty_a !== 0).map((d) => (
+              <tr key={`gone-${d.holding_key}`} className="diff-del">
                 <td>{d.institution_code}</td>
                 <td>{d.account_number}</td>
                 <td>{activePortfolio?.name || "All accounts"}</td>

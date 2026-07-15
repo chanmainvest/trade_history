@@ -138,35 +138,58 @@ explicit normalized effect remains absent rather than receiving the legacy
 zero. The reconciliation engine treats a missing or underdetermined
 position-affecting effect as incomplete.
 
-## Current Monthly holdings
+## Canonical holdings service
 
-For securities, `/monthly/snapshot` chooses the latest **complete** position
-scope per account/currency at or before the requested day and adds later
-normalized (or legacy-derived) quantity deltas by canonical instrument key.
-Partial/unknown scopes cannot clear an earlier complete scope. Before a complete
-checkpoint it uses `initial_positions` plus movements. Cost/price/value come
-from the anchor row when one exists.
+`ledger.holdings.holdings_at()` is the read-only source of truth for Monthly,
+Performance, and all Visualisation holdings/symbol selection. It returns one
+row per `(account_id, instrument_key, currency)` with a stable `holding_key`.
+`/monthly/diff` and the React table use that key, so a CAD and USD position with
+the same display symbol cannot overwrite one another.
 
-For cash, it independently chooses the latest complete cash scope and adds
-later non-corporate-action `cash_delta` values using `cash_effective_date`
-(falling back to legacy fields). It falls back to `initial_cash` before the
-first complete checkpoint. Native totals are primary; available DuckDB FX rates
-also produce CAD/USD combined totals.
+For securities, the service chooses the latest **complete** position scope per
+`(account, currency, scope_key)` on or before the requested day and adds later
+normalized position movements by canonical instrument key. A complete empty
+scope clears only that scope. A partial/unknown later scope does not clear the
+prior anchor; it is returned as an `incomplete_position_scope_after_checkpoint`
+quality warning. Before a complete checkpoint the service uses the latest
+`initial_positions` row plus later movements.
 
-Known failures remain:
+Transactions do not have a snapshot-scope field. If several complete scopes
+for one account/currency are candidates, the service does not fan one movement
+out across them; it leaves the quantities unchanged and marks the affected
+rows incomplete with an ambiguity warning.
 
-- a movement-only row has no anchor price/value;
-- Performance and visualisation still have separate holdings engines; and
+Cash is reconstructed independently from a complete cash scope plus later
+non-corporate-action `cash_delta` values by `cash_effective_date` (falling back
+to `trade_date` for legacy rows). It falls back to `initial_cash` before the
+first complete cash checkpoint. Native totals remain primary; Monthly can add
+dated DuckDB FX totals for presentation.
+
+Every holding includes `checkpoint_date`, checkpoint statement/scope IDs,
+`is_reported`/`is_reconstructed`, `holding_state`, reconciliation status/reason,
+`price_date`, `price_status`, and `quality_warnings`. At an exact statement
+checkpoint it preserves broker-reported price/value. Afterward it uses the
+latest available market close (falling back to adjusted close only where that
+is all the market store contains) on or before the requested date. Option
+contracts are not repriced from an underlying equity quote. If no applicable
+market price exists, the service may use a clearly marked stale checkpoint
+price/value; otherwise the holding is unpriced. A post-checkpoint position
+movement leaves cost basis and unrealized P/L unavailable rather than
+recomputing them from an old average cost.
+
+Performance evaluates the same service on each complete checkpoint date and
+optionally today, so its carried-forward state follows the same scoped rules.
+Visualisation sector, correlation, and RRG symbol selection call the same
+service. The GUI does not yet display the provenance/quality fields; that is
+Phase 8 work.
+
+Remaining limits:
+
 - parser v2 can declare recognized complete scopes, but existing active/live
   rows predate that work and remain `unknown` until a reviewed re-ingest or
-  shadow rebuild gives the live ledger trusted checkpoints.
-
-## Other holdings consumers
-
-Performance has a separate state machine that clears an account's prior
-securities whenever any later account checkpoint date appears, then
-forward-fills values. Visualisation routes have their own holdings queries.
-Therefore Monthly, Performance, and Visualisations are not guaranteed to agree.
+  shadow rebuild gives the live ledger trusted checkpoints; and
+- DuckDB price identity is still symbol/date only, so exchange/currency-specific
+  market-price disambiguation remains a data-model limitation.
 
 ## Initial rows
 

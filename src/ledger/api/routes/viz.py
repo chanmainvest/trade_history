@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
 
 import duckdb
 from fastapi import APIRouter, Query
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from ...config import DUCKDB_PATH
-from ...db import sqlite as sqlite_db
-from .monthly import _holdings_at
+from ...holdings import holdings_at, latest_holdings_date
 
 router = APIRouter(prefix="/viz", tags=["viz"])
 
@@ -47,23 +47,16 @@ def _csv_ints(v: str | None) -> list[int]:
 
 
 def _resolve_as_of(month_end: str | None) -> str | None:
-    """If ``month_end`` is None, falls back to the latest snapshot date in
-    the DB. If a specific date is given but nothing exists on/before it,
-    returns None so the caller can render an empty state.
-    """
-    with sqlite_db.session() as conn:
-        if month_end:
-            row = conn.execute(
-                "SELECT MAX(as_of_date) FROM position_snapshots WHERE as_of_date <= ?",
-                (month_end,),
-            ).fetchone()
-        else:
-            row = conn.execute("SELECT MAX(as_of_date) FROM position_snapshots").fetchone()
-    return row[0] if row and row[0] else None
+    """Resolve against complete holdings checkpoints only."""
+    return latest_holdings_date(month_end)
 
 
-def _held_symbols_at(as_of: str, account_ids: list[int]) -> list[str]:
-    rows = _holdings_at(as_of, account_ids)
+def _held_symbols_at(
+    as_of: str,
+    account_ids: list[int],
+    path: Path | str | None = None,
+) -> list[str]:
+    rows = holdings_at(as_of, account_ids, path=path)
     symbols = {
         r["symbol"]
         for r in rows
@@ -142,7 +135,7 @@ def holdings_by_sector(
     if not as_of:
         return {"as_of_date": None, "rows": []}
     rows = []
-    for row in _holdings_at(as_of, accts):
+    for row in holdings_at(as_of, accts):
         if row["asset_type"] not in {"equity", "etf", "mutual_fund", "bond"}:
             continue
         market_value = row["market_value"] or 0.0

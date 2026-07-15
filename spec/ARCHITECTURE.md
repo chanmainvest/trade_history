@@ -31,6 +31,7 @@ src/ledger/
   cli.py                    Click command tree
   pdf_text.py               raw PDF text, optional word/line geometry, fingerprinting
   quantity.py               transaction-type quantity movement rules
+  holdings.py               canonical read-only scoped holdings reconstruction
   db/
     schema.sql              canonical SQLite DDL
     sqlite.py               connections, initialization, upserts
@@ -85,15 +86,15 @@ as completed behavior.
 ## Main read paths
 
 - Transactions directly query normalized ledger rows.
-- Monthly selects each account's latest position date, replays later
-  transaction movements, and performs a parallel cash calculation.
-- Performance independently forward-fills account snapshots.
-- Visualisations and Research combine SQLite holdings/trades with DuckDB data.
+- `holdings.py` selects complete scoped checkpoints, replays normalized
+  movements, prices reconstructed quantities, and returns provenance/quality.
+- Monthly, Performance, and Visualisations consume that same holdings service;
+  Research combines its holdings/trades context with DuckDB data.
 - Verify serves the original PDF and fuzzy-matches stored `raw_line` values to
   `pdfplumber` text-line boxes.
 
-The independent holdings implementations are a known source of disagreement;
-see [RECONCILIATION.md](RECONCILIATION.md).
+The GUI does not yet render holdings quality/reconciliation warnings; see
+[RECONCILIATION.md](RECONCILIATION.md).
 
 ## Detailed context
 

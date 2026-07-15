@@ -117,6 +117,8 @@ export type HoldingRow = {
   nickname: string | null;
   institution_code: string;
   institution_name: string;
+  instrument_key: string;
+  holding_key: string;
   symbol: string;
   asset_type: string;
   currency: string;
@@ -129,6 +131,17 @@ export type HoldingRow = {
   market_price: number | null;
   market_value: number | null;
   unrealized_pnl: number | null;
+  checkpoint_date: string | null;
+  checkpoint_statement_id: number | null;
+  checkpoint_snapshot_set_id: number | null;
+  is_reported: boolean;
+  is_reconstructed: boolean;
+  holding_state: "reported" | "reconstructed" | "incomplete";
+  reconciliation_status: string | null;
+  reconciliation_reason: string | null;
+  price_date: string | null;
+  price_status: string;
+  quality_warnings: string[];
 };
 
 export type SnapshotTotals = {
@@ -144,9 +157,11 @@ export type SnapshotTotals = {
 };
 
 export type DiffRow = {
+  holding_key: string;
   account_id: number;
   account_number: string;
   institution_code: string;
+  instrument_key: string;
   symbol: string;
   asset_type: string;
   currency: string;

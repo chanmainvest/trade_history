@@ -13,6 +13,7 @@ from datetime import date
 from typing import Literal, get_args
 
 from ..identity import canonical_instrument_key
+from ..quantity import POSITION_AFFECTING_TYPES
 from .types import (
     ParsedInstrument,
     ParsedQuarantine,
@@ -27,17 +28,6 @@ Severity = Literal["error", "warning"]
 VALID_TXN_TYPES = frozenset(get_args(TxnType))
 VALID_ASSET_TYPES = frozenset(
     {"equity", "etf", "option", "bond", "mutual_fund", "cash", "other"}
-)
-POSITION_AFFECTING_TYPES = frozenset(
-    {
-        "buy", "sell", "short_sell", "buy_to_cover",
-        "option_buy_to_open", "option_sell_to_open",
-        "option_buy_to_close", "option_sell_to_close",
-        "option_assignment", "option_exercise", "option_expiration",
-        "transfer_in", "transfer_out", "journal", "reinvest_dividend",
-        "stock_split", "stock_split_credit", "stock_split_debit",
-        "name_change", "spinoff", "merger",
-    }
 )
 VALID_STATEMENT_TYPES = frozenset({"monthly", "quarterly", "annual", "interim"})
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")

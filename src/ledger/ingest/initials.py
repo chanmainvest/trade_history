@@ -19,18 +19,10 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from ..db import sqlite as sqlite_db
-from ..quantity import quantity_delta
+from ..quantity import NON_CASH_TXN_TYPES, quantity_delta
 
 log = logging.getLogger(__name__)
 
-NON_CASH_TXN_TYPES = {
-    "stock_split",
-    "stock_split_credit",
-    "stock_split_debit",
-    "name_change",
-    "spinoff",
-    "merger",
-}
 
 
 def _day_before(iso: str) -> str:

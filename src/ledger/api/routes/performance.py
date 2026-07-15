@@ -1,34 +1,83 @@
-"""GET /performance — portfolio value over time.
-
-The raw ``position_snapshots`` are per-account, per-period checkpoints.
-Different accounts have different statement dates, so naive summing
-produces a saw-tooth (zig-zag) line because not every account contributes
-on every date.
-
-This endpoint forward-fills each account's securities and cash checkpoints
-up to the next statement and across to today, then sums per-currency at each
-observed date. Later account checkpoints clear securities that disappeared
-from the broker snapshot, so sold-out positions do not remain forever.
-"""
+"""GET /performance — aggregate the canonical holdings state over time."""
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 from fastapi import APIRouter, Query
 
 from ...db import sqlite as sqlite_db
+from ...holdings import holding_dates, holdings_at
 
 router = APIRouter(prefix="/performance", tags=["performance"])
 
 
-def _csv_list(v: str | None) -> list[str]:
-    if not v:
+def _csv_list(value: str | None) -> list[str]:
+    if not value:
         return []
-    return [x.strip() for x in v.split(",") if x.strip()]
+    return [part.strip() for part in value.split(",") if part.strip()]
 
 
-def _csv_ints(v: str | None) -> list[int]:
-    return [int(x) for x in _csv_list(v) if x.lstrip("-").isdigit()]
+def _csv_ints(value: str | None) -> list[int]:
+    return [int(part) for part in _csv_list(value) if part.lstrip("-").isdigit()]
+
+
+def _matching_account_ids(
+    institution: str | None,
+    account_id: str | None,
+    *,
+    path: Path | str | None = None,
+) -> tuple[list[int], bool]:
+    """Return matching IDs and whether a caller explicitly constrained scope."""
+    institutions = _csv_list(institution)
+    accounts = _csv_ints(account_id)
+    constrained = bool(institutions or accounts)
+    if not constrained:
+        return [], False
+    clauses: list[str] = []
+    params: list = []
+    if institutions:
+        clauses.append(f"i.code IN ({','.join('?' * len(institutions))})")
+        params.extend(institutions)
+    if accounts:
+        clauses.append(f"a.account_id IN ({','.join('?' * len(accounts))})")
+        params.extend(accounts)
+    db_path = path if path is not None else sqlite_db.SQLITE_PATH
+    with sqlite_db.session(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT a.account_id
+              FROM accounts a
+              JOIN institutions i ON i.institution_id = a.institution_id
+             WHERE """
+            + " AND ".join(clauses),
+            params,
+        ).fetchall()
+    return [int(row["account_id"]) for row in rows], True
+
+
+def _filter_rows(
+    rows: list[dict],
+    *,
+    symbols: set[str],
+    asset_type: str | None,
+    include_cash: bool,
+    exact_checkpoint_only: bool,
+) -> list[dict]:
+    cash_allowed = include_cash and not symbols and not asset_type
+    out: list[dict] = []
+    for row in rows:
+        if row["asset_type"] == "cash":
+            if not cash_allowed:
+                continue
+        elif symbols and str(row["symbol"]).upper() not in symbols:
+            continue
+        elif asset_type and row["asset_type"] != asset_type:
+            continue
+        if exact_checkpoint_only and not row["is_reported"]:
+            continue
+        out.append(row)
+    return out
 
 
 @router.get("/total")
@@ -37,31 +86,22 @@ def total(
     account_id: str | None = Query(None),
     symbol: str | None = Query(None),
     asset_type: str | None = Query(None),
-    forward_fill: bool = Query(True, description="Carry last snapshot forward"),
-    include_cash: bool = Query(True, description="Include cash balances when no security filter is active"),
+    forward_fill: bool = Query(True, description="Carry canonical holdings state forward"),
+    include_cash: bool = Query(
+        True,
+        description="Include cash balances when no security filter is active",
+    ),
 ) -> dict:
-    return {"rows": _total_rows(
-        institution=institution,
-        account_id=account_id,
-        symbol=symbol,
-        asset_type=asset_type,
-        forward_fill=forward_fill,
-        include_cash=include_cash,
-    )}
-
-
-def _account_filters(institution: str | None, account_id: str | None) -> tuple[list[str], list]:
-    sql: list[str] = []
-    params: list = []
-    insts = _csv_list(institution)
-    if insts:
-        sql.append(f" AND i.code IN ({','.join('?' * len(insts))})")
-        params.extend(insts)
-    accts = _csv_ints(account_id)
-    if accts:
-        sql.append(f" AND a.account_id IN ({','.join('?' * len(accts))})")
-        params.extend(accts)
-    return sql, params
+    return {
+        "rows": _total_rows(
+            institution=institution,
+            account_id=account_id,
+            symbol=symbol,
+            asset_type=asset_type,
+            forward_fill=forward_fill,
+            include_cash=include_cash,
+        )
+    }
 
 
 def _total_rows(
@@ -72,132 +112,80 @@ def _total_rows(
     asset_type: str | None = None,
     forward_fill: bool = True,
     include_cash: bool = True,
-    path=None,
+    path: Path | str | None = None,
 ) -> list[dict]:
-    account_filter_sql, account_params = _account_filters(institution, account_id)
-    syms = [s.upper() for s in _csv_list(symbol)]
-
-    checkpoint_sql = [
-        "SELECT DISTINCT ps.as_of_date, ps.account_id, ps.currency",
-        "  FROM position_snapshots ps",
-        "  JOIN snapshot_sets ss ON ss.snapshot_set_id = ps.snapshot_set_id",
-        "  JOIN accounts a ON a.account_id = ps.account_id",
-        "  JOIN institutions i ON i.institution_id = a.institution_id",
-        " WHERE 1=1",
-        "   AND ss.section_type = 'positions' AND ss.can_clear_omitted = 1",
-        *account_filter_sql,
-        " ORDER BY ps.as_of_date",
-    ]
-
-    sql = [
-        "SELECT ps.as_of_date, ps.account_id, ps.instrument_id,",
-        "       ps.quantity, ps.market_value, ps.currency",
-        "  FROM position_snapshots ps",
-        "  JOIN snapshot_sets ss ON ss.snapshot_set_id = ps.snapshot_set_id",
-        "  JOIN accounts a ON a.account_id = ps.account_id",
-        "  JOIN institutions i ON i.institution_id = a.institution_id",
-        "  JOIN instruments inst ON inst.instrument_id = ps.instrument_id",
-        " WHERE 1=1",
-        "   AND ss.section_type = 'positions' AND ss.can_clear_omitted = 1",
-        *account_filter_sql,
-    ]
-    params: list = list(account_params)
-    if syms:
-        sql.append(f" AND inst.symbol IN ({','.join('?' * len(syms))})")
-        params.extend(syms)
-    if asset_type:
-        sql.append(" AND inst.asset_type = ?")
-        params.append(asset_type)
-    sql.append(" ORDER BY ps.as_of_date")
-    cash_allowed = include_cash and not syms and not asset_type
-    cash_sql = [
-        "SELECT cb.as_of_date, cb.account_id, cb.currency, cb.closing_balance",
-        "  FROM cash_balances cb",
-        "  JOIN snapshot_sets ss ON ss.snapshot_set_id = cb.snapshot_set_id",
-        "  JOIN accounts a ON a.account_id = cb.account_id",
-        "  JOIN institutions i ON i.institution_id = a.institution_id",
-        " WHERE 1=1",
-        "   AND ss.section_type = 'cash' AND ss.can_clear_omitted = 1",
-        *account_filter_sql,
-        " ORDER BY cb.as_of_date",
-    ]
-
-    db_path = path if path is not None else sqlite_db.SQLITE_PATH
-    with sqlite_db.session(db_path) as conn:
-        checkpoint_rows = [dict(r) for r in conn.execute("\n".join(checkpoint_sql), account_params).fetchall()]
-        raw = [dict(r) for r in conn.execute("\n".join(sql), params).fetchall()]
-        raw_cash = [dict(r) for r in conn.execute("\n".join(cash_sql), account_params).fetchall()] if cash_allowed else []
-    if not raw and not raw_cash:
-        return []
-
-    if not forward_fill:
-        # Simple per-date sum (will zig-zag).
-        out: dict[tuple[str, str], float] = {}
-        for r in raw:
-            if abs(r["quantity"] or 0.0) <= 1e-9:
-                continue
-            key = (r["as_of_date"], r["currency"])
-            out[key] = out.get(key, 0.0) + (r["market_value"] or 0.0)
-        for r in raw_cash:
-            key = (r["as_of_date"], r["currency"])
-            out[key] = out.get(key, 0.0) + (r["closing_balance"] or 0.0)
-        rows = [{"as_of_date": d, "currency": c, "market_value": v}
-                for (d, c), v in sorted(out.items())]
-        return rows
-
-    # Broker holdings snapshots are complete account checkpoints. When an
-    # instrument disappears from a later statement, clear that account's prior
-    # securities state before applying the new snapshot rows.
-    dates = sorted(
-        {r["as_of_date"] for r in checkpoint_rows}
-        | {r["as_of_date"] for r in raw}
-        | {r["as_of_date"] for r in raw_cash}
+    account_ids, constrained = _matching_account_ids(
+        institution,
+        account_id,
+        path=path,
     )
-    # Add today so the latest holdings extend to "now"
-    today = date.today().isoformat()
-    if dates[-1] < today:
-        dates.append(today)
-    # Position state: (acct, instr) -> (currency, market_value)
-    position_state: dict[tuple[int, int], tuple[str, float]] = {}
-    cash_state: dict[tuple[int, str], float] = {}
-    known_currencies = {r["currency"] for r in raw} | {r["currency"] for r in raw_cash}
-    # By-date events
-    by_date: dict[str, list[dict]] = {}
-    for r in raw:
-        by_date.setdefault(r["as_of_date"], []).append(r)
-    cash_by_date: dict[str, list[dict]] = {}
-    for r in raw_cash:
-        cash_by_date.setdefault(r["as_of_date"], []).append(r)
-    checkpoint_scopes_by_date: dict[str, set[tuple[int, str]]] = {}
-    for r in checkpoint_rows:
-        checkpoint_scopes_by_date.setdefault(r["as_of_date"], set()).add(
-            (r["account_id"], r["currency"])
+    if constrained and not account_ids:
+        return []
+    dates = holding_dates(account_ids, path=path)
+    if not dates:
+        return []
+    if forward_fill:
+        today = date.today().isoformat()
+        if dates[-1] < today:
+            dates.append(today)
+    symbols = {value.upper() for value in _csv_list(symbol)}
+    values: dict[tuple[str, str], float] = {}
+    currencies: set[str] = set()
+    for as_of in dates:
+        rows = _filter_rows(
+            holdings_at(as_of, account_ids, path=path),
+            symbols=symbols,
+            asset_type=asset_type,
+            include_cash=include_cash,
+            exact_checkpoint_only=not forward_fill,
         )
+        for row in rows:
+            currency = str(row["currency"])
+            currencies.add(currency)
+            key = (as_of, currency)
+            values[key] = values.get(key, 0.0) + float(row["market_value"] or 0.0)
+    if not currencies:
+        return []
+    return [
+        {
+            "as_of_date": as_of,
+            "currency": currency,
+            "market_value": values.get((as_of, currency), 0.0),
+        }
+        for as_of in dates
+        for currency in sorted(currencies)
+    ]
+
+
+def _cash_rows(
+    *,
+    institution: str | None = None,
+    account_id: str | None = None,
+    path: Path | str | None = None,
+) -> list[dict]:
+    account_ids, constrained = _matching_account_ids(
+        institution,
+        account_id,
+        path=path,
+    )
+    if constrained and not account_ids:
+        return []
     rows: list[dict] = []
-    for d in dates:
-        for acct, currency in checkpoint_scopes_by_date.get(d, set()):
-            for key in [
-                key
-                for key, value in position_state.items()
-                if key[0] == acct and value[0] == currency
-            ]:
-                del position_state[key]
-        for r in by_date.get(d, []):
-            if abs(r["quantity"] or 0.0) > 1e-9:
-                position_state[(r["account_id"], r["instrument_id"])] = (
-                    r["currency"], r["market_value"] or 0.0,
-                )
-        for r in cash_by_date.get(d, []):
-            cash_state[(r["account_id"], r["currency"])] = r["closing_balance"] or 0.0
-        # Aggregate
-        per_ccy: dict[str, float] = {}
-        for ccy, mv in position_state.values():
-            per_ccy[ccy] = per_ccy.get(ccy, 0.0) + mv
-        for (_, ccy), balance in cash_state.items():
-            per_ccy[ccy] = per_ccy.get(ccy, 0.0) + balance
-        for ccy in sorted(known_currencies | set(per_ccy)):
-            mv = per_ccy.get(ccy, 0.0)
-            rows.append({"as_of_date": d, "currency": ccy, "market_value": mv})
+    for as_of in holding_dates(account_ids, path=path):
+        for holding in holdings_at(as_of, account_ids, path=path):
+            if holding["asset_type"] != "cash" or not holding["is_reported"]:
+                continue
+            rows.append(
+                {
+                    "as_of_date": as_of,
+                    "account_id": holding["account_id"],
+                    "currency": holding["currency"],
+                    "closing_balance": holding["quantity"],
+                    "holding_state": holding["holding_state"],
+                    "reconciliation_status": holding["reconciliation_status"],
+                    "quality_warnings": holding["quality_warnings"],
+                }
+            )
     return rows
 
 
@@ -206,23 +194,4 @@ def cash(
     account_id: str | None = Query(None),
     institution: str | None = Query(None),
 ) -> dict:
-    sql = [
-        "SELECT cb.as_of_date, cb.account_id, cb.currency, cb.closing_balance ",
-        "  FROM cash_balances cb",
-        "  JOIN accounts a ON a.account_id = cb.account_id",
-        "  JOIN institutions i ON i.institution_id = a.institution_id",
-        " WHERE 1=1",
-    ]
-    params: list = []
-    accts = _csv_ints(account_id)
-    if accts:
-        sql.append(f" AND a.account_id IN ({','.join('?' * len(accts))})")
-        params.extend(accts)
-    insts = _csv_list(institution)
-    if insts:
-        sql.append(f" AND i.code IN ({','.join('?' * len(insts))})")
-        params.extend(insts)
-    sql.append(" ORDER BY cb.as_of_date")
-    with sqlite_db.session() as conn:
-        rows = [dict(r) for r in conn.execute("\n".join(sql), params).fetchall()]
-    return {"rows": rows}
+    return {"rows": _cash_rows(account_id=account_id, institution=institution)}
