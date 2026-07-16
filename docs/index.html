@@ -106,12 +106,12 @@ family's accounts.</p>
 <a href="#spec-index">INDEX.md</a>, while coding-agent rules live in
 <a href="../AGENTS.md">AGENTS.md</a>.</p>
 <blockquote>
-<p><strong>Current data-quality notice (2026-07-14):</strong> the GUI is operational and
+<p><strong>Current data-quality notice (2026-07-15):</strong> the GUI is operational and
 source ingestion preserves the prior active extraction if parsing or staging
 fails. Parser v2 fixes the audited RBC dual-currency and TD bundled layouts,
-and the CLI now persists month-end reconciliation results, but the dated live
-ledger has not been re-ingested or shadow-rebuilt and the GUI does not yet
-display reconciliation status. Review
+and the CLI now persists month-end reconciliation results. A non-live shadow
+rebuild and comparison report exist, but the live ledger has not been cut
+over and the GUI does not yet display reconciliation status. Review
 <a href="#current-state">CURRENT-STATE.md</a> before relying on totals as reconciled.</p>
 </blockquote>
 <hr />
@@ -183,8 +183,10 @@ just close the terminal.</p>
    Parser or reviewed-alias changes reparse automatically; <code>--force</code> is only
    needed when you deliberately want to bypass that cache. Each PDF activates
    as one unit, so a parser/validation/write failure keeps its previous active
-   output. The remaining parser/reconciliation work still warrants a
-   backup/shadow database and Verify review before relying on totals.</p>
+   output. For an existing ledger, build a non-live shadow and review it before
+   relying on totals or considering a cutover:</p>
+<div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">shadow</span> <span class="n">build</span>
+</code></pre></div>
 <p>Before ingesting, you can run the same parsers and contract checks without
    opening SQLite:</p>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">audit</span> <span class="n">extraction</span> <span class="p">-</span><span class="n">-statements-dir</span> <span class="n">Statements</span>
@@ -382,10 +384,16 @@ MCP server's allowlisted CLI commands):</p>
 
 <span class="c"># repair symbols (resolve aliases, fund-code lookups, etc.)</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="nb">repair-symbols</span>
+
+<span class="c"># rebuild a non-live ledger twice, preserve reviewed state, and write a comparison report</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">shadow</span> <span class="n">build</span>
 </code></pre></div>
 <p><code>ingest run</code> performs conservative staged identity resolution and reconciliation
 after source activation. <code>repair-symbols</code> is for legacy/manual data; the
 reconcile command is mainly needed after manual DB edits.</p>
+<p><code>shadow build</code> does not replace the active database. Review its local report
+and source PDFs first; only a human may record <code>shadow sign-off</code> and later run
+the separately guarded <code>shadow cutover</code> command after stopping the backend.</p>
 <p>To <strong>visually verify</strong> how a statement was extracted, use the Verify-extraction
 tab (§4.6) — it renders the PDF and draws boxes over the lines each parsed item
 came from. The HTTP endpoints backing that tab are read-only:</p>
@@ -581,8 +589,9 @@ the owner rather than copy it.</p>
 <p>Implementation review: <strong>2026-07-15</strong>. The live-ledger counts below remain a
 dated diagnostic snapshot from <strong>2026-07-12</strong>, not a release promise. Parser
 v2 and the reconciliation engine were validated in fixtures and read-only
-corpus audits on 2026-07-14; the live SQLite ledger has not been re-ingested,
-reconciled, or shadow-rebuilt with that output.</p>
+corpus audits on 2026-07-14. A new parser-v2 shadow ledger has been built and
+compared, but the live SQLite ledger has not been re-ingested, changed, or cut
+over to it.</p>
 <h2 id="product-surface">Product surface</h2>
 <ul>
 <li>The FastAPI backend and React GUI build and run.</li>
@@ -600,6 +609,10 @@ reconciled, or shadow-rebuilt with that output.</p>
   holdings service. Its API rows include checkpoint/provenance, reconciliation,
   pricing, and incomplete/unpriced quality fields; the GUI does not yet display
   those fields.</li>
+<li>The CLI now has a guarded shadow build/compare/sign-off/cutover/rollback
+  workflow. Building a shadow never changes the live ledger; cutover requires
+  a signed local review report, a stopped backend acknowledgement, and an exact
+  live-filename confirmation.</li>
 </ul>
 <h2 id="validation-and-corpus-audits">Validation and corpus audits</h2>
 <ul>
@@ -628,6 +641,12 @@ reconciled, or shadow-rebuilt with that output.</p>
   result.</li>
 <li>The normal structural checks are run before a phase is completed: Python
   tests, Ruff, the frontend production build, and generated-docs build/check.</li>
+<li>On 2026-07-15, <code>ledger shadow build</code> parsed all 338 source PDFs twice into
+  <code>data/ledger.vnext.sqlite</code>; both target content fingerprints matched and the
+  before/after PDF manifest matched. The shadow contains 548 statements, 757
+  canonical instruments, 3,382 transactions, 7,955 position snapshots, 625
+  cash balances, and 9,789 reconciliation results. Its redacted comparison
+  report is pending human source spot-check/sign-off; no cutover occurred.</li>
 </ul>
 <h2 id="measured-live-ledger-2026-07-12">Measured live ledger (2026-07-12)</h2>
 <table>
@@ -692,12 +711,15 @@ reconciled, or shadow-rebuilt with that output.</p>
 </tr>
 </tbody>
 </table>
-<h2 id="implemented-parser-repairs-live-rebuild-still-pending">Implemented parser repairs; live rebuild still pending</h2>
+<h2 id="implemented-parser-repairs-shadow-review-pending">Implemented parser repairs; shadow review pending</h2>
 <ol>
 <li><strong>RBC CAD/USD retention is fixed for parser v2.</strong> One monthly physical
    account/period now contains native CAD and USD child scopes; the committed
    fixture and both full audits emit no duplicate statement identities. Existing
-   active rows were produced earlier and remain unchanged until re-ingest.</li>
+   active rows were produced earlier and remain unchanged. The new shadow has
+   92 monthly RBC statements and 3 annual RBC reports; the legacy database had
+   91 and 6 respectively, so the annual-report difference remains a manual
+   review item rather than an automatic cutover decision.</li>
 <li><strong>TD bundled-period splitting is fixed for parser v2.</strong> Full and legacy
    period headers split before account scopes, and repeated account fragments
    merge into one logical statement. The full audits report no duplicate keys
@@ -717,17 +739,16 @@ reconciled, or shadow-rebuilt with that output.</p>
 <ol>
 <li><strong>The dated live ledger still has broken historical instrument identity.</strong>
    Schema v6 gives new/migrated rows one canonical key, but the 2026-07-12 live
-   snapshot has not been shadow-rebuilt. It contains 803 duplicate logical
+   snapshot is not the shadow target. It contains 803 duplicate logical
    groups, 31,567 excess IDs, and 28,587 unreferenced instrument rows.</li>
 <li><strong>The reconciliation engine is implemented, but the dated live ledger has
    not been rebuilt with it.</strong> <code>ledger ingest reconcile</code> now stores
    source-traceable position, cash, and printed-total equations. This phase did
    not mutate the live database, and the GUI does not yet surface those results.</li>
 <li><strong>Full-corpus cash and position residuals remain material.</strong> The parser
-   audit exposes them without fabricating balancing rows. A reviewed ingest or
-   shadow rebuild will classify the active rows as reconciled, rounding,
-   incomplete, or unexplained; the largest residuals still need source
-   spot-checks.</li>
+   audit and shadow reconciliation expose them without fabricating balancing
+   rows. The largest residuals and the RBC annual-report count difference still
+   need source spot-checks before a human can sign off or cut over.</li>
 <li><strong>The holdings engine is shared, but live data quality is still historical.</strong>
    Monthly, Performance, and Visualisations now use canonical identity,
    complete scopes, normalized movements, and explicit stale/unpriced status.
@@ -745,8 +766,9 @@ reconciled, or shadow-rebuilt with that output.</p>
 <li>Cache validity includes source hash, parser version, parser contract, schema,
   and reviewed-identity resolver state. The v2 parser bump makes v1 active
   output stale for a reviewed re-ingest.</li>
-<li>The GUI quality surface, shadow rebuild, and cutover remain defined in
-  <code>plan/EXTRACTION_RECONCILIATION_REFACTOR.md</code>; they are not implemented yet.</li>
+<li>The GUI quality surface remains defined in
+  <code>plan/EXTRACTION_RECONCILIATION_REFACTOR.md</code>. Shadow build/cutover tooling is
+  implemented, but review sign-off and cutover have intentionally not occurred.</li>
 </ul>
 </div>
 
@@ -778,6 +800,7 @@ not mutate the ledger.</p>
   pdf_text.py               raw PDF text, optional word/line geometry, fingerprinting
   quantity.py               transaction-type quantity movement rules
   holdings.py               canonical read-only scoped holdings reconstruction
+  shadow.py                 read-only source export, staged rebuild, compare, guarded cutover
   db/
     schema.sql              canonical SQLite DDL
     sqlite.py               connections, initialization, upserts
@@ -932,6 +955,17 @@ nullable option columns.</p>
 two duplicate legacy holding/initial rows collide, it preserves their total
 reported quantity/value and marks no new source facts. The shadow rebuild in
 the plan remains the authoritative repair/cutover route for live derived data.</p>
+<h3 id="account-metadata-and-shadow-transfer">Account metadata and shadow transfer</h3>
+<p><code>accounts</code> retains optional <code>nickname</code>, <code>opened_on</code>, <code>closed_on</code>, and <code>notes</code>
+in addition to its broker identity/type/base currency. The shadow workflow
+matches each account by <code>(institution code, account number)</code> and preserves its
+numeric <code>account_id</code> in the otherwise fresh target, so the local portfolio
+configuration's <code>account_ids</code> remain valid after a database-only cutover. An
+ID collision or an unmapped configured account aborts/blocks normal sign-off
+rather than silently remapping preferences. It separately transfers manual
+(not <code>inferred:</code>) initial anchors, reviewed aliases/lookups, and non-generated
+reconciliation annotations only when their canonical target references can be
+mapped.</p>
 <h3 id="statements-attempts-and-evidence">Statements, attempts, and evidence</h3>
 <p><code>statements</code> is unique on
 <code>(source_file_id, account_id, period_start, period_end, statement_type)</code> and
@@ -1063,8 +1097,10 @@ creates legacy source runs/evidence, and marks migrated snapshot scopes
 <code>unknown</code>. It is not a replacement for the planned shadow rebuild; do not use
 it as a live-data correctness cutover.</p>
 <h2 id="still-pending">Still pending</h2>
-<p>The remaining phases surface reconciliation/holdings quality read-only in the
-GUI and rebuild/cut over a shadow ledger. See the plan for sequencing.</p>
+<p>The remaining phase surfaces reconciliation/holdings quality read-only in the
+GUI. A shadow ledger can now be built and compared safely, but human source
+review and explicit cutover remain operational gates. See the plan for
+sequencing.</p>
 </div>
 
 <div class="doc-section" id="ingestion">
@@ -1194,10 +1230,15 @@ reported 178 duplicate statement keys across the PDF audit. It is not evidence
 about current parser output.</p>
 <h2 id="remaining-work">Remaining work</h2>
 <p>The source activation boundary and parser v2 layout/state handling are
-implemented for the committed fixture corpus. Current active/live source runs
-have not been re-ingested or shadow-rebuilt, and the reconciliation command
-remains link attribution only. See the plan for residual computation, shared
-holdings reconstruction, and the shadow rebuild/cutover.</p>
+implemented for the committed fixture corpus. The reconciliation command also
+persists scoped position, cash, and statement-total equations, and Monthly,
+Performance, and Visualisations share the canonical holdings service.</p>
+<p><code>ledger shadow build</code> now provides the safe real-data migration path: it parses
+into a fresh target, preserves reviewed/user-owned state explicitly, verifies a
+second clean rebuild, and writes a redacted comparison report. The live
+database remains untouched until a human completes source spot checks and runs
+the separate guarded cutover command. See <a href="#operations">OPERATIONS.md</a> and
+the plan for the current review/cutover status.</p>
 </div>
 
 <div class="doc-section" id="parser-contract">
@@ -1620,6 +1661,11 @@ ledger ingest run [--institution FOLDER] [--limit N] [--force]
 ledger ingest infer-initials
 ledger ingest repair-symbols
 ledger ingest reconcile
+ledger shadow build [--source-db PATH] [--target-db PATH] [--statements-dir PATH]
+                    [--report PATH] [--replace] [--no-verify-reproducible]
+ledger shadow sign-off --reviewer NAME --confirmation TEXT [--report PATH]
+ledger shadow cutover --backend-stopped --confirm-live-db ledger.sqlite
+ledger shadow rollback --backup-db PATH --backend-stopped --confirm-live-db ledger.sqlite
 ledger market refresh [--symbol SYMBOL ...] [--lookback-years N]
 ledger market refresh-dividends
 ledger market refresh-splits
@@ -1640,11 +1686,40 @@ source PDFs or stored <code>.txt</code> dumps, overwrites a deterministic JSONL 
 (default <code>logs/extraction_audit.jsonl</code>), and omits raw statement text. Use
 <code>--fail-on-errors</code> in a gate where invalid/unclaimed/crashed outputs must
 return non-zero.</p>
-<p><code>ledger db init</code> creates or upgrades schema version 6. For a real existing
-ledger, do <strong>not</strong> treat that compatibility migration as the refactor cutover:
-first copy the database to a shadow data directory and run the command against
-that copy. The API/server does not silently migrate a database at startup; run
-<code>db init</code> deliberately before serving a v6 database.</p>
+<p><code>ledger db init</code> creates or upgrades schema version 6. The API/server does not
+silently migrate a database at startup; run <code>db init</code> deliberately before
+serving a v6 database. For an existing real ledger, use the guarded shadow
+workflow below rather than treating a compatibility migration as live cutover.</p>
+<h2 id="shadow-rebuild-review-and-cutover">Shadow rebuild, review, and cutover</h2>
+<p><code>ledger shadow build</code> opens the source SQLite file read-only, copies only
+reviewed/user-owned state to a fresh staging database, parses the selected PDF
+tree twice, and publishes <code>data/ledger.vnext.sqlite</code> only when both clean builds
+have the same content fingerprint. It verifies a before/after PDF manifest and
+never changes <code>data/ledger.sqlite</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="c"># Build the default real-profile shadow and its redacted comparison report.</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">shadow</span> <span class="n">build</span>
+
+<span class="c"># Inspect the local report and perform the required PDF spot checks first.</span>
+<span class="c"># Record a human review only after those checks are complete.</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">shadow</span> <span class="n">sign-off</span> <span class="p">-</span><span class="n">-reviewer</span> <span class="s2">&quot;your-name&quot;</span> <span class="p">-</span><span class="n">-confirmation</span> <span class="s2">&quot;PDF review complete&quot;</span>
+
+<span class="c"># Stop the backend, then explicitly acknowledge the live filename to switch.</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">shadow</span> <span class="n">cutover</span> <span class="p">-</span><span class="n">-backend-stopped</span> <span class="p">-</span><span class="n">-confirm-live-db</span> <span class="n">ledger</span><span class="p">.</span><span class="n">sqlite</span>
+</code></pre></div>
+<p>The report contains coverage/count/fingerprint comparisons rather than raw
+statement values. It includes statement and scope coverage by institution,
+period, currency, and a stable redacted account reference; it never writes an
+account number into the report. Its reproducibility fingerprint covers active
+parser output and semantic ledger state, including scopes, movements, reported
+checkpoints, links, inferred/manual initials, and reconciliation equations. It
+accounts for account metadata, manual initials, reviewed aliases/lookups,
+non-generated reconciliation annotations, and a companion
+<code>ledger.vnext.config.json</code> copy of portfolio preferences. Source account IDs
+are retained in the fresh target so the companion and unchanged live config
+remain valid after a database-only cutover. An unmapped reviewed item or
+portfolio account ID blocks ordinary sign-off until explicitly acknowledged.
+Cutover retains a timestamped backup; <code>ledger shadow rollback</code> restores that
+backup without deleting it. Shadow build itself never performs cutover.</p>
 <h2 id="local-development">Local development</h2>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">sync</span> <span class="p">-</span><span class="n">-all-extras</span> <span class="p">-</span><span class="n">-dev</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">db</span> <span class="n">init</span>

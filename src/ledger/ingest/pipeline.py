@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -862,9 +863,11 @@ def _record_attempt(
     parser_version: str | None,
     status: str,
     error_summary: str | None = None,
+    path: Path | str | None = None,
 ) -> None:
     """Persist a failed/skipped attempt without touching an active extraction."""
-    with sqlite_db.session() as conn:
+    db_path = path if path is not None else sqlite_db.SQLITE_PATH
+    with sqlite_db.session(db_path) as conn:
         _record_source_file(
             conn,
             pdf,
@@ -875,13 +878,33 @@ def _record_attempt(
         )
 
 
-def run_ingest(*, institution: str | None = None, limit: int | None = None, force: bool = False) -> None:
-    sqlite_db.init_db()
+def run_ingest(
+    *,
+    institution: str | None = None,
+    limit: int | None = None,
+    force: bool = False,
+    path: Path | str | None = None,
+    statements_dir: Path | None = None,
+    log_dir: Path | None = None,
+    repo_root: Path | None = None,
+    logger: logging.Logger | None = None,
+) -> dict[str, object]:
+    """Ingest one statement tree into the supplied ledger database.
+
+    The optional paths make an isolated shadow rebuild possible without
+    changing process-global configuration or touching the live ledger. Existing
+    CLI callers keep their current profile-derived defaults.
+    """
+    db_path = path if path is not None else sqlite_db.SQLITE_PATH
+    input_root = statements_dir or config.STATEMENTS_DIR
+    source_root = repo_root or config.ROOT
+    active_log = logger or log
+    sqlite_db.init_db(db_path)
     seen = 0
     activated = 0
     stopped = False
 
-    for folder in sorted(config.STATEMENTS_DIR.iterdir()):
+    for folder in sorted(input_root.iterdir()):
         if not folder.is_dir():
             continue
         if institution and folder.name != institution:
@@ -893,18 +916,21 @@ def run_ingest(*, institution: str | None = None, limit: int | None = None, forc
                 stopped = True
                 break
             seen += 1
-            relpath = path.relative_to(config.ROOT).as_posix()
+            try:
+                relpath = path.relative_to(source_root).as_posix()
+            except ValueError:
+                relpath = path.relative_to(input_root.parent).as_posix()
             sha = _sha256_file(path)
             if not force:
-                with sqlite_db.session() as conn:
+                with sqlite_db.session(db_path) as conn:
                     cached = _unchanged_source_file_id(conn, relpath=relpath, sha256=sha)
                 if cached is not None:
-                    log.info("Skipping current active extraction %s/%s", folder.name, path.name)
+                    active_log.info("Skipping current active extraction %s/%s", folder.name, path.name)
                     continue
 
-            log.info("Reading %s/%s", folder.name, path.name)
+            active_log.info("Reading %s/%s", folder.name, path.name)
             try:
-                pdf = extract_pdf(path, repo_root=config.ROOT)
+                pdf = extract_pdf(path, repo_root=source_root)
             except Exception as exc:
                 # Hashing succeeded above, so this is a true extraction attempt
                 # rather than an unknown input.  Keep the last good run active.
@@ -915,13 +941,14 @@ def run_ingest(*, institution: str | None = None, limit: int | None = None, forc
                     sha256=sha,
                     size_bytes=path.stat().st_size,
                 )
-                log.exception("extract failed: %s -> %s", path, exc)
+                active_log.exception("extract failed: %s -> %s", path, exc)
                 _record_attempt(
                     pdf,
                     parser_name=None,
                     parser_version=None,
                     status="failed",
                     error_summary=f"extract failed: {type(exc).__name__}: {exc}"[:1000],
+                    path=db_path,
                 )
                 continue
 
@@ -932,31 +959,34 @@ def run_ingest(*, institution: str | None = None, limit: int | None = None, forc
                     parser_version=None,
                     status="skipped",
                     error_summary="image-only source; OCR is not implemented",
+                    path=db_path,
                 )
                 continue
 
             parser = select_parser(folder.name, pdf)
             if parser is None:
-                log.warning("no parser claimed %s", pdf.relpath)
+                active_log.warning("no parser claimed %s", pdf.relpath)
                 _record_attempt(
                     pdf,
                     parser_name=None,
                     parser_version=None,
                     status="failed",
                     error_summary="no registered parser claimed source",
+                    path=db_path,
                 )
                 continue
 
             try:
                 result: ParseResult = parser.parse(pdf)
             except Exception as exc:
-                log.exception("parser %s crashed on %s: %s", parser.NAME, path, exc)
+                active_log.exception("parser %s crashed on %s: %s", parser.NAME, path, exc)
                 _record_attempt(
                     pdf,
                     parser_name=parser.NAME,
                     parser_version=parser.VERSION,
                     status="failed",
                     error_summary=f"parser crash: {type(exc).__name__}: {exc}"[:1000],
+                    path=db_path,
                 )
                 continue
 
@@ -967,8 +997,9 @@ def run_ingest(*, institution: str | None = None, limit: int | None = None, forc
                     parser_version=parser.VERSION,
                     status="skipped",
                     error_summary=result.skip_reason,
+                    path=db_path,
                 )
-                log.info("Skipped %s: %s", pdf.relpath, result.skip_reason)
+                active_log.info("Skipped %s: %s", pdf.relpath, result.skip_reason)
                 continue
 
             validation = validate_parse_result(result)
@@ -982,25 +1013,26 @@ def run_ingest(*, institution: str | None = None, limit: int | None = None, forc
                     parser_version=parser.VERSION,
                     status="failed",
                     error_summary=summary[:1000],
+                    path=db_path,
                 )
-                log.error(
+                active_log.error(
                     "parser output validation failed for %s: %d error(s), %d warning(s)",
                     pdf.relpath,
                     len(validation.errors),
                     len(validation.warnings),
                 )
                 for issue in validation.errors:
-                    log.error("%s: %s", issue.code, issue.message)
+                    active_log.error("%s: %s", issue.code, issue.message)
                 continue
             if validation.warnings:
-                log.warning(
+                active_log.warning(
                     "parser output for %s has %d contract warning(s)",
                     pdf.relpath,
                     len(validation.warnings),
                 )
 
             try:
-                with sqlite_db.session() as conn:
+                with sqlite_db.session(db_path) as conn:
                     activation = activate_source_result(
                         conn,
                         pdf=pdf,
@@ -1010,17 +1042,18 @@ def run_ingest(*, institution: str | None = None, limit: int | None = None, forc
                         result=result,
                     )
             except Exception as exc:
-                log.exception("activation failed for %s: %s", pdf.relpath, exc)
+                active_log.exception("activation failed for %s: %s", pdf.relpath, exc)
                 _record_attempt(
                     pdf,
                     parser_name=parser.NAME,
                     parser_version=parser.VERSION,
                     status="failed",
                     error_summary=f"activation failed: {type(exc).__name__}: {exc}"[:1000],
+                    path=db_path,
                 )
                 continue
             activated += 1
-            log.info(
+            active_log.info(
                 "Activated %s run=%s hash=%s resolutions=%s",
                 pdf.relpath,
                 activation["ingestion_run_id"],
@@ -1030,15 +1063,22 @@ def run_ingest(*, institution: str | None = None, limit: int | None = None, forc
         if stopped:
             break
 
-    audit_log_summary = export_active_ingestion_logs()
+    audit_log_summary = export_active_ingestion_logs(path=db_path, log_dir=log_dir)
     from .reconcile import reconcile_after_ingest
 
-    reconcile_summary = reconcile_after_ingest()
-    log.info("Reconciliation after ingest: %s", reconcile_summary)
-    log.info(
+    reconcile_summary = reconcile_after_ingest(db_path)
+    active_log.info("Reconciliation after ingest: %s", reconcile_summary)
+    active_log.info(
         "Ingest finished. %d PDFs scanned, %d sources activated, %s audit rows exported%s.",
         seen,
         activated,
         audit_log_summary,
         " (limit reached)" if stopped else "",
     )
+    return {
+        "scanned": seen,
+        "activated": activated,
+        "limited": stopped,
+        "audit_logs": audit_log_summary,
+        "reconciliation": reconcile_summary,
+    }

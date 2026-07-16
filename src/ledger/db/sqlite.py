@@ -937,6 +937,8 @@ def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
 def _migrate_existing_schema(conn: sqlite3.Connection) -> None:
     if "notes" not in _table_columns(conn, "initial_cash"):
         conn.execute("ALTER TABLE initial_cash ADD COLUMN notes TEXT")
+    for definition in ("opened_on TEXT", "closed_on TEXT", "notes TEXT"):
+        _add_column(conn, "accounts", definition)
 
 
 @contextmanager
@@ -1307,16 +1309,32 @@ def upsert_account(
     account_type: str | None = None,
     nickname: str | None = None,
     base_currency: str = "CAD",
+    opened_on: str | None = None,
+    closed_on: str | None = None,
+    notes: str | None = None,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO accounts(institution_id, account_number, account_type, nickname, base_currency) "
-        "VALUES(?,?,?,?,?) "
+        "INSERT INTO accounts("
+        "institution_id, account_number, account_type, nickname, base_currency, opened_on, closed_on, notes"
+        ") VALUES(?,?,?,?,?,?,?,?) "
         "ON CONFLICT(institution_id, account_number) DO UPDATE SET "
         "  account_type = COALESCE(excluded.account_type, accounts.account_type), "
         "  nickname     = COALESCE(excluded.nickname, accounts.nickname), "
-        "  base_currency= COALESCE(excluded.base_currency, accounts.base_currency) "
+        "  base_currency= COALESCE(excluded.base_currency, accounts.base_currency), "
+        "  opened_on    = COALESCE(excluded.opened_on, accounts.opened_on), "
+        "  closed_on    = COALESCE(excluded.closed_on, accounts.closed_on), "
+        "  notes        = COALESCE(excluded.notes, accounts.notes) "
         "RETURNING account_id",
-        (institution_id, account_number, account_type, nickname, base_currency),
+        (
+            institution_id,
+            account_number,
+            account_type,
+            nickname,
+            base_currency,
+            opened_on,
+            closed_on,
+            notes,
+        ),
     )
     return cur.fetchone()[0]
 

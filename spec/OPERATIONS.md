@@ -31,6 +31,11 @@ ledger ingest run [--institution FOLDER] [--limit N] [--force]
 ledger ingest infer-initials
 ledger ingest repair-symbols
 ledger ingest reconcile
+ledger shadow build [--source-db PATH] [--target-db PATH] [--statements-dir PATH]
+                    [--report PATH] [--replace] [--no-verify-reproducible]
+ledger shadow sign-off --reviewer NAME --confirmation TEXT [--report PATH]
+ledger shadow cutover --backend-stopped --confirm-live-db ledger.sqlite
+ledger shadow rollback --backup-db PATH --backend-stopped --confirm-live-db ledger.sqlite
 ledger market refresh [--symbol SYMBOL ...] [--lookback-years N]
 ledger market refresh-dividends
 ledger market refresh-splits
@@ -54,11 +59,45 @@ source PDFs or stored `.txt` dumps, overwrites a deterministic JSONL report
 `--fail-on-errors` in a gate where invalid/unclaimed/crashed outputs must
 return non-zero.
 
-`ledger db init` creates or upgrades schema version 6. For a real existing
-ledger, do **not** treat that compatibility migration as the refactor cutover:
-first copy the database to a shadow data directory and run the command against
-that copy. The API/server does not silently migrate a database at startup; run
-`db init` deliberately before serving a v6 database.
+`ledger db init` creates or upgrades schema version 6. The API/server does not
+silently migrate a database at startup; run `db init` deliberately before
+serving a v6 database. For an existing real ledger, use the guarded shadow
+workflow below rather than treating a compatibility migration as live cutover.
+
+## Shadow rebuild, review, and cutover
+
+`ledger shadow build` opens the source SQLite file read-only, copies only
+reviewed/user-owned state to a fresh staging database, parses the selected PDF
+tree twice, and publishes `data/ledger.vnext.sqlite` only when both clean builds
+have the same content fingerprint. It verifies a before/after PDF manifest and
+never changes `data/ledger.sqlite`.
+
+```powershell
+# Build the default real-profile shadow and its redacted comparison report.
+uv run ledger shadow build
+
+# Inspect the local report and perform the required PDF spot checks first.
+# Record a human review only after those checks are complete.
+uv run ledger shadow sign-off --reviewer "your-name" --confirmation "PDF review complete"
+
+# Stop the backend, then explicitly acknowledge the live filename to switch.
+uv run ledger shadow cutover --backend-stopped --confirm-live-db ledger.sqlite
+```
+
+The report contains coverage/count/fingerprint comparisons rather than raw
+statement values. It includes statement and scope coverage by institution,
+period, currency, and a stable redacted account reference; it never writes an
+account number into the report. Its reproducibility fingerprint covers active
+parser output and semantic ledger state, including scopes, movements, reported
+checkpoints, links, inferred/manual initials, and reconciliation equations. It
+accounts for account metadata, manual initials, reviewed aliases/lookups,
+non-generated reconciliation annotations, and a companion
+`ledger.vnext.config.json` copy of portfolio preferences. Source account IDs
+are retained in the fresh target so the companion and unchanged live config
+remain valid after a database-only cutover. An unmapped reviewed item or
+portfolio account ID blocks ordinary sign-off until explicitly acknowledged.
+Cutover retains a timestamped backup; `ledger shadow rollback` restores that
+backup without deleting it. Shadow build itself never performs cutover.
 
 ## Local development
 

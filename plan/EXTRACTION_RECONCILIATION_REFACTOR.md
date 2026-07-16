@@ -1,6 +1,7 @@
 # Extraction, Reconciliation, and Month-End Refactor Plan
 
-Status: in progress — Phases 0–6 completed and validated 2026-07-15
+Status: in progress — Phases 0–6 completed and validated; Phase 7 technical
+shadow build passed and awaits manual sign-off (2026-07-15)
 Baseline audit date: 2026-07-12
 Scope: documentation truth reset, statement extraction, ingestion, security/cash reconciliation, and the Monthly/Performance read models
 
@@ -750,6 +751,32 @@ Every reported transaction must remain defensible against the source.
 - All curated state is accounted for.
 - No PDF changed.
 - Comparison and manual review have explicit sign-off.
+
+### Phase 7 implementation and rebuild record (2026-07-15)
+
+- Added CLI-only `ledger shadow build`, `sign-off`, `cutover`, and `rollback`
+  commands. The builder opens the source database read-only, moves only
+  explicitly curated state into a fresh staging target, verifies a second clean
+  build, fingerprints PDF inputs before/after, and publishes only the matching
+  target. It cannot cut over as part of a build.
+- The comparison report redacts source values into counts/fingerprints while
+  accounting for account metadata, manual initials, reviewed aliases/lookups,
+  reviewed annotations, identity/scope coverage, residual status, and latest
+  reported-total fingerprints. It includes institution/period/currency coverage
+  with a stable redacted account reference. Its reproducibility fingerprint
+  covers active parser output plus semantic snapshots, movements, links,
+  initials, and generated reconciliation equations. Source account IDs are
+  retained so the companion portfolio config stays valid after a database-only
+  cutover; an unmapped config account ID blocks normal sign-off.
+- A real shadow build created `data/ledger.vnext.sqlite` from all 338 source
+  PDFs. Both clean target content fingerprints matched; all PDF bytes matched
+  before/after. The live `data/ledger.sqlite` remains untouched. The target has
+  548 statements, 757 instruments, 3,382 transactions, 7,955 positions, 625
+  cash balances, and 9,789 reconciliation results.
+- The technical rebuild gate is complete. Manual PDF spot checks and explicit
+  sign-off remain open before any cutover: the report records a net 106 TD
+  statements recovered and an RBC annual-report count difference that requires
+  source review. No sign-off, cutover, or rollback execution has occurred.
 
 ## Phase 8 — Surface quality in the existing GUI and finish documentation
 

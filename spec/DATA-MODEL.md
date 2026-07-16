@@ -36,6 +36,19 @@ two duplicate legacy holding/initial rows collide, it preserves their total
 reported quantity/value and marks no new source facts. The shadow rebuild in
 the plan remains the authoritative repair/cutover route for live derived data.
 
+### Account metadata and shadow transfer
+
+`accounts` retains optional `nickname`, `opened_on`, `closed_on`, and `notes`
+in addition to its broker identity/type/base currency. The shadow workflow
+matches each account by `(institution code, account number)` and preserves its
+numeric `account_id` in the otherwise fresh target, so the local portfolio
+configuration's `account_ids` remain valid after a database-only cutover. An
+ID collision or an unmapped configured account aborts/blocks normal sign-off
+rather than silently remapping preferences. It separately transfers manual
+(not `inferred:`) initial anchors, reviewed aliases/lookups, and non-generated
+reconciliation annotations only when their canonical target references can be
+mapped.
+
 ### Statements, attempts, and evidence
 
 `statements` is unique on
@@ -136,5 +149,7 @@ it as a live-data correctness cutover.
 
 ## Still pending
 
-The remaining phases surface reconciliation/holdings quality read-only in the
-GUI and rebuild/cut over a shadow ledger. See the plan for sequencing.
+The remaining phase surfaces reconciliation/holdings quality read-only in the
+GUI. A shadow ledger can now be built and compared safely, but human source
+review and explicit cutover remain operational gates. See the plan for
+sequencing.

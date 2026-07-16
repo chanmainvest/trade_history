@@ -3,8 +3,9 @@
 Implementation review: **2026-07-15**. The live-ledger counts below remain a
 dated diagnostic snapshot from **2026-07-12**, not a release promise. Parser
 v2 and the reconciliation engine were validated in fixtures and read-only
-corpus audits on 2026-07-14; the live SQLite ledger has not been re-ingested,
-reconciled, or shadow-rebuilt with that output.
+corpus audits on 2026-07-14. A new parser-v2 shadow ledger has been built and
+compared, but the live SQLite ledger has not been re-ingested, changed, or cut
+over to it.
 
 ## Product surface
 
@@ -23,6 +24,10 @@ reconciled, or shadow-rebuilt with that output.
   holdings service. Its API rows include checkpoint/provenance, reconciliation,
   pricing, and incomplete/unpriced quality fields; the GUI does not yet display
   those fields.
+- The CLI now has a guarded shadow build/compare/sign-off/cutover/rollback
+  workflow. Building a shadow never changes the live ledger; cutover requires
+  a signed local review report, a stopped backend acknowledgement, and an exact
+  live-filename confirmation.
 
 ## Validation and corpus audits
 
@@ -51,6 +56,12 @@ reconciled, or shadow-rebuilt with that output.
   result.
 - The normal structural checks are run before a phase is completed: Python
   tests, Ruff, the frontend production build, and generated-docs build/check.
+- On 2026-07-15, `ledger shadow build` parsed all 338 source PDFs twice into
+  `data/ledger.vnext.sqlite`; both target content fingerprints matched and the
+  before/after PDF manifest matched. The shadow contains 548 statements, 757
+  canonical instruments, 3,382 transactions, 7,955 position snapshots, 625
+  cash balances, and 9,789 reconciliation results. Its redacted comparison
+  report is pending human source spot-check/sign-off; no cutover occurred.
 
 ## Measured live ledger (2026-07-12)
 
@@ -70,12 +81,15 @@ reconciled, or shadow-rebuilt with that output.
 | account links | 7 |
 | position/transaction links | 483 |
 
-## Implemented parser repairs; live rebuild still pending
+## Implemented parser repairs; shadow review pending
 
 1. **RBC CAD/USD retention is fixed for parser v2.** One monthly physical
    account/period now contains native CAD and USD child scopes; the committed
    fixture and both full audits emit no duplicate statement identities. Existing
-   active rows were produced earlier and remain unchanged until re-ingest.
+   active rows were produced earlier and remain unchanged. The new shadow has
+   92 monthly RBC statements and 3 annual RBC reports; the legacy database had
+   91 and 6 respectively, so the annual-report difference remains a manual
+   review item rather than an automatic cutover decision.
 2. **TD bundled-period splitting is fixed for parser v2.** Full and legacy
    period headers split before account scopes, and repeated account fragments
    merge into one logical statement. The full audits report no duplicate keys
@@ -95,17 +109,16 @@ reconciled, or shadow-rebuilt with that output.
 
 1. **The dated live ledger still has broken historical instrument identity.**
    Schema v6 gives new/migrated rows one canonical key, but the 2026-07-12 live
-   snapshot has not been shadow-rebuilt. It contains 803 duplicate logical
+   snapshot is not the shadow target. It contains 803 duplicate logical
    groups, 31,567 excess IDs, and 28,587 unreferenced instrument rows.
 2. **The reconciliation engine is implemented, but the dated live ledger has
    not been rebuilt with it.** `ledger ingest reconcile` now stores
    source-traceable position, cash, and printed-total equations. This phase did
    not mutate the live database, and the GUI does not yet surface those results.
 3. **Full-corpus cash and position residuals remain material.** The parser
-   audit exposes them without fabricating balancing rows. A reviewed ingest or
-   shadow rebuild will classify the active rows as reconciled, rounding,
-   incomplete, or unexplained; the largest residuals still need source
-   spot-checks.
+   audit and shadow reconciliation expose them without fabricating balancing
+   rows. The largest residuals and the RBC annual-report count difference still
+   need source spot-checks before a human can sign off or cut over.
 4. **The holdings engine is shared, but live data quality is still historical.**
    Monthly, Performance, and Visualisations now use canonical identity,
    complete scopes, normalized movements, and explicit stale/unpriced status.
@@ -123,5 +136,6 @@ reconciled, or shadow-rebuilt with that output.
 - Cache validity includes source hash, parser version, parser contract, schema,
   and reviewed-identity resolver state. The v2 parser bump makes v1 active
   output stale for a reviewed re-ingest.
-- The GUI quality surface, shadow rebuild, and cutover remain defined in
-  `plan/EXTRACTION_RECONCILIATION_REFACTOR.md`; they are not implemented yet.
+- The GUI quality surface remains defined in
+  `plan/EXTRACTION_RECONCILIATION_REFACTOR.md`. Shadow build/cutover tooling is
+  implemented, but review sign-off and cutover have intentionally not occurred.

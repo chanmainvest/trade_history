@@ -32,6 +32,7 @@ src/ledger/
   pdf_text.py               raw PDF text, optional word/line geometry, fingerprinting
   quantity.py               transaction-type quantity movement rules
   holdings.py               canonical read-only scoped holdings reconstruction
+  shadow.py                 read-only source export, staged rebuild, compare, guarded cutover
   db/
     schema.sql              canonical SQLite DDL
     sqlite.py               connections, initialization, upserts

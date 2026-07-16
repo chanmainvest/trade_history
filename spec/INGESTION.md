@@ -150,7 +150,13 @@ about current parser output.
 ## Remaining work
 
 The source activation boundary and parser v2 layout/state handling are
-implemented for the committed fixture corpus. Current active/live source runs
-have not been re-ingested or shadow-rebuilt, and the reconciliation command
-remains link attribution only. See the plan for residual computation, shared
-holdings reconstruction, and the shadow rebuild/cutover.
+implemented for the committed fixture corpus. The reconciliation command also
+persists scoped position, cash, and statement-total equations, and Monthly,
+Performance, and Visualisations share the canonical holdings service.
+
+`ledger shadow build` now provides the safe real-data migration path: it parses
+into a fresh target, preserves reviewed/user-owned state explicitly, verifies a
+second clean rebuild, and writes a redacted comparison report. The live
+database remains untouched until a human completes source spot checks and runs
+the separate guarded cutover command. See [OPERATIONS.md](OPERATIONS.md) and
+the plan for the current review/cutover status.

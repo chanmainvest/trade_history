@@ -193,6 +193,194 @@ def audit_extraction_command(
         raise click.ClickException("extraction audit found fatal issues")
 
 
+# ----------------------------------------------------------------------- shadow
+@main.group("shadow")
+def shadow() -> None:
+    """Build, review, and explicitly cut over a shadow ledger."""
+
+
+@shadow.command("build")
+@click.option(
+    "--source-db",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    default=None,
+    help="Read-only source ledger. Defaults to the active profile ledger.",
+)
+@click.option(
+    "--target-db",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Fresh shadow ledger path. Defaults to data/ledger.vnext.sqlite.",
+)
+@click.option(
+    "--statements-dir",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    default=None,
+    help="PDF tree to rebuild. Defaults to the active profile statements directory.",
+)
+@click.option(
+    "--report",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Redacted comparison report path. Defaults beside the shadow database.",
+)
+@click.option(
+    "--replace",
+    is_flag=True,
+    help="Retain an existing shadow as a timestamped backup before publishing a new one.",
+)
+@click.option(
+    "--verify-reproducible/--no-verify-reproducible",
+    default=True,
+    show_default=True,
+    help="Require two clean shadow builds to have the same content fingerprint.",
+)
+def shadow_build(
+    source_db: Path | None,
+    target_db: Path | None,
+    statements_dir: Path | None,
+    report: Path | None,
+    replace: bool,
+    verify_reproducible: bool,
+) -> None:
+    """Rebuild a new ledger without modifying the live source database."""
+    from .shadow import build_shadow
+
+    try:
+        result = build_shadow(
+            source_db=source_db or config.SQLITE_PATH,
+            target_db=target_db,
+            statements_dir=statements_dir,
+            report_path=report,
+            replace=replace,
+            verify_reproducible=verify_reproducible,
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    target_name = result["target_db_name"]
+    reproducibility = result["reproducibility"]["status"]
+    click.echo(f"Shadow ledger ready: {target_name}")
+    click.echo(f"Reproducibility: {reproducibility}")
+    click.echo(f"Comparison report: {result['report_path']}")
+    click.echo("No cutover was performed. Complete manual review, then use `ledger shadow sign-off`.")
+
+
+@shadow.command("sign-off")
+@click.option(
+    "--report",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    default=None,
+    help="Shadow comparison report. Defaults beside data/ledger.vnext.sqlite.",
+)
+@click.option("--reviewer", required=True, help="Human reviewer identity recorded in the local report.")
+@click.option("--confirmation", required=True, help="Human review confirmation recorded in the local report.")
+@click.option(
+    "--acknowledge-unmapped",
+    is_flag=True,
+    help="Required when the report has curated annotations that could not be mapped safely.",
+)
+def shadow_sign_off(
+    report: Path | None,
+    reviewer: str,
+    confirmation: str,
+    acknowledge_unmapped: bool,
+) -> None:
+    """Record human review approval; this never modifies a live database."""
+    from .shadow import sign_off_report
+
+    report_path = report or (config.DATA_DIR / "ledger.vnext.report.json")
+    try:
+        sign_off_report(
+            report_path,
+            reviewer=reviewer,
+            confirmation=confirmation,
+            acknowledge_unmapped=acknowledge_unmapped,
+        )
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Manual review sign-off recorded in {report_path}.")
+    click.echo("Cutover remains a separate, explicit command.")
+
+
+@shadow.command("cutover")
+@click.option(
+    "--source-db",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    default=None,
+    help="Current live ledger. Defaults to the active profile ledger.",
+)
+@click.option(
+    "--shadow-db",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    default=None,
+    help="Signed-off shadow ledger. Defaults to data/ledger.vnext.sqlite.",
+)
+@click.option(
+    "--report",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    default=None,
+    help="Signed-off comparison report. Defaults beside the shadow database.",
+)
+@click.option("--backend-stopped", is_flag=True, help="Acknowledge that no backend is using the live database.")
+@click.option("--confirm-live-db", required=True, help="Must exactly match the live database filename.")
+def shadow_cutover(
+    source_db: Path | None,
+    shadow_db: Path | None,
+    report: Path | None,
+    backend_stopped: bool,
+    confirm_live_db: str,
+) -> None:
+    """Create a timestamped backup and atomically switch to a signed-off shadow."""
+    from .shadow import cutover_shadow
+
+    live = source_db or config.SQLITE_PATH
+    shadow_path = shadow_db or (config.DATA_DIR / "ledger.vnext.sqlite")
+    report_path = report or (config.DATA_DIR / "ledger.vnext.report.json")
+    try:
+        result = cutover_shadow(
+            source_db=live,
+            shadow_db=shadow_path,
+            report_path=report_path,
+            backend_stopped=backend_stopped,
+            confirm_live_db=confirm_live_db,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Cutover complete. Backup retained at {result['backup_db']}")
+
+
+@shadow.command("rollback")
+@click.option(
+    "--live-db",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    default=None,
+    help="Current live ledger. Defaults to the active profile ledger.",
+)
+@click.option("--backup-db", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+@click.option("--backend-stopped", is_flag=True, help="Acknowledge that no backend is using the live database.")
+@click.option("--confirm-live-db", required=True, help="Must exactly match the live database filename.")
+def shadow_rollback(
+    live_db: Path | None,
+    backup_db: Path,
+    backend_stopped: bool,
+    confirm_live_db: str,
+) -> None:
+    """Restore a retained backup without deleting it."""
+    from .shadow import rollback_shadow
+
+    live = live_db or config.SQLITE_PATH
+    try:
+        result = rollback_shadow(
+            live_db=live,
+            backup_db=backup_db,
+            backend_stopped=backend_stopped,
+            confirm_live_db=confirm_live_db,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Rollback complete from {result['restored_from']}")
+
+
 # ----------------------------------------------------------------------- ingest
 @main.group()
 def ingest() -> None:

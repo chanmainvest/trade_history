@@ -9,12 +9,12 @@ This guide is written for **humans**. Technical context starts at
 [INDEX.md](INDEX.md), while coding-agent rules live in
 [AGENTS.md](../AGENTS.md).
 
-> **Current data-quality notice (2026-07-14):** the GUI is operational and
+> **Current data-quality notice (2026-07-15):** the GUI is operational and
 > source ingestion preserves the prior active extraction if parsing or staging
 > fails. Parser v2 fixes the audited RBC dual-currency and TD bundled layouts,
-> and the CLI now persists month-end reconciliation results, but the dated live
-> ledger has not been re-ingested or shadow-rebuilt and the GUI does not yet
-> display reconciliation status. Review
+> and the CLI now persists month-end reconciliation results. A non-live shadow
+> rebuild and comparison report exist, but the live ledger has not been cut
+> over and the GUI does not yet display reconciliation status. Review
 > [CURRENT-STATE.md](CURRENT-STATE.md) before relying on totals as reconciled.
 
 ---
@@ -116,8 +116,12 @@ just close the terminal.
    Parser or reviewed-alias changes reparse automatically; `--force` is only
    needed when you deliberately want to bypass that cache. Each PDF activates
    as one unit, so a parser/validation/write failure keeps its previous active
-   output. The remaining parser/reconciliation work still warrants a
-   backup/shadow database and Verify review before relying on totals.
+   output. For an existing ledger, build a non-live shadow and review it before
+   relying on totals or considering a cutover:
+
+   ```powershell
+   uv run ledger shadow build
+   ```
 
    Before ingesting, you can run the same parsers and contract checks without
    opening SQLite:
@@ -345,11 +349,18 @@ uv run ledger ingest reconcile
 
 # repair symbols (resolve aliases, fund-code lookups, etc.)
 uv run ledger ingest repair-symbols
+
+# rebuild a non-live ledger twice, preserve reviewed state, and write a comparison report
+uv run ledger shadow build
 ```
 
 `ingest run` performs conservative staged identity resolution and reconciliation
 after source activation. `repair-symbols` is for legacy/manual data; the
 reconcile command is mainly needed after manual DB edits.
+
+`shadow build` does not replace the active database. Review its local report
+and source PDFs first; only a human may record `shadow sign-off` and later run
+the separately guarded `shadow cutover` command after stopping the backend.
 
 To **visually verify** how a statement was extracted, use the Verify-extraction
 tab (§4.6) — it renders the PDF and draws boxes over the lines each parsed item

@@ -5,11 +5,11 @@ and TD statements. It extracts read-only PDFs into a native-currency SQLite
 ledger, combines them with public market data in DuckDB, and exposes a FastAPI
 backend plus a React dashboard.
 
-> **Data-quality status (2026-07-14):** the app and GUI run, and the CLI now
-> persists scoped month-end reconciliation results. The dated live database has
-> not been re-ingested or rebuilt with the repaired parser output, so do not
-> treat it as fully reconciled. See [Current state](spec/CURRENT-STATE.md) and the
-> [implementation plan](plan/EXTRACTION_RECONCILIATION_REFACTOR.md).
+> **Data-quality status (2026-07-15):** the app and GUI run, the CLI persists
+> scoped month-end reconciliation results, and a parser-v2 shadow ledger has
+> passed a double-build comparison. The live database has not been cut over, so
+> do not treat it as fully reconciled. See [Current state](spec/CURRENT-STATE.md)
+> and the [implementation plan](plan/EXTRACTION_RECONCILIATION_REFACTOR.md).
 
 ## Architecture at a glance
 
@@ -39,9 +39,16 @@ uv run ledger db init
 uv run ledger serve --host 127.0.0.1 --port 8000
 ```
 
-For an existing real ledger, make a shadow copy first and run `db init` against
-that copy. Schema v6 has a tested compatibility migration, but it is not the
-approved live-data cutover; see [Operations](spec/OPERATIONS.md) and the plan.
+For an existing real ledger, use the guarded shadow workflow rather than
+upgrading the live database in place:
+
+```powershell
+uv run ledger shadow build
+```
+
+It performs two clean target rebuilds and writes a redacted comparison report;
+human PDF review and the separate cutover command remain required. See
+[Operations](spec/OPERATIONS.md) and the plan.
 
 In another terminal:
 
@@ -76,6 +83,9 @@ uv run ledger ingest run --force
 uv run ledger ingest repair-symbols
 uv run ledger ingest reconcile
 uv run ledger ingest infer-initials
+
+# safely rebuild and compare a non-live shadow ledger
+uv run ledger shadow build
 
 # read-only parser/contract audit (does not open SQLite)
 uv run ledger audit extraction --statements-dir Statements
