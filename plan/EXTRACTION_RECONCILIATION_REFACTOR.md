@@ -1,7 +1,7 @@
 # Extraction, Reconciliation, and Month-End Refactor Plan
 
-Status: in progress — Phases 0–6 completed and validated; Phase 7 technical
-shadow build passed and awaits manual sign-off (2026-07-15)
+Status: in progress — Phases 0–6 and 8 completed and validated; Phase 7
+technical shadow build passed and awaits manual sign-off (2026-07-16)
 Baseline audit date: 2026-07-12
 Scope: documentation truth reset, statement extraction, ingestion, security/cash reconciliation, and the Monthly/Performance read models
 
@@ -806,6 +806,22 @@ After every phase, update the focused owner spec from Phase 0. At completion:
 - update parser-specific specs with verified layout quirks;
 - update `README.md` only where the overview/quick start changed; and
 - regenerate and verify `docs/index.html`.
+
+### Phase 8 completion record (2026-07-16)
+
+- `GET /statements` now exposes read-only quality counters/flags for
+  unresolved identity/quarantine rows, incomplete scopes or reconciliation
+  inputs, and unexplained residuals. Verify filters those categories without
+  changing SQLite.
+- `GET /statements/{id}/boxes` now returns parser/run metadata, complete or
+  partial currency/section scopes, persisted reconciliation equations, and
+  source-linked cash/summary rows alongside the existing transaction, position,
+  and quarantine references. Legacy ledgers return unavailable/empty v6 facts
+  rather than a fabricated complete state.
+- Verify renders that quality panel and bidirectional PDF links. Monthly renders
+  checkpoint date, reported/reconstructed/incomplete state, reconciliation,
+  scope/price warnings, and native-first totals with dated FX rates. New UI
+  strings are translated for all supported locales.
 
 ## 5. Final acceptance criteria
 

@@ -15,7 +15,7 @@ it updates preferences in JSON, not SQLite.
 | `/research` | `GET /prices`, `/trades`, `/financials` | security research |
 | `/viz` | `GET /holdings_by_sector`, `/correlation`, `/rrg` | visual analytics |
 | `/config` | `GET`, `PUT` | portfolios/theme/hide-money/language |
-| `/statements` | list, `GET /{id}/pdf`, `GET /{id}/boxes` | read-only extraction verification |
+| `/statements` | list, `GET /{id}/pdf`, `GET /{id}/boxes` | read-only extraction/reconciliation verification |
 
 There are no upload, import, LLM draft-parser, explainer, or HTTP
 reconciliation-rebuild endpoints in the current route set.
@@ -27,19 +27,29 @@ reconciliation-rebuild endpoints in the current route set.
 3. Performance: value/cash history.
 4. Research: price, trade, and fundamental detail.
 5. Visualisations: holdings treemap, correlation, and RRG.
-6. Verify extraction: PDF.js rendering with `pdfplumber` text-line boxes and
-   parsed transaction/position/cash/quarantine lists.
+6. Verify extraction: PDF.js rendering with `pdfplumber` text-line boxes,
+   parsed transaction/position/cash/summary/quarantine lists, scope
+   completeness, active parser/run metadata, and reconciliation outcomes.
 7. Settings: named account portfolios.
 
 Global top-bar controls select portfolio, language, hidden-money mode, and
 theme. Preferences flow through `usePortfolio()` and React Query.
 
-## Verify limitations
+## Verify contract and limitations
 
-`GET /statements/{id}/boxes` re-extracts text lines, normalizes whitespace/case,
-and fuzzy-matches stored transaction/position/quarantine `raw_line` values.
-Cash rows do not have raw lines, so they cannot be source-linked. Repeated text
-can match multiple boxes. Coordinates are not stored as ingestion provenance.
+`GET /statements` includes read-only quality counters/flags for unresolved
+identity or quarantine rows, incomplete scopes/reconciliation input, and
+unexplained residuals. The React filter checkboxes apply those flags locally to
+the fetched picker rows.
+
+`GET /statements/{id}/boxes` returns the active parser/run metadata, every
+currency/section/scope completeness declaration, persisted position/cash/total
+reconciliation results, and the parsed lists. It re-extracts PDF text lines,
+normalizes whitespace/case, and fuzzy-matches stored transaction, position,
+cash, summary-total, and quarantine evidence text. Repeated text can match
+multiple boxes; legacy rows with no recorded source text remain visibly
+unlinked. A legacy database without v6 scope/reconciliation tables returns
+explicitly empty quality facts rather than treating those facts as complete.
 
 ## Configuration shape
 
@@ -66,8 +76,10 @@ canonical instrument key, and currency; diff rows use the same identity.
 
 Each holdings row also returns checkpoint statement/scope identifiers,
 reported-versus-reconstructed state, reconciliation status/reason, price/date
-status, and quality warnings. The current React UI uses stable identity keys but
-does not yet render the quality fields; Phase 8 owns that read-only surface.
+status, and quality warnings. Monthly renders checkpoint date, holding state,
+reconciliation state, and compact incomplete/reconciliation/pricing warnings.
+Native-currency totals remain primary; CAD/USD conversions display their rate
+and rate date.
 
 ## Frontend rules
 

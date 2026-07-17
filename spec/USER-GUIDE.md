@@ -9,12 +9,13 @@ This guide is written for **humans**. Technical context starts at
 [INDEX.md](INDEX.md), while coding-agent rules live in
 [AGENTS.md](../AGENTS.md).
 
-> **Current data-quality notice (2026-07-15):** the GUI is operational and
+> **Current data-quality notice (2026-07-16):** the GUI is operational and
 > source ingestion preserves the prior active extraction if parsing or staging
 > fails. Parser v2 fixes the audited RBC dual-currency and TD bundled layouts,
 > and the CLI now persists month-end reconciliation results. A non-live shadow
 > rebuild and comparison report exist, but the live ledger has not been cut
-> over and the GUI does not yet display reconciliation status. Review
+> over. Verify and Monthly display read-only quality states when v6 facts are
+> present; historical live rows can still be unavailable. Review
 > [CURRENT-STATE.md](CURRENT-STATE.md) before relying on totals as reconciled.
 
 ---
@@ -225,9 +226,15 @@ database, across all accounts in the active portfolio.
   comparison date when you want to reset the diff.
 - Cash positions appear as `CAD Cash` / `USD Cash` rows per account. Totals
   show native currency buckets plus combined CAD and USD totals using the
-  latest FX rate on or before the snapshot date.
+  latest FX rate on or before the snapshot date. The displayed FX chips state
+  both the rate and its date; native-currency buckets remain the primary total.
 - Columns sortable; institution / account / profile are visible, and the
   filters can narrow the table to specific institutions or accounts.
+- Every current holding shows its checkpoint date and whether it is
+  **reported**, **reconstructed**, or **incomplete**. The quality cell also
+  shows its reconciliation result and warns about incomplete scopes,
+  reconciliation issues, and stale or missing prices. These flags describe
+  uncertainty; they never add a balancing transaction or guess a value.
 
 ### 4.3 Performance
 
@@ -246,8 +253,9 @@ Visualisations, so accounts with different statement dates carry their most
 recent trusted state forward consistently. Parser v2 can emit complete scopes
 for recognized sections; existing active/live v1 rows remain conservatively
 `unknown`, so they may carry an old holding forward until a reviewed re-ingest
-or shadow rebuild. Quality and reconciliation details remain API data until the
-read-only UI surface is added. See [RECONCILIATION.md](RECONCILIATION.md).
+or shadow rebuild. The Monthly quality cell and Verify-extraction tab expose
+the same read-only scope/reconciliation state. See
+[RECONCILIATION.md](RECONCILIATION.md).
 
 ### 4.4 Research
 
@@ -296,8 +304,10 @@ The screen has two sides:
   text line that a parsed item came from. Boxes are colored by state: green
   = a matched line, amber = the currently selected item, gray = a related
   line belonging to another item on the same selection.
-- **Right** lists the parsed items grouped into Transactions, Positions,
-  Cash, and Quarantine.
+- **Right** begins with a quality summary: active parser/run versions and
+  status, completeness of every currency/section scope, and the position,
+  cash, and statement-total reconciliation outcomes. It then lists parsed
+  Transactions, Positions, Cash, Summary totals, and Quarantine rows.
 
 Click a box on the left to highlight its item on the right; click an item on
 the right to highlight its box(es) on the left and scroll the PDF to the
@@ -309,6 +319,13 @@ Pick which statement to view with the dropdown filters — **Date**,
 defaults to the latest statement. **Prev / next** chevron buttons next to
 the date step through statements within the current filtered set (prev =
 older, next = newer).
+
+Use the **Unresolved**, **Incomplete**, and **Unreconciled** checkboxes to
+limit the picker to statements with a quarantined/unresolved identity, a
+partial or missing scope/input, or an unexplained residual. Cash and summary
+total rows use their persisted source evidence for PDF boxes when that evidence
+exists. A dimmed dot means the row has no defensible matching text line; it is
+not a zero or a fabricated source location.
 
 ### 4.7 Settings
 

@@ -5,7 +5,7 @@ and TD statements. It extracts read-only PDFs into a native-currency SQLite
 ledger, combines them with public market data in DuckDB, and exposes a FastAPI
 backend plus a React dashboard.
 
-> **Data-quality status (2026-07-15):** the app and GUI run, the CLI persists
+> **Data-quality status (2026-07-16):** the app and GUI run, the CLI persists
 > scoped month-end reconciliation results, and a parser-v2 shadow ledger has
 > passed a double-build comparison. The live database has not been cut over, so
 > do not treat it as fully reconciled. See [Current state](spec/CURRENT-STATE.md)
@@ -119,13 +119,16 @@ read-only, so the application safety rule still applies).
 
 The current tabs are Transactions, Monthly, Performance, Research,
 Visualisations, Verify extraction, and Settings. Verify renders the original
-PDF beside parsed rows and highlights fuzzy-matched text-line boxes. Settings
-manages named account portfolios; theme, language, and hide-money controls are
-in the top bar.
+PDF beside parsed rows and highlights fuzzy-matched source boxes, while also
+showing parser/run state, scope completeness, and reconciliation outcomes.
+Monthly shows reported/reconstructed/incomplete holding state, checkpoint date,
+quality warnings, and dated FX conversion details. Settings manages named
+account portfolios; theme, language, and hide-money controls are in the top
+bar.
 
 Known limitations are shown in [Current state](spec/CURRENT-STATE.md). Monthly,
-Performance, and Visualisations now share one canonical read-only holdings
-engine, but the GUI does not yet show its reconciliation/pricing quality fields.
+Performance, and Visualisations share one canonical read-only holdings engine;
+Monthly now surfaces its quality fields without changing ledger data.
 
 ## Repository map
 

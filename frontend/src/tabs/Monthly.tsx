@@ -10,6 +10,66 @@ function fmtNum(n: number | null | undefined, dec = 2) {
   return n.toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 
+function interpolate(text: string, values: Record<string, string>): string {
+  return Object.entries(values).reduce(
+    (result, [key, value]) => result.replaceAll(`{${key}}`, value),
+    text,
+  );
+}
+
+function translatedStatus(t: (key: string) => string, status: string): string {
+  const key = `quality.status.${status}`;
+  const translated = t(key);
+  return translated === key ? status.replaceAll("_", " ") : translated;
+}
+
+function translatedState(t: (key: string) => string, state: HoldingRow["holding_state"]): string {
+  return t(`quality.state.${state}`);
+}
+
+function hasScopeWarning(row: HoldingRow): boolean {
+  return row.holding_state === "incomplete" || row.quality_warnings.some((warning) =>
+    warning.startsWith("incomplete_") || warning.startsWith("missing_complete_") ||
+    warning.startsWith("duplicate_complete_"),
+  );
+}
+
+function hasReconciliationWarning(row: HoldingRow): boolean {
+  if (row.reconciliation_status && !["reconciled", "within_rounding", "not_applicable"].includes(row.reconciliation_status)) {
+    return true;
+  }
+  return row.quality_warnings.some((warning) => warning.startsWith("reconciliation_"));
+}
+
+function hasPriceWarning(row: HoldingRow): boolean {
+  return row.quality_warnings.some((warning) =>
+    ["market_price_stale", "stale_checkpoint_price", "stale_checkpoint_value", "unpriced"].includes(warning),
+  );
+}
+
+function HoldingQuality({ row }: { row: HoldingRow }) {
+  const { t } = useI18n();
+  const warnings: string[] = [];
+  if (hasScopeWarning(row)) warnings.push(t("quality.warning.scope"));
+  if (hasReconciliationWarning(row)) warnings.push(t("quality.warning.reconciliation"));
+  if (hasPriceWarning(row)) warnings.push(t("quality.warning.price"));
+  const title = [
+    ...warnings,
+    row.reconciliation_reason || "",
+  ].filter(Boolean).join(" · ");
+  return (
+    <div className="monthly-quality" title={title}>
+      <span className={`quality-tag state-${row.holding_state}`}>{translatedState(t, row.holding_state)}</span>
+      {row.reconciliation_status ? (
+        <span className={`quality-tag reconciliation-${row.reconciliation_status}`}>
+          {translatedStatus(t, row.reconciliation_status)}
+        </span>
+      ) : <span className="quality-tag unavailable">{t("quality.unavailable")}</span>}
+      {warnings.map((warning) => <span key={warning} className="quality-tag warning">{warning}</span>)}
+    </div>
+  );
+}
+
 type Col =
   | "institution_code" | "account_number" | "profile" | "symbol" | "asset_type"
   | "quantity" | "market_price" | "market_value" | "unrealized_pnl" | "currency";
@@ -134,30 +194,42 @@ export default function Monthly() {
           <input type="date" value={effectiveA} onChange={(e) => setA(e.target.value)} />
         </label>
         <button type="button" onClick={() => setA(effectiveB)} disabled={!effectiveB || effectiveA === effectiveB}>
-          Sync compare to as of
+          {t("monthly.sync_compare")}
         </button>
         <SmartSelect label={t("f.institution")} options={instOpts} value={instFilter} onChange={setInstFilter} />
         <SmartSelect label={t("f.account")} options={acctOpts} value={acctFilter} onChange={setAcctFilter} />
         <label><input type="checkbox" checked={hideZero}
-                      onChange={(e) => setHideZero(e.target.checked)} />&nbsp;Hide zero qty</label>
+                      onChange={(e) => setHideZero(e.target.checked)} />&nbsp;{t("monthly.hide_zero")}</label>
         <span className="tag">{activePortfolio?.name}</span>
-        <span className="muted">{filtered.length} rows</span>
+        <span className="muted">{filtered.length} {t("monthly.rows")}</span>
       </div>
 
       <div className="card">
-        <h3>Totals as of {effectiveB || "(no data)"}</h3>
+        <h3>{t("monthly.totals_as_of")} {effectiveB || `(${t("monthly.no_data")})`}</h3>
         <div className="kv">
           {Object.entries(totalsByCurrency).map(([c, v]) => (
             <span key={c} className="tag accent"><strong>{c}</strong>&nbsp;{fmtNum(v)}</span>
           ))}
           {combinedTotals.CAD !== undefined && (
-            <span className="tag"><strong>Total CAD</strong>&nbsp;{fmtNum(combinedTotals.CAD)}</span>
+            <span className="tag"><strong>{t("monthly.total_cad")}</strong>&nbsp;{fmtNum(combinedTotals.CAD)}</span>
           )}
           {combinedTotals.USD !== undefined && (
-            <span className="tag"><strong>Total USD</strong>&nbsp;{fmtNum(combinedTotals.USD)}</span>
+            <span className="tag"><strong>{t("monthly.total_usd")}</strong>&nbsp;{fmtNum(combinedTotals.USD)}</span>
+          )}
+          {fxTotals?.usd_cad !== undefined && (
+            <span className="tag muted">
+              {interpolate(t("monthly.fx_usd_cad"), { rate: fmtNum(fxTotals.usd_cad) })}
+              {fxTotals.cad_fx_date ? ` · ${interpolate(t("monthly.fx_date"), { date: fxTotals.cad_fx_date })}` : ""}
+            </span>
+          )}
+          {fxTotals?.cad_usd !== undefined && (
+            <span className="tag muted">
+              {interpolate(t("monthly.fx_cad_usd"), { rate: fmtNum(fxTotals.cad_usd) })}
+              {fxTotals.usd_fx_date ? ` · ${interpolate(t("monthly.fx_date"), { date: fxTotals.usd_fx_date })}` : ""}
+            </span>
           )}
           {effectiveA !== effectiveB && (
-            <span className="tag">Diff vs {effectiveA} — green = added, red = removed</span>
+            <span className="tag">{interpolate(t("monthly.diff_legend"), { date: effectiveA })}</span>
           )}
         </div>
       </div>
@@ -171,6 +243,8 @@ export default function Monthly() {
               <th onClick={() => toggleSort("profile")}>{t("nav.portfolio")}{arrow("profile")}</th>
               <th onClick={() => toggleSort("symbol")}>{t("th.symbol")}{arrow("symbol")}</th>
               <th onClick={() => toggleSort("asset_type")}>{t("th.type")}{arrow("asset_type")}</th>
+              <th>{t("quality.checkpoint")}</th>
+              <th>{t("verify.quality")}</th>
               <th className="num" onClick={() => toggleSort("quantity")}>{t("th.quantity")}{arrow("quantity")}</th>
               <th className="num" onClick={() => toggleSort("market_price")}>{t("th.price")}{arrow("market_price")}</th>
               <th className="num" onClick={() => toggleSort("market_value")}>{t("th.market_value")}{arrow("market_value")}</th>
@@ -191,9 +265,11 @@ export default function Monthly() {
                 <tr key={r.holding_key} className={rowClass}>
                   <td>{r.institution_code}</td>
                   <td>{r.account_number}</td>
-                  <td>{activePortfolio?.name || "All accounts"}</td>
+                  <td>{activePortfolio?.name || t("monthly.all_accounts")}</td>
                   <td>{r.symbol}</td>
                   <td>{r.asset_type}{r.option_type ? ` ${r.option_type} ${fmtNum(r.option_strike, 2)} ${r.option_expiry || ""}` : ""}</td>
+                  <td>{r.checkpoint_date || t("quality.unavailable")}</td>
+                  <td><HoldingQuality row={r} /></td>
                   <td className="num">{fmtNum(r.quantity, 0)}</td>
                   <td className="num">{fmtNum(r.market_price)}</td>
                   <td className="num">{fmtNum(r.market_value)}</td>
@@ -211,9 +287,11 @@ export default function Monthly() {
               <tr key={`gone-${d.holding_key}`} className="diff-del">
                 <td>{d.institution_code}</td>
                 <td>{d.account_number}</td>
-                <td>{activePortfolio?.name || "All accounts"}</td>
+                <td>{activePortfolio?.name || t("monthly.all_accounts")}</td>
                 <td>{d.symbol}</td>
                 <td>{d.asset_type}</td>
+                <td></td>
+                <td></td>
                 <td className="num">{fmtNum(d.qty_a, 0)}</td>
                 <td className="num"></td>
                 <td className="num">{fmtNum(d.mv_a)}</td>

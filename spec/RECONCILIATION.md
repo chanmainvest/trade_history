@@ -180,8 +180,10 @@ recomputing them from an old average cost.
 Performance evaluates the same service on each complete checkpoint date and
 optionally today, so its carried-forward state follows the same scoped rules.
 Visualisation sector, correlation, and RRG symbol selection call the same
-service. The GUI does not yet display the provenance/quality fields; that is
-Phase 8 work.
+service. Monthly displays checkpoint/provenance, holding state, reconciliation,
+and compact scope/price warnings, while Verify exposes the underlying
+statement-level scope and reconciliation evidence. These are read-only views;
+they do not change the ledger or mask an incomplete input.
 
 Remaining limits:
 

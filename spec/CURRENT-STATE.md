@@ -1,6 +1,6 @@
 # Current state
 
-Implementation review: **2026-07-15**. The live-ledger counts below remain a
+Implementation review: **2026-07-16**. The live-ledger counts below remain a
 dated diagnostic snapshot from **2026-07-12**, not a release promise. Parser
 v2 and the reconciliation engine were validated in fixtures and read-only
 corpus audits on 2026-07-14. A new parser-v2 shadow ledger has been built and
@@ -21,9 +21,13 @@ over to it.
   page/line evidence, available word/box geometry, explicit snapshot scopes,
   and quarantine rather than fabricate unsupported values.
 - Monthly, Performance, and Visualisations now consume one read-only scoped
-  holdings service. Its API rows include checkpoint/provenance, reconciliation,
-  pricing, and incomplete/unpriced quality fields; the GUI does not yet display
-  those fields.
+  holdings service. Monthly renders checkpoint/provenance, reported versus
+  reconstructed/incomplete state, reconciliation, and stale/unpriced quality
+  fields without mutating the ledger.
+- Verify extraction now reads active parser/run metadata, scope completeness,
+  position/cash/statement-total reconciliation results, and source-linked cash
+  and summary-total rows. Its unresolved/incomplete/unreconciled filters are
+  read-only. Legacy rows without v6 facts are shown as unavailable, not complete.
 - The CLI now has a guarded shadow build/compare/sign-off/cutover/rollback
   workflow. Building a shadow never changes the live ledger; cutover requires
   a signed local review report, a stopped backend acknowledgement, and an exact
@@ -114,7 +118,8 @@ over to it.
 2. **The reconciliation engine is implemented, but the dated live ledger has
    not been rebuilt with it.** `ledger ingest reconcile` now stores
    source-traceable position, cash, and printed-total equations. This phase did
-   not mutate the live database, and the GUI does not yet surface those results.
+   not mutate the live database. The GUI can surface results when they exist,
+   but legacy live rows have no v6 reconciliation facts yet.
 3. **Full-corpus cash and position residuals remain material.** The parser
    audit and shadow reconciliation expose them without fabricating balancing
    rows. The largest residuals and the RBC annual-report count difference still
@@ -123,7 +128,8 @@ over to it.
    Monthly, Performance, and Visualisations now use canonical identity,
    complete scopes, normalized movements, and explicit stale/unpriced status.
    The dated live ledger has not been re-ingested or reconciled with parser v2,
-   and the GUI does not yet surface the returned quality fields.
+   so visible quality states remain historical/unavailable until review and
+   cutover.
 5. **Live scopes/provenance are historical.** Parser v2 can produce complete
    scope and coordinate-aware evidence, but currently active v1-derived rows
    remain conservative/legacy until an approved re-ingest and shadow rebuild.
@@ -136,6 +142,6 @@ over to it.
 - Cache validity includes source hash, parser version, parser contract, schema,
   and reviewed-identity resolver state. The v2 parser bump makes v1 active
   output stale for a reviewed re-ingest.
-- The GUI quality surface remains defined in
-  `plan/EXTRACTION_RECONCILIATION_REFACTOR.md`. Shadow build/cutover tooling is
-  implemented, but review sign-off and cutover have intentionally not occurred.
+- The GUI quality surface is implemented read-only. Shadow build/cutover
+  tooling is implemented, but review sign-off and cutover have intentionally
+  not occurred.

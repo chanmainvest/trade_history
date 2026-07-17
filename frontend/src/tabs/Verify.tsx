@@ -3,7 +3,15 @@ import { useQuery } from "@tanstack/react-query";
 import * as pdfjsLib from "pdfjs-dist";
 // Bundle the worker through Vite so no external fetch is needed.
 import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { api, LineBox, StatementBoxes, StatementRow } from "../api";
+import {
+  api,
+  LineBox,
+  StatementBoxes,
+  StatementQualityFlag,
+  StatementReconciliation,
+  StatementRow,
+  StatementScope,
+} from "../api";
 import { useI18n } from "../i18n";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = PdfWorker;
@@ -38,6 +46,7 @@ export default function Verify() {
   const [dateFilter, setDateFilter] = useState("");
   const [bankFilter, setBankFilter] = useState("");
   const [acctFilter, setAcctFilter] = useState("");
+  const [qualityFilters, setQualityFilters] = useState<StatementQualityFlag[]>([]);
 
   // Statement picker list + client-side filters.
   const listQ = useQuery({ queryKey: ["statements-all"], queryFn: () => api.statements(2000) });
@@ -70,9 +79,12 @@ export default function Verify() {
     if (acctFilter) {
       rows = rows.filter((r) => `${r.institution_code}::${r.account_number}` === acctFilter);
     }
+    if (qualityFilters.length) {
+      rows = rows.filter((r) => r.quality_flags.some((flag) => qualityFilters.includes(flag)));
+    }
     // allRows is already ordered by period_end DESC; keep that order.
     return rows;
-  }, [allRows, dateFilter, bankFilter, acctFilter]);
+  }, [allRows, dateFilter, bankFilter, acctFilter, qualityFilters]);
 
   // Default to the latest statement once the list arrives.
   useEffect(() => {
@@ -113,6 +125,13 @@ export default function Verify() {
     setDateFilter("");
     setBankFilter("");
     setAcctFilter("");
+    setQualityFilters([]);
+  }
+
+  function toggleQualityFilter(flag: StatementQualityFlag) {
+    setQualityFilters((currentFilters) => currentFilters.includes(flag)
+      ? currentFilters.filter((currentFlag) => currentFlag !== flag)
+      : [...currentFilters, flag]);
   }
 
   return (
@@ -137,6 +156,15 @@ export default function Verify() {
             {acctOpts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </label>
+        {(["unresolved", "incomplete", "unreconciled"] as StatementQualityFlag[]).map((flag) => (
+          <label key={flag} className="quality-filter">
+            <input
+              type="checkbox"
+              checked={qualityFilters.includes(flag)}
+              onChange={() => toggleQualityFilter(flag)}
+            />&nbsp;{qualityFlagLabel(t, flag)}
+          </label>
+        ))}
         <span className="verify-pager">
           {/* "next" (newer statement) is on the left, since newer is higher in the list */}
           <button className="icon-btn" onClick={goNext} disabled={!hasNext} title={t("verify.next")} aria-label={t("verify.next")}>
@@ -150,10 +178,15 @@ export default function Verify() {
           </button>
         </span>
         {current && (
-          <span className="tag">{current.institution_code} {current.account_number}</span>
+          <>
+            <span className="tag">{current.institution_code} {current.account_number}</span>
+            {current.quality_flags.map((flag) => (
+              <span key={flag} className={`quality-tag ${flag}`}>{qualityFlagLabel(t, flag)}</span>
+            ))}
+          </>
         )}
         <span className="muted">{filtered.length} {t("verify.statements")}</span>
-        {(dateFilter || bankFilter || acctFilter) && (
+        {(dateFilter || bankFilter || acctFilter || qualityFilters.length) && (
           <button onClick={clearFilters}>{t("f.clear")}</button>
         )}
       </div>
@@ -239,10 +272,6 @@ function VerifyPane({
   }
   if (!data) return null;
 
-  if (data.pages.length === 0) {
-    return <p className="muted">{t("verify.no_pdf")}</p>;
-  }
-
   // Index boxes by page for the per-page overlay.
   const boxesByPage = new Map<number, LineBox[]>();
   for (const page of data.pages) {
@@ -253,18 +282,21 @@ function VerifyPane({
   return (
     <div className="verify-layout">
       <div className="verify-pane verify-pdf-pane" ref={pdfScrollRef}>
-        <PdfView
-          url={pdfUrl}
-          pageCount={data.pages.length}
-          scale={RENDER_SCALE}
-          boxesByPage={boxesByPage}
-          selectedKey={selectedKey}
-          onSelect={onSelect}
-          pageRefs={pageRefs}
-        />
+        {data.pages.length ? (
+          <PdfView
+            url={pdfUrl}
+            pageCount={data.pages.length}
+            scale={RENDER_SCALE}
+            boxesByPage={boxesByPage}
+            selectedKey={selectedKey}
+            onSelect={onSelect}
+            pageRefs={pageRefs}
+          />
+        ) : <p className="muted">{t("verify.no_pdf")}</p>}
       </div>
 
       <div className="verify-pane verify-items-pane">
+        <QualityPanel data={data} />
         <ItemsGroup
           title={t("verify.transactions")}
           rows={data.transactions}
@@ -293,7 +325,18 @@ function VerifyPane({
           render={(r) => `${r.currency || ""} ${fmt(r.closing_balance)}`}
           kind="cash"
           idOf={(r) => r.cash_balance_id}
-          titleOf={() => ""}
+          titleOf={(r) => r.raw_line || ""}
+          selectedKey={selectedKey}
+          onSelect={onSelect}
+          matchedKeys={firstBoxByRef}
+        />
+        <ItemsGroup
+          title={t("verify.summary_totals")}
+          rows={data.summary_totals}
+          render={(r) => `${r.currency} ${r.scope_key} ${fmt(r.reported_total)}`}
+          kind="summary"
+          idOf={(r) => r.snapshot_set_id}
+          titleOf={(r) => r.raw_line || ""}
           selectedKey={selectedKey}
           onSelect={onSelect}
           matchedKeys={firstBoxByRef}
@@ -563,6 +606,100 @@ function kindTag(kind: string): string {
     case "position": return "P";
     case "quarantine": return "Q";
     case "cash": return "C";
+    case "summary": return "S";
     default: return kind.charAt(0).toUpperCase();
   }
+}
+
+function qualityFlagLabel(t: (key: string) => string, flag: StatementQualityFlag): string {
+  return t(`verify.filter.${flag}`);
+}
+
+function reconciliationStatusLabel(t: (key: string) => string, status: string): string {
+  const key = `quality.status.${status}`;
+  const translated = t(key);
+  return translated === key ? status.replaceAll("_", " ") : translated;
+}
+
+function completenessLabel(t: (key: string) => string, completeness: string): string {
+  const key = `quality.completeness.${completeness}`;
+  const translated = t(key);
+  return translated === key ? completeness : translated;
+}
+
+function reconciliationKindLabel(t: (key: string) => string, kind: StatementReconciliation["kind"]): string {
+  return t(`verify.reconciliation_kind.${kind}`);
+}
+
+function scopeKindLabel(t: (key: string) => string, kind: StatementScope["section_type"]): string {
+  return t(`verify.scope_kind.${kind}`);
+}
+
+function ScopeRows({ scopes }: { scopes: StatementScope[] }) {
+  const { t } = useI18n();
+  if (!scopes.length) return <p className="muted verify-quality-empty">{t("verify.no_scopes")}</p>;
+  return (
+    <div className="verify-quality-list">
+      {scopes.map((scope) => (
+        <div key={scope.snapshot_set_id} className={`verify-quality-row scope-${scope.completeness}`}>
+          <span>{scope.currency} · {scopeKindLabel(t, scope.section_type)} · {scope.scope_key}</span>
+          <span className={`quality-tag ${scope.completeness}`}>{completenessLabel(t, scope.completeness)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReconciliationRows({ rows }: { rows: StatementReconciliation[] }) {
+  const { t } = useI18n();
+  if (!rows.length) return <p className="muted verify-quality-empty">{t("verify.no_reconciliation")}</p>;
+  return (
+    <div className="verify-quality-list">
+      {rows.map((row) => (
+        <div key={row.reconciliation_id} className={`verify-quality-row reconciliation-${row.status}`}>
+          <span title={row.reason || ""}>
+            {reconciliationKindLabel(t, row.kind)} · {row.currency}
+            {row.scope_key ? ` · ${row.scope_key}` : ""}
+            {row.residual !== null ? ` · ${t("verify.residual")} ${fmt(row.residual)}` : ""}
+          </span>
+          <span className={`quality-tag reconciliation-${row.status}`}>{reconciliationStatusLabel(t, row.status)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function QualityPanel({ data }: { data: StatementBoxes }) {
+  const { t } = useI18n();
+  const source = data.source_file;
+  const quality = data.statement.quality;
+  const hasQualityFacts = quality.scope_count > 0 || quality.reconciliation_result_count > 0;
+  return (
+    <section className="verify-quality">
+      <h3>{t("verify.quality")}</h3>
+      <div className="verify-quality-meta">
+        <span>{t("verify.parser")}: {source?.parser_name || t("verify.not_available")}</span>
+        <span>{t("verify.parser_version")}: {source?.parser_version || t("verify.not_available")}</span>
+        <span>{t("verify.contract_version")}: {source?.contract_version || t("verify.not_available")}</span>
+        <span>{t("verify.run_schema")}: {source?.run_schema_version ?? t("verify.not_available")}</span>
+        <span>{t("verify.active_run")}: {source?.active_run_status || t("verify.not_available")}</span>
+        <span>{t("verify.parse_status")}: {source?.parse_status || t("verify.not_available")}</span>
+      </div>
+      <div className="verify-quality-summary">
+        {quality.quality_flags.length ? quality.quality_flags.map((flag) => (
+          <span key={flag} className={`quality-tag ${flag}`}>{qualityFlagLabel(t, flag)}</span>
+        )) : hasQualityFacts ? <span className="quality-tag complete">{t("verify.quality_clear")}</span>
+          : <span className="quality-tag unavailable">{t("quality.unavailable")}</span>}
+        {hasQualityFacts ? (
+          <span className="muted">
+            {quality.complete_scope_count}/{quality.scope_count} {t("verify.complete_scopes")}
+          </span>
+        ) : <span className="muted">{t("verify.no_quality")}</span>}
+      </div>
+      <h4>{t("verify.scopes")}</h4>
+      <ScopeRows scopes={data.scopes} />
+      <h4>{t("verify.reconciliation")}</h4>
+      <ReconciliationRows rows={data.reconciliation_results} />
+    </section>
+  );
 }

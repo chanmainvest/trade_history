@@ -203,12 +203,69 @@ export type StatementRow = {
   institution_name: string;
   relpath: string;
   parser_name: string | null;
-  parse_status: string;
+  parser_version: string | null;
+  parse_status: string | null;
+  active_ingestion_run_id: number | null;
+  active_run_status: string | null;
+  contract_version: string | null;
+  run_schema_version: number | null;
+  scope_count: number;
+  complete_scope_count: number;
+  incomplete_scope_count: number;
+  unresolved_identity_count: number;
+  quarantine_count: number;
+  reconciliation_result_count: number;
+  unreconciled_count: number;
+  incomplete_reconciliation_count: number;
+  quality_flags: StatementQualityFlag[];
+};
+
+export type StatementQualityFlag = "unresolved" | "incomplete" | "unreconciled";
+
+export type StatementQuality = {
+  scope_count: number;
+  complete_scope_count: number;
+  incomplete_scope_count: number;
+  unresolved_identity_count: number;
+  quarantine_count: number;
+  reconciliation_result_count: number;
+  unreconciled_count: number;
+  incomplete_reconciliation_count: number;
+  quality_flags: StatementQualityFlag[];
+};
+
+export type StatementScope = {
+  snapshot_set_id: number;
+  currency: string;
+  section_type: "positions" | "cash" | "summary";
+  scope_key: string;
+  completeness: "complete" | "partial" | "absent" | "unknown";
+  validation_status: string;
+  reported_total: number | null;
+  raw_line: string | null;
+};
+
+export type StatementReconciliation = {
+  reconciliation_id: number;
+  kind: "position" | "cash" | "statement_total" | "transfer";
+  currency: string;
+  status: string;
+  reason: string | null;
+  residual: number | null;
+  tolerance: number;
+  opening_value: number | null;
+  summed_deltas: number | null;
+  expected_close: number | null;
+  reported_close: number | null;
+  snapshot_set_id: number | null;
+  prior_snapshot_set_id: number | null;
+  section_type: string | null;
+  scope_key: string | null;
 };
 
 /** A matched reference linking a PDF line box to a parsed item. */
 export type BoxRef = {
-  kind: "transaction" | "position" | "quarantine";
+  kind: "transaction" | "position" | "cash" | "summary" | "quarantine";
   id: number;
   label: string;
 };
@@ -223,11 +280,31 @@ export type LineBox = {
 
 /** Per-page line boxes response from /statements/{id}/boxes. */
 export type StatementBoxes = {
-  statement: { statement_id: number; account_id: number; period_start: string; period_end: string; source_file_id: number };
-  source_file: { relpath: string; sha256: string | null; parser_name: string | null; parser_version: string | null; parse_status: string } | null;
+  statement: {
+    statement_id: number;
+    account_id: number;
+    period_start: string;
+    period_end: string;
+    source_file_id: number;
+    quality: StatementQuality;
+  };
+  source_file: {
+    relpath: string;
+    sha256: string | null;
+    parser_name: string | null;
+    parser_version: string | null;
+    parse_status: string | null;
+    active_ingestion_run_id: number | null;
+    active_run_status: string | null;
+    contract_version: string | null;
+    run_schema_version: number | null;
+  } | null;
   pages: { page_number: number; width: number; height: number; lines: LineBox[] }[];
   transactions: any[];
   positions: any[];
-  cash_balances: any[];
+  cash_balances: (any & { cash_balance_id: number; raw_line: string | null })[];
+  summary_totals: StatementScope[];
+  scopes: StatementScope[];
+  reconciliation_results: StatementReconciliation[];
   quarantine: any[];
 };
