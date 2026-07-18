@@ -6,6 +6,13 @@
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 
+-- SQLite has no enum/domain type. This reference table is the authoritative
+-- private-ledger currency domain and can be extended deliberately later.
+CREATE TABLE IF NOT EXISTS currencies (
+    code TEXT PRIMARY KEY CHECK (code IN ('CAD','USD'))
+) WITHOUT ROWID;
+INSERT OR IGNORE INTO currencies(code) VALUES ('CAD'), ('USD');
+
 -- ---------------------------------------------------------------------------
 -- INSTITUTIONS / ACCOUNTS
 -- ---------------------------------------------------------------------------
@@ -22,9 +29,11 @@ CREATE TABLE IF NOT EXISTS accounts (
     account_number   TEXT NOT NULL,               -- as printed on statement (may be masked)
     account_type     TEXT,                        -- Cash, Margin, RRSP, TFSA, RESP, etc.
     nickname         TEXT,                        -- optional friendly label
-    base_currency    TEXT NOT NULL DEFAULT 'CAD', -- account's reporting currency
-    opened_on        TEXT,
-    closed_on        TEXT,
+    base_currency    TEXT NOT NULL DEFAULT 'CAD' REFERENCES currencies(code),
+    opened_on        TEXT CHECK (opened_on IS NULL OR
+                       (length(opened_on) = 10 AND opened_on GLOB '????-??-??')),
+    closed_on        TEXT CHECK (closed_on IS NULL OR
+                       (length(closed_on) = 10 AND closed_on GLOB '????-??-??')),
     notes            TEXT,
     UNIQUE(institution_id, account_number)
 );
@@ -36,7 +45,8 @@ CREATE TABLE IF NOT EXISTS account_links (
     link_id          INTEGER PRIMARY KEY AUTOINCREMENT,
     from_account_id  INTEGER NOT NULL REFERENCES accounts(account_id),
     to_account_id    INTEGER NOT NULL REFERENCES accounts(account_id),
-    transfer_date    TEXT NOT NULL,
+    transfer_date    TEXT NOT NULL CHECK
+                       (length(transfer_date) = 10 AND transfer_date GLOB '????-??-??'),
     notes            TEXT
 );
 
@@ -51,13 +61,14 @@ CREATE TABLE IF NOT EXISTS instruments (
                        ('equity','etf','option','bond','mutual_fund','cash','other')),
     symbol           TEXT NOT NULL,               -- e.g. AAPL, BNS.TO, SPY
     exchange         TEXT,                        -- NYSE, NASDAQ, TSX, TSXV...
-    currency         TEXT NOT NULL,               -- USD, CAD
+    currency         TEXT NOT NULL REFERENCES currencies(code),
     name             TEXT,                        -- "Apple Inc."
     cusip            TEXT,
     isin             TEXT,
     -- Option contract fields (NULL for non-options)
     option_root      TEXT,
-    option_expiry    TEXT,                        -- YYYY-MM-DD
+    option_expiry    TEXT CHECK (option_expiry IS NULL OR
+                       (length(option_expiry) = 10 AND option_expiry GLOB '????-??-??')),
     option_strike    REAL,
     option_type      TEXT CHECK (option_type IN ('CALL','PUT') OR option_type IS NULL),
     option_multiplier INTEGER DEFAULT 100,
@@ -89,7 +100,7 @@ CREATE TABLE IF NOT EXISTS instrument_identifier_lookups (
     institution_code   TEXT NOT NULL DEFAULT '',
     normalized_name    TEXT NOT NULL,
     display_name       TEXT NOT NULL,
-    currency           TEXT NOT NULL,
+    currency           TEXT NOT NULL REFERENCES currencies(code),
     status             TEXT NOT NULL DEFAULT 'pending'
                        CHECK (status IN ('pending','resolved','not_found','ambiguous','ignored')),
     resolved_symbol    TEXT,
@@ -97,8 +108,12 @@ CREATE TABLE IF NOT EXISTS instrument_identifier_lookups (
     resolved_name      TEXT,
     evidence_url       TEXT,
     sample_description TEXT,
-    first_seen_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    last_seen_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    first_seen_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                       CHECK (length(first_seen_at) = 20
+                              AND first_seen_at GLOB '????-??-??T??:??:??Z'),
+    last_seen_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                       CHECK (length(last_seen_at) = 20
+                              AND last_seen_at GLOB '????-??-??T??:??:??Z'),
     notes              TEXT,
     UNIQUE(identifier_type, asset_type, institution_code, normalized_name, currency)
 );
@@ -113,13 +128,16 @@ CREATE INDEX IF NOT EXISTS idx_identifier_lookups_status
 CREATE TABLE IF NOT EXISTS source_files (
     source_file_id   INTEGER PRIMARY KEY AUTOINCREMENT,
     relpath          TEXT NOT NULL UNIQUE,        -- relative to repo root
-    sha256           TEXT,
+    sha256           TEXT CHECK (sha256 IS NULL OR
+                       (length(sha256) = 64 AND sha256 = lower(sha256)
+                        AND sha256 NOT GLOB '*[^0-9a-f]*')),
     size_bytes       INTEGER,
     page_count       INTEGER,
     is_image_only    INTEGER NOT NULL DEFAULT 0,
     parser_name      TEXT,
     parser_version   TEXT,
-    parsed_at        TEXT,
+    parsed_at        TEXT CHECK (parsed_at IS NULL OR
+                       (length(parsed_at) = 20 AND parsed_at GLOB '????-??-??T??:??:??Z')),
     parse_status     TEXT NOT NULL DEFAULT 'pending', -- compatibility summary of active/latest run
     active_ingestion_run_id INTEGER REFERENCES ingestion_runs(ingestion_run_id)
                                       ON DELETE SET NULL
@@ -131,7 +149,9 @@ CREATE TABLE IF NOT EXISTS ingestion_runs (
     ingestion_run_id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_file_id   INTEGER NOT NULL REFERENCES source_files(source_file_id)
                                  ON DELETE CASCADE,
-    source_sha256    TEXT,
+    source_sha256    TEXT CHECK (source_sha256 IS NULL OR
+                       (length(source_sha256) = 64 AND source_sha256 = lower(source_sha256)
+                        AND source_sha256 NOT GLOB '*[^0-9a-f]*')),
     parser_name      TEXT,
     parser_version   TEXT,
     contract_version TEXT NOT NULL,
@@ -140,11 +160,17 @@ CREATE TABLE IF NOT EXISTS ingestion_runs (
     status           TEXT NOT NULL CHECK (status IN
                        ('pending','parsing','validated','active','failed','skipped','superseded')),
     error_summary    TEXT,
-    started_at       TEXT NOT NULL,
-    finished_at      TEXT,
-    content_counts_json TEXT,
-    content_hash     TEXT,
-    activated_at     TEXT
+    started_at       TEXT NOT NULL CHECK
+                       (length(started_at) = 20 AND started_at GLOB '????-??-??T??:??:??Z'),
+    finished_at      TEXT CHECK (finished_at IS NULL OR
+                       (length(finished_at) = 20 AND finished_at GLOB '????-??-??T??:??:??Z')),
+    content_counts_json TEXT CHECK
+                       (content_counts_json IS NULL OR json_valid(content_counts_json)),
+    content_hash     TEXT CHECK (content_hash IS NULL OR
+                       (length(content_hash) = 64 AND content_hash = lower(content_hash)
+                        AND content_hash NOT GLOB '*[^0-9a-f]*')),
+    activated_at     TEXT CHECK (activated_at IS NULL OR
+                       (length(activated_at) = 20 AND activated_at GLOB '????-??-??T??:??:??Z'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_ingestion_runs_source
@@ -158,8 +184,10 @@ CREATE TABLE IF NOT EXISTS statements (
     ingestion_run_id INTEGER NOT NULL REFERENCES ingestion_runs(ingestion_run_id) ON DELETE CASCADE,
     account_id       INTEGER NOT NULL REFERENCES accounts(account_id),
     statement_key    TEXT NOT NULL UNIQUE,
-    period_start     TEXT NOT NULL,               -- YYYY-MM-DD
-    period_end       TEXT NOT NULL,               -- YYYY-MM-DD
+    period_start     TEXT NOT NULL CHECK
+                       (length(period_start) = 10 AND period_start GLOB '????-??-??'),
+    period_end       TEXT NOT NULL CHECK
+                       (length(period_end) = 10 AND period_end GLOB '????-??-??'),
     statement_type   TEXT NOT NULL DEFAULT 'monthly', -- monthly|quarterly|annual|interim
     UNIQUE(source_file_id, account_id, period_start, period_end, statement_type)
 );
@@ -167,9 +195,8 @@ CREATE TABLE IF NOT EXISTS statements (
 CREATE INDEX IF NOT EXISTS idx_statements_account_period ON statements(account_id, period_end);
 CREATE INDEX IF NOT EXISTS idx_statements_run ON statements(ingestion_run_id);
 
--- Source evidence is provenance metadata. Coordinates remain optional until a
--- layout-aware parser can supply them; missing evidence is represented as NULL,
--- never as invented text or coordinates.
+-- Source evidence is semantic provenance. Its identity is independent of
+-- replaceable layout geometry; legacy single-box columns remain readable.
 CREATE TABLE IF NOT EXISTS source_evidence (
     evidence_id      INTEGER PRIMARY KEY AUTOINCREMENT,
     evidence_key     TEXT NOT NULL UNIQUE,
@@ -180,8 +207,8 @@ CREATE TABLE IF NOT EXISTS source_evidence (
     page_number      INTEGER,
     line_number      INTEGER,
     raw_text         TEXT,
-    bbox_json        TEXT,
-    words_json       TEXT,
+    bbox_json        TEXT CHECK (bbox_json IS NULL OR json_valid(bbox_json)),
+    words_json       TEXT CHECK (words_json IS NULL OR json_valid(words_json)),
     parser_rule      TEXT,
     parser_version   TEXT,
     CHECK (page_number IS NULL OR page_number >= 1),
@@ -191,14 +218,76 @@ CREATE TABLE IF NOT EXISTS source_evidence (
 
 CREATE INDEX IF NOT EXISTS idx_source_evidence_run ON source_evidence(ingestion_run_id);
 
+-- Geometry is derived after semantic parsing and can be rebuilt without
+-- changing transactions or evidence identity.
+CREATE TABLE IF NOT EXISTS source_pages (
+    source_page_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_file_id   INTEGER NOT NULL REFERENCES source_files(source_file_id) ON DELETE CASCADE,
+    ingestion_run_id INTEGER NOT NULL REFERENCES ingestion_runs(ingestion_run_id) ON DELETE CASCADE,
+    extractor_version TEXT NOT NULL,
+    page_number      INTEGER NOT NULL CHECK (page_number >= 1),
+    width            REAL NOT NULL CHECK (width > 0),
+    height           REAL NOT NULL CHECK (height > 0),
+    UNIQUE(ingestion_run_id, extractor_version, page_number)
+);
+
+CREATE TABLE IF NOT EXISTS source_lines (
+    source_line_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_page_id   INTEGER NOT NULL REFERENCES source_pages(source_page_id) ON DELETE CASCADE,
+    line_number      INTEGER NOT NULL CHECK (line_number >= 1),
+    raw_text         TEXT NOT NULL,
+    normalized_text_hash TEXT NOT NULL CHECK
+                       (length(normalized_text_hash) = 64
+                        AND normalized_text_hash NOT GLOB '*[^0-9a-f]*'),
+    x0               REAL NOT NULL,
+    top              REAL NOT NULL,
+    x1               REAL NOT NULL,
+    bottom           REAL NOT NULL,
+    words_json       TEXT CHECK (words_json IS NULL OR json_valid(words_json)),
+    CHECK (x1 >= x0 AND bottom >= top),
+    UNIQUE(source_page_id, line_number)
+);
+
+CREATE TABLE IF NOT EXISTS source_evidence_geometry (
+    evidence_id      INTEGER PRIMARY KEY REFERENCES source_evidence(evidence_id) ON DELETE CASCADE,
+    extractor_version TEXT NOT NULL,
+    source_sha256    TEXT NOT NULL CHECK
+                       (length(source_sha256) = 64
+                        AND source_sha256 NOT GLOB '*[^0-9a-f]*'),
+    status           TEXT NOT NULL CHECK
+                       (status IN ('exact','unique_tokens','ambiguous','unmatched','no_coordinates')),
+    match_method     TEXT,
+    confidence       REAL CHECK (confidence IS NULL OR
+                       (confidence >= 0 AND confidence <= 1)),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                       CHECK (length(updated_at) = 20
+                              AND updated_at GLOB '????-??-??T??:??:??Z')
+);
+
+CREATE TABLE IF NOT EXISTS source_evidence_lines (
+    evidence_id      INTEGER NOT NULL REFERENCES source_evidence(evidence_id) ON DELETE CASCADE,
+    source_line_id   INTEGER NOT NULL REFERENCES source_lines(source_line_id) ON DELETE CASCADE,
+    ordinal          INTEGER NOT NULL CHECK (ordinal >= 0),
+    token_start      INTEGER,
+    token_end        INTEGER,
+    CHECK (token_start IS NULL OR token_start >= 0),
+    CHECK (token_end IS NULL OR token_end >= token_start),
+    PRIMARY KEY(evidence_id, source_line_id),
+    UNIQUE(evidence_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_lines_page ON source_lines(source_page_id, line_number);
+CREATE INDEX IF NOT EXISTS idx_evidence_lines_line ON source_evidence_lines(source_line_id);
+
 -- A statement may contain multiple independently complete currency/section
 -- scopes. Consumers may clear an omitted holding only when can_clear_omitted=1.
 CREATE TABLE IF NOT EXISTS snapshot_sets (
     snapshot_set_id  INTEGER PRIMARY KEY AUTOINCREMENT,
     statement_id     INTEGER NOT NULL REFERENCES statements(statement_id) ON DELETE CASCADE,
     account_id       INTEGER NOT NULL REFERENCES accounts(account_id),
-    as_of_date       TEXT NOT NULL,
-    currency         TEXT NOT NULL,
+    as_of_date       TEXT NOT NULL CHECK
+                       (length(as_of_date) = 10 AND as_of_date GLOB '????-??-??'),
+    currency         TEXT NOT NULL REFERENCES currencies(code),
     section_type     TEXT NOT NULL CHECK (section_type IN ('positions','cash','summary')),
     scope_key        TEXT NOT NULL DEFAULT 'default',
     completeness     TEXT NOT NULL CHECK (completeness IN
@@ -242,8 +331,10 @@ CREATE TABLE IF NOT EXISTS transactions (
     ingestion_run_id   INTEGER REFERENCES ingestion_runs(ingestion_run_id) ON DELETE SET NULL,
     evidence_id        INTEGER REFERENCES source_evidence(evidence_id) ON DELETE SET NULL,
 
-    trade_date         TEXT NOT NULL,             -- YYYY-MM-DD
-    settle_date        TEXT,
+    trade_date         TEXT NOT NULL CHECK
+                         (length(trade_date) = 10 AND trade_date GLOB '????-??-??'),
+    settle_date        TEXT CHECK (settle_date IS NULL OR
+                         (length(settle_date) = 10 AND settle_date GLOB '????-??-??')),
     txn_type           TEXT NOT NULL,
     instrument_id      INTEGER REFERENCES instruments(instrument_id),
 
@@ -255,8 +346,10 @@ CREATE TABLE IF NOT EXISTS transactions (
     other_fees         REAL DEFAULT 0,
     net_amount         REAL,                      -- reported/legacy signed amount
     cash_delta         REAL,                      -- normalized signed cash effect
-    cash_effective_date TEXT,                     -- settlement or trade date by broker contract
-    currency           TEXT NOT NULL,             -- the currency of price/amount
+    cash_effective_date TEXT CHECK (cash_effective_date IS NULL OR
+                         (length(cash_effective_date) = 10
+                          AND cash_effective_date GLOB '????-??-??')),
+    currency           TEXT NOT NULL REFERENCES currencies(code),
 
     -- For transfer_in / transfer_out / journal: link to the matching event
     counterpart_account_id INTEGER REFERENCES accounts(account_id),
@@ -272,7 +365,9 @@ CREATE TABLE IF NOT EXISTS transactions (
     resolution_method  TEXT,
     resolution_confidence REAL,
     resolution_evidence_id INTEGER REFERENCES source_evidence(evidence_id) ON DELETE SET NULL,
-    created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                         CHECK (length(created_at) = 20
+                                AND created_at GLOB '????-??-??T??:??:??Z')
 );
 
 CREATE INDEX IF NOT EXISTS idx_txn_account_date  ON transactions(account_id, trade_date);
@@ -289,7 +384,8 @@ CREATE TABLE IF NOT EXISTS instrument_ticker_changes (
     ticker_change_id   INTEGER PRIMARY KEY AUTOINCREMENT,
     from_instrument_id INTEGER NOT NULL REFERENCES instruments(instrument_id),
     to_instrument_id   INTEGER NOT NULL REFERENCES instruments(instrument_id),
-    effective_date     TEXT NOT NULL,
+    effective_date     TEXT NOT NULL CHECK
+                         (length(effective_date) = 10 AND effective_date GLOB '????-??-??'),
     conversion_ratio   REAL NOT NULL DEFAULT 1.0 CHECK (conversion_ratio > 0),
     status             TEXT NOT NULL DEFAULT 'extracted'
                        CHECK (status IN ('extracted','reviewed')),
@@ -340,7 +436,9 @@ CREATE TABLE IF NOT EXISTS quarantine_transactions (
     occurrence       INTEGER NOT NULL,
     raw_line         TEXT NOT NULL,
     reason           TEXT,
-    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                       CHECK (length(created_at) = 20
+                              AND created_at GLOB '????-??-??T??:??:??Z'),
     UNIQUE(ingestion_run_id, evidence_id)
 );
 
@@ -354,7 +452,8 @@ CREATE TABLE IF NOT EXISTS position_snapshots (
     snapshot_set_id   INTEGER NOT NULL REFERENCES snapshot_sets(snapshot_set_id) ON DELETE CASCADE,
     evidence_id       INTEGER NOT NULL REFERENCES source_evidence(evidence_id) ON DELETE CASCADE,
     account_id        INTEGER NOT NULL REFERENCES accounts(account_id),
-    as_of_date        TEXT NOT NULL,
+    as_of_date        TEXT NOT NULL CHECK
+                        (length(as_of_date) = 10 AND as_of_date GLOB '????-??-??'),
     instrument_id     INTEGER NOT NULL REFERENCES instruments(instrument_id),
     quantity          REAL NOT NULL,
     avg_cost          REAL,                       -- per share, native currency
@@ -362,7 +461,7 @@ CREATE TABLE IF NOT EXISTS position_snapshots (
     market_price      REAL,
     market_value      REAL,
     unrealized_pnl    REAL,
-    currency          TEXT NOT NULL,
+    currency          TEXT NOT NULL REFERENCES currencies(code),
     raw_line          TEXT,
     UNIQUE(snapshot_set_id, instrument_id)
 );
@@ -376,8 +475,9 @@ CREATE TABLE IF NOT EXISTS cash_balances (
     snapshot_set_id   INTEGER NOT NULL REFERENCES snapshot_sets(snapshot_set_id) ON DELETE CASCADE,
     evidence_id       INTEGER NOT NULL REFERENCES source_evidence(evidence_id) ON DELETE CASCADE,
     account_id        INTEGER NOT NULL REFERENCES accounts(account_id),
-    as_of_date        TEXT NOT NULL,
-    currency          TEXT NOT NULL,
+    as_of_date        TEXT NOT NULL CHECK
+                        (length(as_of_date) = 10 AND as_of_date GLOB '????-??-??'),
+    currency          TEXT NOT NULL REFERENCES currencies(code),
     opening_balance   REAL,
     closing_balance   REAL NOT NULL,
     raw_line          TEXT,
@@ -391,11 +491,12 @@ CREATE INDEX IF NOT EXISTS idx_cash_account_date ON cash_balances(account_id, as
 CREATE TABLE IF NOT EXISTS initial_positions (
     initial_id        INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id        INTEGER NOT NULL REFERENCES accounts(account_id),
-    as_of_date        TEXT NOT NULL,              -- date BEFORE first statement
+    as_of_date        TEXT NOT NULL CHECK
+                        (length(as_of_date) = 10 AND as_of_date GLOB '????-??-??'),
     instrument_id     INTEGER NOT NULL REFERENCES instruments(instrument_id),
     quantity          REAL NOT NULL,
     avg_cost          REAL,
-    currency          TEXT NOT NULL,
+    currency          TEXT NOT NULL REFERENCES currencies(code),
     notes             TEXT,
     UNIQUE(account_id, as_of_date, instrument_id)
 );
@@ -403,8 +504,9 @@ CREATE TABLE IF NOT EXISTS initial_positions (
 CREATE TABLE IF NOT EXISTS initial_cash (
     initial_cash_id   INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id        INTEGER NOT NULL REFERENCES accounts(account_id),
-    as_of_date        TEXT NOT NULL,
-    currency          TEXT NOT NULL,
+    as_of_date        TEXT NOT NULL CHECK
+                        (length(as_of_date) = 10 AND as_of_date GLOB '????-??-??'),
+    currency          TEXT NOT NULL REFERENCES currencies(code),
     balance           REAL NOT NULL,
     notes             TEXT,
     UNIQUE(account_id, as_of_date, currency)
@@ -416,10 +518,13 @@ CREATE TABLE IF NOT EXISTS annual_performance_reports (
     performance_id            INTEGER PRIMARY KEY AUTOINCREMENT,
     statement_id              INTEGER NOT NULL REFERENCES statements(statement_id) ON DELETE CASCADE,
     account_id                INTEGER NOT NULL REFERENCES accounts(account_id),
-    currency                  TEXT NOT NULL,
-    period_start              TEXT NOT NULL,
-    period_end                TEXT NOT NULL,
-    since_date                TEXT,
+    currency                  TEXT NOT NULL REFERENCES currencies(code),
+    period_start              TEXT NOT NULL CHECK
+                                (length(period_start) = 10 AND period_start GLOB '????-??-??'),
+    period_end                TEXT NOT NULL CHECK
+                                (length(period_end) = 10 AND period_end GLOB '????-??-??'),
+    since_date                TEXT CHECK (since_date IS NULL OR
+                                (length(since_date) = 10 AND since_date GLOB '????-??-??')),
     beginning_market_value    REAL,
     deposits_transfers_in     REAL,
     withdrawals_transfers_out REAL,
@@ -463,9 +568,11 @@ CREATE TABLE IF NOT EXISTS reconciliation_results (
     snapshot_set_id  INTEGER REFERENCES snapshot_sets(snapshot_set_id) ON DELETE CASCADE,
     prior_snapshot_set_id INTEGER REFERENCES snapshot_sets(snapshot_set_id) ON DELETE SET NULL,
     instrument_id    INTEGER REFERENCES instruments(instrument_id),
-    currency         TEXT NOT NULL,
-    prior_checkpoint TEXT,
-    current_checkpoint TEXT,
+    currency         TEXT NOT NULL REFERENCES currencies(code),
+    prior_checkpoint TEXT CHECK (prior_checkpoint IS NULL OR
+                       (length(prior_checkpoint) = 10 AND prior_checkpoint GLOB '????-??-??')),
+    current_checkpoint TEXT CHECK (current_checkpoint IS NULL OR
+                       (length(current_checkpoint) = 10 AND current_checkpoint GLOB '????-??-??')),
     opening_value    REAL,
     summed_deltas    REAL,
     expected_close   REAL,
@@ -477,7 +584,9 @@ CREATE TABLE IF NOT EXISTS reconciliation_results (
                         'incomplete_input','missing_prior_checkpoint',
                         'ambiguous_transfer','not_applicable')),
     reason           TEXT,
-    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                       CHECK (length(created_at) = 20
+                              AND created_at GLOB '????-??-??T??:??:??Z')
 );
 
 CREATE INDEX IF NOT EXISTS idx_reconciliation_scope
@@ -501,4 +610,4 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value            TEXT NOT NULL
 );
 
-INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '7');
+INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '8');

@@ -28,6 +28,7 @@ ledger pdf dump-samples [--per-folder N]
 ledger audit extraction [--statements-dir PATH] [--output PATH]
                         [--institution FOLDER] [--limit N] [--fail-on-errors]
 ledger ingest run [--institution FOLDER] [--limit N] [--force]
+ledger ingest enrich-layout [--source-file-id ID]
 ledger ingest infer-initials
 ledger ingest repair-symbols
 ledger ingest reconcile
@@ -58,15 +59,19 @@ name-only buy/sell links from observed same-currency holdings, transfer pairs,
 position attribution, and checkpoint equations. It does not edit statement
 PDFs or reported transaction numerics; ambiguous identities remain null.
 
+`ingest enrich-layout` is also CLI-only. It verifies the immutable PDF hash and
+rebuilds replaceable PDF page/line coordinates for active semantic evidence.
+Ambiguous/unmatched rows remain explicit and no financial row is changed.
+
 The extraction audit is read-only with respect to SQLite. It accepts either
 source PDFs or stored `.txt` dumps, overwrites a deterministic JSONL report
 (default `logs/extraction_audit.jsonl`), and omits raw statement text. Use
 `--fail-on-errors` in a gate where invalid/unclaimed/crashed outputs must
 return non-zero.
 
-`ledger db init` creates or upgrades schema version 7. The API/server does not
+`ledger db init` creates or upgrades schema version 8. The API/server does not
 silently migrate a database at startup; run `db init` deliberately before
-serving a v6 database. For an existing real ledger, use the guarded shadow
+serving an older database. For an existing real ledger, use the guarded shadow
 workflow below rather than treating a compatibility migration as live cutover.
 
 ## Shadow rebuild, review, and cutover

@@ -30,9 +30,10 @@ Exact fields and the `TxnType` literal vocabulary are defined in
 contract on the complete `ParseResult` before staged ingestion writes any
 statement children.
 
-The active parser contract is version `3`. `ParsedTxn.related_instrument` and
-`corporate_action_ratio` represent an explicitly printed corporate-action
-replacement without overwriting the original instrument.
+The active parser contract is version `4`. It retains v3's
+`ParsedTxn.related_instrument` and `corporate_action_ratio` support for an
+explicitly printed corporate-action replacement, and changes evidence identity
+so replaceable geometry cannot alter semantic rows.
 
 ## Required semantics
 
@@ -76,21 +77,25 @@ underdetermined movement and makes reconciliation incomplete.
 
 `SourceSpan` can carry raw text, page/line, bounding box, words, and parser
 rule. Transactions, positions, cash balances, snapshot sets, and the richer
-quarantine type can carry one. The writer assigns every parsed/quarantined row
-a deterministic evidence record, using a stable row occurrence when layout
-coordinates are not yet available. Cash balances now carry their opening/
-closing source line(s).
+quarantine type can carry one. Normal ingest uses raw text plus deterministic
+page/line hints; it does not request boxes. The writer assigns every
+parsed/quarantined row a deterministic evidence record from source identity,
+row kind/occurrence, raw text, and parser rule. Page, line, boxes, and words do
+not participate in the `ev2` key. Cash balances carry their opening/closing
+source line(s).
 
 The validator reports missing cash evidence and undeclared row scopes as
 explicit warnings. It treats malformed dates/currencies/numerics, invalid
 transaction vocabulary, incomplete options, duplicate statement identities,
 invalid snapshot declarations, and parser-reported errors as fatal.
 
-`PdfText` now retains raw page text plus `PdfWord`/`PdfLine` layout rows when
-`pdfplumber` exposes coordinates. The parser bridge normalizes text only for
-matching; it keeps the original raw evidence in the stored span. Text fixtures
-and the `pypdf` fallback still receive deterministic page/line evidence but no
-invented bounding box or word coordinates.
+`PdfText` retains raw page text and page dimensions. It carries
+`PdfWord`/`PdfLine` layout rows only when the separate geometry pass explicitly
+sets `include_layout=True`. The parser bridge normalizes text only for matching
+and keeps original raw evidence. Normal ingest, text fixtures, and the `pypdf`
+fallback receive deterministic page/line evidence but no invented box or word
+coordinates. See [INGESTION.md](INGESTION.md) for the replaceable enrichment
+pass.
 
 The four bank parsers are at layout/state-machine version 2. They attach spans
 to transactions, positions, cash, and quarantine rows, and declare a scope
@@ -126,9 +131,10 @@ owned by [RECONCILIATION.md](RECONCILIATION.md).
 
 - The database still accepts arbitrary transaction text, although new parser
   output is checked against `TxnType` before persistence.
-- Layout coordinates are preserved when available, but the bank parsers still
-  use broker-specific text state machines rather than a general table engine.
-  Debit/credit coverage must be spot-checked for each new layout.
+- The bank parsers use broker-specific text state machines rather than a
+  general table engine. Geometry enrichment is for visual verification, not a
+  second authority for financial values. Debit/credit coverage must be
+  spot-checked for each new semantic layout.
 - A `complete` declaration proves a recognized printed section and valid parsed
   rows; it is not yet independently validated against every broker total.
 - Existing active/live runs predate parser v2. They retain their historical

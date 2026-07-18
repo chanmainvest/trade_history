@@ -1,13 +1,14 @@
 """SQLite connection helpers + schema bootstrap."""
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 
 from ..config import SQLITE_PATH
+from ..domains import utc_now_text, validate_iso_date, validate_ledger_currency
 from ..identity import (
     canonical_evidence_key,
     canonical_instrument_key,
@@ -16,7 +17,7 @@ from ..identity import (
 from ..quantity import normalized_position_delta
 
 _SCHEMA = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def connect(path: Path | str = SQLITE_PATH) -> sqlite3.Connection:
@@ -126,7 +127,7 @@ def _create_v6_support_tables(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_legacy_runs(conn: sqlite3.Connection) -> None:
-    now = datetime.now(UTC).isoformat(timespec="seconds")
+    now = utc_now_text()
     sources = conn.execute(
         """
         SELECT sf.*,
@@ -856,7 +857,7 @@ def _migrate_quarantine(conn: sqlite3.Connection) -> None:
             occurrence INTEGER NOT NULL,
             raw_line TEXT NOT NULL,
             reason TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
             UNIQUE(ingestion_run_id, evidence_id)
         )
         """
@@ -939,6 +940,115 @@ def _migrate_existing_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE initial_cash ADD COLUMN notes TEXT")
     for definition in ("opened_on TEXT", "closed_on TEXT", "notes TEXT"):
         _add_column(conn, "accounts", definition)
+    _install_domain_triggers(conn)
+
+
+def _install_domain_triggers(conn: sqlite3.Connection) -> None:
+    """Enforce v8 domains on pre-v8 tables without rewriting private rows.
+
+    Fresh databases receive inline checks from ``schema.sql``. Existing ledgers
+    keep their historical values, while column-scoped triggers reject invalid
+    new or changed values until the reviewed shadow rebuild replaces them.
+    """
+    currency_columns = {
+        "accounts": ("base_currency",),
+        "instruments": ("currency",),
+        "instrument_identifier_lookups": ("currency",),
+        "snapshot_sets": ("currency",),
+        "transactions": ("currency",),
+        "position_snapshots": ("currency",),
+        "cash_balances": ("currency",),
+        "initial_positions": ("currency",),
+        "initial_cash": ("currency",),
+        "annual_performance_reports": ("currency",),
+        "reconciliation_results": ("currency",),
+    }
+    date_columns = {
+        "accounts": ("opened_on", "closed_on"),
+        "account_links": ("transfer_date",),
+        "instruments": ("option_expiry",),
+        "statements": ("period_start", "period_end"),
+        "snapshot_sets": ("as_of_date",),
+        "transactions": ("trade_date", "settle_date", "cash_effective_date"),
+        "instrument_ticker_changes": ("effective_date",),
+        "position_snapshots": ("as_of_date",),
+        "cash_balances": ("as_of_date",),
+        "initial_positions": ("as_of_date",),
+        "initial_cash": ("as_of_date",),
+        "annual_performance_reports": ("period_start", "period_end", "since_date"),
+        "reconciliation_results": ("prior_checkpoint", "current_checkpoint"),
+    }
+    timestamp_columns = {
+        "source_files": ("parsed_at",),
+        "ingestion_runs": ("started_at", "finished_at", "activated_at"),
+        "source_evidence_geometry": ("updated_at",),
+    }
+    hash_columns = {
+        "source_files": ("sha256",),
+        "ingestion_runs": ("source_sha256", "content_hash"),
+        "source_evidence_geometry": ("source_sha256",),
+        "source_lines": ("normalized_text_hash",),
+    }
+
+    def install(table: str, column: str, condition: str, message: str) -> None:
+        if not _table_exists(conn, table) or column not in _table_columns(conn, table):
+            return
+        for operation, event in (("insert", "INSERT"), ("update", f"UPDATE OF {column}")):
+            name = f"validate_v8_{table}_{column}_{operation}"
+            conn.execute(
+                f"""
+                CREATE TRIGGER IF NOT EXISTS {name}
+                BEFORE {event} ON {table}
+                WHEN NEW.{column} IS NOT NULL AND NOT ({condition})
+                BEGIN
+                    SELECT RAISE(ABORT, '{message}');
+                END
+                """
+            )
+
+    for table, columns in currency_columns.items():
+        for column in columns:
+            install(
+                table,
+                column,
+                f"NEW.{column} IN ('CAD','USD')",
+                f"invalid {table}.{column}: expected CAD or USD",
+            )
+    for table, columns in date_columns.items():
+        for column in columns:
+            install(
+                table,
+                column,
+                (
+                    f"length(NEW.{column}) = 10 "
+                    f"AND NEW.{column} GLOB '????-??-??' "
+                    f"AND date(NEW.{column}) = NEW.{column}"
+                ),
+                f"invalid {table}.{column}: expected YYYY-MM-DD",
+            )
+    for table, columns in timestamp_columns.items():
+        for column in columns:
+            install(
+                table,
+                column,
+                (
+                    f"length(NEW.{column}) = 20 "
+                    f"AND NEW.{column} GLOB '????-??-??T??:??:??Z' "
+                    f"AND strftime('%Y-%m-%dT%H:%M:%SZ', NEW.{column}) = NEW.{column}"
+                ),
+                f"invalid {table}.{column}: expected UTC timestamp",
+            )
+    for table, columns in hash_columns.items():
+        for column in columns:
+            install(
+                table,
+                column,
+                (
+                    f"length(NEW.{column}) = 64 AND NEW.{column} = lower(NEW.{column}) "
+                    f"AND NEW.{column} NOT GLOB '*[^0-9a-f]*'"
+                ),
+                f"invalid {table}.{column}: expected lowercase SHA-256 hex",
+            )
 
 
 @contextmanager
@@ -995,7 +1105,7 @@ def begin_ingestion_run(
     }
     if status not in allowed:
         raise ValueError(f"unsupported pending ingestion run status: {status!r}")
-    now = datetime.now(UTC).isoformat(timespec="seconds")
+    now = utc_now_text()
     terminal = status in {"failed", "skipped", "superseded"}
     return int(
         conn.execute(
@@ -1058,7 +1168,7 @@ def activate_ingestion_run(
     if row is None:
         raise sqlite3.IntegrityError(f"missing source file {source_file_id}")
     previous = row["active_ingestion_run_id"]
-    now = datetime.now(UTC).isoformat(timespec="seconds")
+    now = utc_now_text()
     if previous is not None and int(previous) != ingestion_run_id:
         conn.execute(
             "UPDATE ingestion_runs SET status = 'superseded', finished_at = ? "
@@ -1161,7 +1271,7 @@ def record_ingestion_run(
             source_file_id=source_file_id,
             ingestion_run_id=run_id,
             content_counts={},
-            content_hash="legacy-direct-writer",
+            content_hash=hashlib.sha256(b"legacy-direct-writer").hexdigest(),
         )
         return run_id
     return begin_ingestion_run(
@@ -1259,6 +1369,8 @@ def upsert_snapshot_set(
     reported_total: float | None,
     validation_status: str,
 ) -> int:
+    validate_iso_date(as_of_date)
+    validate_ledger_currency(currency)
     return int(
         conn.execute(
             """
@@ -1313,6 +1425,11 @@ def upsert_account(
     closed_on: str | None = None,
     notes: str | None = None,
 ) -> int:
+    validate_ledger_currency(base_currency)
+    if opened_on is not None:
+        validate_iso_date(opened_on)
+    if closed_on is not None:
+        validate_iso_date(closed_on)
     cur = conn.execute(
         "INSERT INTO accounts("
         "institution_id, account_number, account_type, nickname, base_currency, opened_on, closed_on, notes"
@@ -1355,6 +1472,9 @@ def upsert_instrument(
     resolution_method: str | None = None,
     resolution_confidence: float | None = None,
 ) -> int:
+    validate_ledger_currency(currency)
+    if option_expiry is not None:
+        validate_iso_date(option_expiry)
     instrument_key = canonical_instrument_key(
         asset_type=asset_type,
         symbol=symbol,

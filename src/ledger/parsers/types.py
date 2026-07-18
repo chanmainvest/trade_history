@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-PARSER_CONTRACT_VERSION = "3"
+PARSER_CONTRACT_VERSION = "4"
 
 # Canonical transaction-type vocabulary. See schema.sql for definitions.
 TxnType = Literal[

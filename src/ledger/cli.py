@@ -396,6 +396,19 @@ def ingest_run(institution: str | None, limit: int | None, force: bool) -> None:
     run_ingest(institution=institution, limit=limit, force=force)
 
 
+@ingest.command("enrich-layout")
+@click.option("--source-file-id", type=int, default=None, help="Restrict to one source ID.")
+def ingest_enrich_layout(source_file_id: int | None) -> None:
+    """Rebuild PDF geometry links without changing semantic ledger rows."""
+    from .ingest.layout_enrichment import enrich_layout
+
+    out = enrich_layout(source_file_id=source_file_id)
+    click.echo(
+        "Layout enrichment: "
+        + ", ".join(f"{key}={value}" for key, value in sorted(out.items()))
+    )
+
+
 @ingest.command("infer-initials")
 def ingest_infer_initials() -> None:
     """Infer initial_positions / initial_cash from snapshots minus transactions.

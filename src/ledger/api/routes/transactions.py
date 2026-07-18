@@ -6,6 +6,9 @@ least that value.
 """
 from __future__ import annotations
 
+from datetime import date
+from typing import Annotated
+
 from fastapi import APIRouter, Query
 
 from ...db import sqlite as sqlite_db
@@ -22,8 +25,8 @@ def _csv_list(v: str | None) -> list[str]:
 
 @router.get("")
 def list_transactions(
-    start: str | None = Query(None, description="ISO date inclusive"),
-    end: str | None = Query(None, description="ISO date inclusive"),
+    start: Annotated[date | None, Query(description="ISO date inclusive")] = None,
+    end: Annotated[date | None, Query(description="ISO date inclusive")] = None,
     institution: str | None = Query(None, description="comma-separated codes"),
     account_id: str | None = Query(None, description="comma-separated ids"),
     symbol: str | None = Query(None, description="comma-separated tickers"),
@@ -91,10 +94,10 @@ def list_transactions(
     params: list = []
     if start:
         filters.append(" AND trade_date >= ?")
-        params.append(start)
+        params.append(start.isoformat())
     if end:
         filters.append(" AND trade_date <= ?")
-        params.append(end)
+        params.append(end.isoformat())
     insts = _csv_list(institution)
     if insts:
         filters.append(f" AND institution_code IN ({','.join('?' * len(insts))})")

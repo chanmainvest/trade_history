@@ -24,8 +24,8 @@ CREATE TABLE IF NOT EXISTS instrument_identifier_lookups (
     resolved_name      TEXT,
     evidence_url       TEXT,
     sample_description TEXT,
-    first_seen_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    last_seen_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    first_seen_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    last_seen_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     notes              TEXT,
     UNIQUE(identifier_type, asset_type, institution_code, normalized_name, currency)
 );
@@ -140,7 +140,7 @@ def lookup_fund_code(
         "VALUES ('fund_code', 'mutual_fund', ?, ?, ?, ?, 'pending', ?) "
         "ON CONFLICT(identifier_type, asset_type, institution_code, normalized_name, currency) "
         "DO UPDATE SET "
-        "  last_seen_at = datetime('now'), "
+        "  last_seen_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
         "  sample_description = COALESCE(excluded.sample_description, sample_description)",
         (institution, normalized, normalized.title(), currency, sample_description or fund_name),
     )

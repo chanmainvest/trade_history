@@ -4,10 +4,15 @@ This document describes the schema currently implemented. Exact SQLite DDL is
 owned by `src/ledger/db/schema.sql`; exact DuckDB DDL is the `DDL` string in
 `src/ledger/db/duckdb_store.py`. Update code and this spec together.
 
-## SQLite ledger (schema version 7)
+## SQLite ledger (schema version 8)
 
-All dates are ISO text and monetary values remain in the row's native
-`currency`.
+SQLite has no dedicated date, datetime, or enum storage class. Business dates
+therefore remain canonical `YYYY-MM-DD` `TEXT`, and audit timestamps use one
+UTC representation: `YYYY-MM-DDTHH:MM:SSZ`. Schema-v8 checks/triggers reject
+malformed or impossible new dates, non-canonical timestamps, currencies outside
+the private-ledger CAD/USD domain, and malformed SHA-256 values. API date
+parameters are parsed as dates before a query runs. Monetary values remain in
+the row's native `currency`.
 
 | Area | Tables | Current identity/role |
 |---|---|---|
@@ -15,7 +20,8 @@ All dates are ISO text and monetary values remain in the row's native
 | Transfers | `account_links` | automatically paired account-to-account transfers |
 | Securities | `instruments`, `instrument_aliases`, `instrument_identifier_lookups`, `instrument_ticker_changes`, `instrument_ticker_change_sources` | canonical listing identities, reviewed aliases, and dated ticker lineages |
 | Source | `source_files`, `ingestion_runs`, `statements` | source metadata, immutable attempts, and account-period output |
-| Evidence | `source_evidence` | deterministic source-row provenance without exposing it in public audit logs |
+| Evidence | `source_evidence` | deterministic semantic source-row provenance without exposing it in public audit logs |
+| Geometry | `source_pages`, `source_lines`, `source_evidence_geometry`, `source_evidence_lines` | rebuildable PDF coordinates and evidence-to-line matches |
 | Ledger | `transactions`, `quarantine_transactions` | reported rows plus normalized deltas and evidence links |
 | Checkpoints | `snapshot_sets`, `position_snapshots`, `cash_balances` | independently complete currency/section checkpoints |
 | Pre-history | `initial_positions`, `initial_cash` | user-curated or tagged inferred anchors |
@@ -69,18 +75,32 @@ source savepoint, writes its deterministic `content_counts_json` and
 `content_hash`, then switches `source_files.active_ingestion_run_id`. Failed
 attempts retain their own run/status/error while leaving the previous active
 pointer and active metadata intact. Successful replacements remove the prior
-derived run and its source children in that transaction. Schema v7's global
+derived run and its source children in that transaction. Schema v8's global
 statement/evidence uniqueness prevents old/new copies from coexisting, so this
 replacement is uncommitted until activation; readers only see the prior or new
 complete source output.
 
-`source_evidence` has a deterministic non-content-revealing key, source/run,
-row occurrence, raw text, optional page/line/coordinates/words, and parser
-rule/version. New transactions, holdings, cash balances, and quarantine rows
-link to evidence. Parser v2 rows carry page/line evidence and retain available
-`pdfplumber` coordinates/words; text-only extraction uses no invented box.
-Legacy migrated cash evidence explicitly has no raw source text rather than a
+`source_evidence` has a deterministic non-content-revealing `ev2` key,
+source/run, row occurrence, raw text, optional semantic page/line hint, and
+parser rule/version. The key deliberately excludes coordinates and page/line,
+so rerunning a geometry extractor cannot change semantic row identity. New
+transactions, holdings, cash balances, and quarantine rows link to evidence.
+Legacy single-box fields remain readable for compatibility.
+
+The four geometry tables are derived after semantic extraction. They retain
+page dimensions, normalized line hashes, exact boxes/words, an explicit match
+status, and the lines linked to each evidence row. Geometry is replaceable and
+is excluded from the semantic ingestion content hash. Repeated text without a
+unique persisted hint is `ambiguous`, not assigned by row order. Legacy
+migrated cash evidence explicitly has no raw source text rather than a
 fabricated line.
+
+`sha256`, `source_sha256`, and content/line hashes stay lowercase 64-character
+hex `TEXT`: this is readable, interoperable with Python tooling, and now
+validated as hash-shaped data. `schema_version` is an integer because it is a
+monotonic database format number. Parser, parser-contract, resolver, and
+geometry-extractor versions remain `TEXT` because they are semantic versions
+or named/fingerprinted algorithms, not quantities that support arithmetic.
 
 ### Transactions and normalized effects
 
@@ -105,8 +125,10 @@ supporting position row. The description and reported numeric fields remain
 unchanged. Existing transaction and checkpoint evidence is sufficient for this
 derivation, while `instrument_aliases` remains reserved for reviewed mappings.
 
-Parser-contract v3 adds `related_instrument` and `corporate_action_ratio` to a
-transaction. For a supported ticker change, `instrument_id` is the old printed
+Parser-contract v4 includes v3's `related_instrument` and
+`corporate_action_ratio` support and makes semantic evidence identity
+independent of replaceable geometry. For a supported ticker change,
+`instrument_id` is the old printed
 listing and the related instrument is persisted through the dated relationship.
 Both must have the same asset type/native currency and different symbols.
 
@@ -162,15 +184,16 @@ the primary key.
 
 ## Current migration behavior
 
-`db init` executes idempotent DDL and a tested v5-to-v6 compatibility
-migration in `db/sqlite.py`. The migration preserves row IDs and foreign keys,
-creates legacy source runs/evidence, and marks migrated snapshot scopes
-`unknown`. It is not a replacement for the planned shadow rebuild; do not use
+`db init` executes idempotent DDL and a tested v5-to-v6 compatibility migration
+in `db/sqlite.py`, then installs v8 domain triggers on pre-v8 tables. The
+migration preserves row IDs and foreign keys, creates legacy source
+runs/evidence, and marks migrated snapshot scopes `unknown`. Historical values
+are not rewritten merely to normalize formatting; new or changed domain values
+are checked. It is not a replacement for the planned shadow rebuild; do not use
 it as a live-data correctness cutover.
 
 ## Still pending
 
-The remaining phase surfaces reconciliation/holdings quality read-only in the
-GUI. A shadow ledger can now be built and compared safely, but human source
-review and explicit cutover remain operational gates. See the plan for
-sequencing.
+The GUI surfaces reconciliation/holdings quality read-only. A shadow ledger can
+be built and compared safely, but human source review and explicit cutover
+remain operational gates. See the plan for sequencing.

@@ -30,7 +30,7 @@ reconciliation-rebuild endpoints in the current route set.
    fetched history before the visible period is clipped. Dated ticker lineages
    are stitched without using post-change prices under the old symbol.
 5. Visualisations: holdings treemap, correlation, and RRG.
-6. Verify extraction: PDF.js rendering with `pdfplumber` text-line boxes,
+6. Verify extraction: PDF.js rendering with persisted `pdfplumber` line boxes,
    parsed transaction/position/cash/summary/quarantine lists, scope
    completeness, active parser/run metadata, and reconciliation outcomes.
 7. Settings: named account portfolios.
@@ -47,12 +47,15 @@ the fetched picker rows.
 
 `GET /statements/{id}/boxes` returns the active parser/run metadata, every
 currency/section/scope completeness declaration, persisted position/cash/total
-reconciliation results, and the parsed lists. It re-extracts PDF text lines,
-normalizes whitespace/case, and fuzzy-matches stored transaction, position,
-cash, summary-total, and quarantine evidence text. Repeated text can match
-multiple boxes; legacy rows with no recorded source text remain visibly
-unlinked. A legacy database without v6 scope/reconciliation tables returns
-explicitly empty quality facts rather than treating those facts as complete.
+reconciliation result, and the parsed lists. It reads exact evidence-to-line
+links produced by the separate layout-enrichment command; it does not fuzzy
+match text during an HTTP request. Each row reports its geometry status/method.
+Repeated text without a unique semantic page/line hint is visibly `ambiguous`;
+unmatched, coordinate-free, and legacy rows remain visibly unlinked rather
+than receiving a plausible wrong box. Legacy single-box evidence remains a
+persisted compatibility fallback. A legacy database without v6
+scope/reconciliation tables returns explicitly empty quality facts rather than
+treating those facts as complete.
 `/verify?statement=<id>&ref=<kind>:<id>` selects a persisted row and waits for
 its PDF page to render before scrolling. Only boxes containing that exact
 reference receive selected styling.

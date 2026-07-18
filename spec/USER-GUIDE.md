@@ -331,9 +331,10 @@ The screen has two sides:
   Transactions, Positions, Cash, Summary totals, and Quarantine rows.
 
 Click a box on the left to highlight its item on the right; click an item on
-the right to highlight its box(es) on the left and scroll the PDF to the
-first match. Items with no matching PDF line are dimmed and marked with a
-dot.
+the right to highlight its box(es) on the left and scroll the PDF to the first
+match. Boxes come from persisted exact evidence links, not request-time fuzzy
+text matching. Items with ambiguous, unmatched, or unavailable geometry are
+dimmed and show that reason; they never receive a guessed box.
 
 Pick which statement to view with the dropdown filters — **Date**,
 **Institution**, and **Account** — which narrow the statement list. The list
@@ -381,6 +382,9 @@ MCP server's allowlisted CLI commands):
 # ingest every PDF under Statements/<Institution>/
 uv run ledger ingest run
 
+# derive replaceable PDF line boxes for Verify after semantic ingest
+uv run ledger ingest enrich-layout
+
 # infer opening holdings before the first statement
 uv run ledger ingest infer-initials
 
@@ -399,6 +403,10 @@ after source activation. Reconciliation can attach name-only buys/sells to
 unique same-currency holding evidence and leaves ambiguity null.
 `repair-symbols` is for legacy/manual data; the reconcile command is mainly
 needed after manual DB edits.
+
+`enrich-layout` verifies each source hash and writes only derived page/line
+geometry. It does not change semantic extraction or financial values. Re-run it
+after activating new parser output or changing the geometry extractor.
 
 `shadow build` does not replace the active database. Review its local report
 and source PDFs first; only a human may record `shadow sign-off` and later run

@@ -88,7 +88,7 @@ def test_source_reparse_removes_obsolete_statement_outputs(tmp_path):
         relpath="Statements/Test/source.pdf",
         page_count=1,
         pages=["synthetic statement text"],
-        sha256="source-sha",
+        sha256="a" * 64,
         size_bytes=24,
     )
     account = ParsedAccount(account_number="A-1", account_type="Margin")
@@ -143,7 +143,7 @@ def test_failed_attempt_preserves_last_good_source_activation(tmp_path):
         relpath="Statements/Test/source.pdf",
         page_count=1,
         pages=["synthetic statement text"],
-        sha256="abc",
+        sha256="a" * 64,
         size_bytes=24,
     )
     with sqlite_db.session(db_path) as conn:

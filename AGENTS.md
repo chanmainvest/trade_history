@@ -27,6 +27,7 @@ Start at [spec/INDEX.md](spec/INDEX.md), then load only the files needed:
 | System boundaries/package map | `spec/ARCHITECTURE.md` |
 | SQLite or DuckDB | `spec/DATA-MODEL.md` + canonical DDL |
 | PDF extraction or persistence | `spec/INGESTION.md` |
+| Verify PDF geometry/highlights | `spec/INGESTION.md` + `spec/API-UI.md` |
 | Parser types or validation | `spec/PARSER-CONTRACT.md` |
 | CIBC, HSBC, RBC, or TD | `spec/parsers/<INSTITUTION>.md` |
 | Reconciliation or holdings-at-date | `spec/RECONCILIATION.md` |

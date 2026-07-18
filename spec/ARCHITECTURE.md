@@ -41,6 +41,7 @@ src/ledger/
   parsers/                  common types, layout/provenance bridge, four bank parsers
   ingest/
     pipeline.py             discovery, validate, staged source activation, audit export
+    layout_enrichment.py    replaceable PDF geometry extraction and evidence linking
     identity_resolution.py  conservative in-stage printed/alias/holding resolution
     repair_symbols.py       legacy/manual post-parse identity repair
     fund_lookup.py          reviewed fund-code lookup workflow
@@ -94,10 +95,10 @@ as completed behavior.
 - Monthly, Performance, and Visualisations consume that same holdings service;
   Research stitches each dated ticker lineage across SQLite trades and DuckDB
   prices/financials.
-- Verify serves the original PDF and fuzzy-matches stored `raw_line` values to
-  `pdfplumber` text-line boxes.
+- Verify serves the original PDF and reads persisted exact evidence-to-line
+  geometry. It never fuzzy-matches financial rows during an API request.
 
-The GUI does not yet render holdings quality/reconciliation warnings; see
+The GUI renders holdings quality/reconciliation warnings; see
 [RECONCILIATION.md](RECONCILIATION.md).
 
 ## Detailed context

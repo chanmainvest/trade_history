@@ -127,7 +127,7 @@ def test_quarantine_rows_are_replaced_on_reingest(tmp_path):
             relpath="Statements/Test/sample.pdf",
             page_count=1,
             pages=["test"],
-            sha256="abc",
+            sha256="a" * 64,
             size_bytes=3,
         )
         source_file_id = _record_source_file(
@@ -150,7 +150,7 @@ def test_unchanged_source_file_is_skippable_only_after_successful_parse(tmp_path
         relpath="Statements/Test/sample.pdf",
         page_count=1,
         pages=["test"],
-        sha256="abc",
+        sha256="a" * 64,
         size_bytes=3,
     )
     with sqlite_db.session(db_path) as conn:
@@ -161,7 +161,9 @@ def test_unchanged_source_file_is_skippable_only_after_successful_parse(tmp_path
             parser_version=TDParser.VERSION,
             parse_status="ok",
         )
-        assert _unchanged_source_file_id(conn, relpath=pdf.relpath, sha256="abc") == source_file_id
+        assert _unchanged_source_file_id(
+            conn, relpath=pdf.relpath, sha256="a" * 64
+        ) == source_file_id
         _record_source_file(
             conn,
             pdf,
@@ -169,7 +171,9 @@ def test_unchanged_source_file_is_skippable_only_after_successful_parse(tmp_path
             parser_version="future-version",
             parse_status="failed",
         )
-        assert _unchanged_source_file_id(conn, relpath=pdf.relpath, sha256="abc") == source_file_id
+        assert _unchanged_source_file_id(
+            conn, relpath=pdf.relpath, sha256="a" * 64
+        ) == source_file_id
 
 
 def test_performance_total_clears_omitted_sold_out_positions_and_includes_cash(tmp_path):

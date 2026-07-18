@@ -66,6 +66,7 @@ class PdfText:
     size_bytes: int
     page_words: list[list[PdfWord]] = field(default_factory=list)
     page_lines: list[list[PdfLine]] = field(default_factory=list)
+    page_sizes: list[tuple[float, float] | None] = field(default_factory=list)
 
     @property
     def is_image_only(self) -> bool:
@@ -172,24 +173,32 @@ def _page_layout(page, page_number: int) -> tuple[list[PdfWord], list[PdfLine]]:
     return words, lines
 
 
-def extract_pdf(path: Path, *, repo_root: Path) -> PdfText:
+def extract_pdf(
+    path: Path,
+    *,
+    repo_root: Path,
+    include_layout: bool = False,
+) -> PdfText:
     pages: list[str] = []
     page_words: list[list[PdfWord]] = []
     page_lines: list[list[PdfLine]] = []
+    page_sizes: list[tuple[float, float] | None] = []
     page_count = 0
     try:
         with pdfplumber.open(str(path)) as pdf:
             page_count = len(pdf.pages)
             for page_number, p in enumerate(pdf.pages, start=1):
                 t = p.extract_text() or ""
-                words, lines = _page_layout(p, page_number)
+                words, lines = _page_layout(p, page_number) if include_layout else ([], [])
                 pages.append(t or "\n".join(line.text for line in lines))
                 page_words.append(words)
                 page_lines.append(lines)
+                page_sizes.append((float(p.width), float(p.height)))
     except Exception:
         pages = []
         page_words = []
         page_lines = []
+        page_sizes = []
 
     if not pages or all(not p.strip() for p in pages):
         try:
@@ -198,6 +207,10 @@ def extract_pdf(path: Path, *, repo_root: Path) -> PdfText:
             pages = [(p.extract_text() or "") for p in reader.pages]
             page_words = [[] for _ in pages]
             page_lines = [[] for _ in pages]
+            page_sizes = [
+                (float(page.mediabox.width), float(page.mediabox.height))
+                for page in reader.pages
+            ]
         except Exception:
             pages = pages or []
 
@@ -210,4 +223,5 @@ def extract_pdf(path: Path, *, repo_root: Path) -> PdfText:
         size_bytes=path.stat().st_size,
         page_words=page_words,
         page_lines=page_lines,
+        page_sizes=page_sizes,
     )

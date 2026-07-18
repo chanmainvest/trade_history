@@ -28,7 +28,7 @@ from ledger.parsers.types import (
 from ledger.pdf_text import PdfText
 
 
-def _pdf(*, sha256: str = "source-sha") -> PdfText:
+def _pdf(*, sha256: str = "a" * 64) -> PdfText:
     return PdfText(
         relpath="Statements/Test/source.pdf",
         page_count=1,
@@ -237,7 +237,7 @@ def test_stage_write_failure_rolls_back_to_the_previous_active_extraction(tmp_pa
             _activate(
                 conn,
                 _result(_statement(symbol="XYZ")),
-                pdf=_pdf(sha256="replacement-sha"),
+                pdf=_pdf(sha256="b" * 64),
             )
 
         active_after = sqlite_db.active_ingestion_run_id(conn, source_file_id)

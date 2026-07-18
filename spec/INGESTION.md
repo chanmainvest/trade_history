@@ -9,10 +9,11 @@ semantics. Institution parsing details are under `spec/parsers/`.
 `STATEMENTS_DIR`. Folder names map to institution codes in `config.INSTITUTIONS`;
 unknown folders use their literal name as the code.
 
-`pdf_text.extract_pdf()` reads all pages with `pdfplumber`, retains its
-page-local words/visual lines when available, falls back to `pypdf` only when
-the first result is empty, fingerprints the file, and marks fewer than 20
-extracted characters as image-only. OCR is not implemented.
+`pdf_text.extract_pdf()` reads text and page dimensions with `pdfplumber`,
+falls back to `pypdf` only when the first result is empty, fingerprints the
+file, and marks fewer than 20 extracted characters as image-only. Normal ingest
+does not request word/box extraction. This keeps semantic parsing independent
+from PDF drawing order and coordinate heuristics. OCR is not implemented.
 
 PDFs are immutable inputs. Text dumps under `<DATA_DIR>/text_dumps/` and logs
 are derived artifacts.
@@ -39,6 +40,22 @@ The registered parsers are CIBC, HSBC, RBC, and TD. CIBC, RBC, and TD report
 `2.4.0`; HSBC reports `2.2.0`. Parser, contract, schema, and resolver changes
 intentionally invalidate older active cache entries so a reviewed re-ingest
 exercises the current extraction contract.
+
+## Independent layout enrichment
+
+After semantic rows have been reviewed and activated,
+`ledger ingest enrich-layout` reopens immutable PDFs with word geometry
+enabled. It verifies each PDF's SHA-256, replaces only derived geometry for the
+active run, and links stored semantic evidence to exact PDF lines. Matching
+accepts a unique persisted page/line hint, a unique exact line sequence, or one
+unique contiguous token sequence. Repeated candidates are stored as
+`ambiguous`; unmatched text and PDFs without coordinate lines remain explicit
+statuses. It never changes a transaction, amount, quantity, instrument, scope,
+or semantic evidence key.
+
+Use `--source-file-id ID` to rebuild one source. The command is intentionally
+CLI-only. A geometry failure rolls back that source's geometry savepoint and
+does not affect active semantic data.
 
 ## Status and cache behavior
 

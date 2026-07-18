@@ -602,7 +602,9 @@ def test_monthly_diff_preserves_cad_usd_identity_and_consumers_share_holdings(tm
         )
 
     monkeypatch.setattr(holdings_service.sqlite_db, "SQLITE_PATH", db_path)
-    monthly_diff = monthly_route.diff(a="2024-01-28", b="2024-02-28", account_id=None)
+    monthly_diff = monthly_route.diff(
+        a=date(2024, 1, 28), b=date(2024, 2, 28), account_id=None
+    )
     february_holdings = holdings_at("2024-02-28", path=db_path)
     performance = _total_rows(path=db_path)
     performance_february = {

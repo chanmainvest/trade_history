@@ -734,7 +734,7 @@ def import_identity_state(target_db: Path | str, state: CuratedState) -> dict[st
                     evidence_url = excluded.evidence_url,
                     sample_description = excluded.sample_description,
                     notes = excluded.notes,
-                    last_seen_at = datetime('now')
+                    last_seen_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
                 """,
                 (
                     lookup["identifier_type"],
@@ -946,6 +946,10 @@ def _table_counts(path: Path | str) -> dict[str, int]:
         "transactions",
         "instrument_ticker_changes",
         "instrument_ticker_change_sources",
+        "source_pages",
+        "source_lines",
+        "source_evidence_geometry",
+        "source_evidence_lines",
         "position_snapshots",
         "cash_balances",
         "quarantine_transactions",

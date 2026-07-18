@@ -283,6 +283,9 @@ export type BoxRef = {
   kind: "transaction" | "position" | "cash" | "summary" | "quarantine";
   id: number;
   label: string;
+  match_status?: string;
+  match_method?: string | null;
+  match_confidence?: number | null;
 };
 
 /** A PDF text line with its bounding box (PDF user-space, top-left origin). */

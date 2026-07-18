@@ -1,6 +1,8 @@
 """GET /research — per-ticker price + my trade markers + financials."""
 from __future__ import annotations
 
+from datetime import date
+
 import duckdb
 from fastapi import APIRouter, Query
 
@@ -39,8 +41,8 @@ def _metadata(requested: str, segments: list[TickerSegment]) -> dict:
 
 
 @router.get("/prices")
-def prices(symbol: str = Query(...), start: str | None = None,
-           end: str | None = None, freq: str = Query("D", pattern="^[DWM]$")) -> dict:
+def prices(symbol: str = Query(...), start: date | None = None,
+           end: date | None = None, freq: str = Query("D", pattern="^[DWM]$")) -> dict:
     sym = symbol.upper()
     segments = _segments(sym)
     if not segments:
@@ -61,10 +63,10 @@ def prices(symbol: str = Query(...), start: str | None = None,
     where = ["(" + " OR ".join(alternatives) + ")"]
     if start:
         where.append("trade_date >= ?")
-        params.append(start)
+        params.append(start.isoformat())
     if end:
         where.append("trade_date <= ?")
-        params.append(end)
+        params.append(end.isoformat())
     sql = ("SELECT trade_date, symbol AS source_symbol, open, high, low, close, adj_close, volume "
            "FROM daily_prices WHERE " + " AND ".join(where) + " ORDER BY trade_date")
     con = _duck()

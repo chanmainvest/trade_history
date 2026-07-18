@@ -7,11 +7,11 @@ boundary used by ingestion and the read-only extraction audit.
 from __future__ import annotations
 
 import math
-import re
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Literal, get_args
 
+from ..domains import SUPPORTED_LEDGER_CURRENCIES
 from ..identity import canonical_instrument_key
 from ..quantity import POSITION_AFFECTING_TYPES
 from .types import (
@@ -30,7 +30,6 @@ VALID_ASSET_TYPES = frozenset(
     {"equity", "etf", "option", "bond", "mutual_fund", "cash", "other"}
 )
 VALID_STATEMENT_TYPES = frozenset({"monthly", "quarterly", "annual", "interim"})
-_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 
 
 @dataclass(frozen=True)
@@ -148,11 +147,11 @@ def _currency(
     row_kind: str,
     row_index: int,
 ) -> None:
-    if not isinstance(value, str) or not _CURRENCY_RE.fullmatch(value):
+    if value not in SUPPORTED_LEDGER_CURRENCIES:
         _issue(
             report,
             "invalid_currency",
-            f"currency must be an uppercase three-letter code, got {value!r}",
+            f"currency must be one of {sorted(SUPPORTED_LEDGER_CURRENCIES)}, got {value!r}",
             statement_index=statement_index,
             row_kind=row_kind,
             row_index=row_index,

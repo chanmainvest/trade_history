@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 INSTRUMENT_KEY_VERSION = "ik1"
 STATEMENT_KEY_VERSION = "sk1"
-EVIDENCE_KEY_VERSION = "ev1"
+EVIDENCE_KEY_VERSION = "ev2"
 
 
 def _token(value: object | None, *, compact: bool = False) -> str:
@@ -114,15 +114,18 @@ def canonical_evidence_key(
     line_number: int | None = None,
     parser_rule: str | None = None,
 ) -> str:
-    """Return a deterministic, non-content-revealing source-evidence key."""
+    """Return a geometry-independent semantic source-evidence key.
+
+    Page/line arguments remain accepted for caller compatibility, but derived
+    layout must never change the identity of the extracted financial fact.
+    """
+    del page_number, line_number
     return _digest_key(
         EVIDENCE_KEY_VERSION,
         {
             "source": source_identity.strip(),
             "kind": _token(row_kind),
             "occurrence": occurrence,
-            "page": page_number,
-            "line": line_number,
             "raw": unicodedata.normalize("NFKC", raw_text or ""),
             "rule": parser_rule or "",
         },

@@ -600,6 +600,7 @@ function ItemsGroup({
   onSelect: (k: SelectedKey | null) => void;
   matchedKeys: Map<SelectedKey, { page: number; top: number }>;
 }) {
+  const { t } = useI18n();
   return (
     <div className="verify-group">
       <h4>{title} <span className="muted">({rows.length})</span></h4>
@@ -608,6 +609,7 @@ function ItemsGroup({
         const key = refKey(kind, id);
         const isSelected = selectedKey === key;
         const hasBox = matchedKeys.has(key);
+        const geometryStatus = r.geometry_status || "unavailable";
         const cls = ["verify-item"];
         if (isSelected) cls.push("selected");
         if (!hasBox) cls.push("no-box");
@@ -620,7 +622,11 @@ function ItemsGroup({
           >
             <span className="verify-item-kind">{kindTag(kind)}</span>
             <span className="verify-item-text">{render(r)}</span>
-            {!hasBox && <span className="verify-item-nobox" title="no matching PDF line">·</span>}
+            {!hasBox && (
+              <span className="verify-item-nobox" title={t(`verify.geometry.${geometryStatus}`)}>
+                {t(`verify.geometry.${geometryStatus}`)}
+              </span>
+            )}
           </div>
         );
       })}

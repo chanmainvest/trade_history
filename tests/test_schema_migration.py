@@ -1,6 +1,10 @@
 """Pre-v6 database migration coverage for the Phase 2 data model."""
 from __future__ import annotations
 
+import sqlite3
+
+import pytest
+
 from ledger.db import sqlite as sqlite_db
 from ledger.ingest.pipeline import _record_source_file, _write_statement
 from ledger.parsers.types import (
@@ -242,7 +246,7 @@ def test_init_db_migrates_v5_identity_runs_scopes_and_evidence(tmp_path):
     with sqlite_db.session(db_path) as conn:
         assert conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'schema_version'"
-        ).fetchone()[0] == "7"
+        ).fetchone()[0] == "8"
         assert conn.execute(
             "SELECT COUNT(*) FROM instrument_ticker_changes"
         ).fetchone()[0] == 0
@@ -290,6 +294,13 @@ def test_init_db_migrates_v5_identity_runs_scopes_and_evidence(tmp_path):
             "SELECT COUNT(*) FROM quarantine_transactions WHERE evidence_id IS NOT NULL"
         ).fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM position_transaction_links").fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'source_pages'"
+        ).fetchone()[0] == 1
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("UPDATE transactions SET currency = 'EUR'")
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("UPDATE transactions SET trade_date = '2024-02-30'")
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -392,7 +403,7 @@ def test_writer_persists_canonical_identity_scoped_rows_and_evidence(tmp_path):
         relpath="Statements/Test/writer.pdf",
         page_count=1,
         pages=["synthetic"],
-        sha256="writer-sha",
+        sha256="c" * 64,
         size_bytes=9,
     )
 
@@ -462,7 +473,7 @@ def test_failed_attempt_keeps_active_run_pointer(tmp_path):
         relpath="Statements/Test/attempts.pdf",
         page_count=1,
         pages=["synthetic"],
-        sha256="attempt-sha",
+        sha256="d" * 64,
         size_bytes=9,
     )
     with sqlite_db.session(db_path) as conn:

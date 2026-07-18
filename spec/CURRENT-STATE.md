@@ -18,9 +18,9 @@ over to it.
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.
 - CIBC, RBC, and TD report parser version `2.4.0`, while HSBC reports `2.2.0`.
-  They retain source page/line evidence, available word/box
-  geometry, explicit snapshot scopes, and quarantine rather than fabricate
-  unsupported values.
+  They retain semantic source page/line evidence, explicit snapshot scopes,
+  and quarantine rather than fabricate unsupported values. Word/box geometry
+  is rebuilt separately after semantic activation.
 - Monthly, Performance, and Visualisations now consume one read-only scoped
   holdings service. Monthly renders checkpoint/provenance, reported versus
   reconstructed/incomplete state, reconciliation, and stale/unpriced quality
@@ -29,6 +29,10 @@ over to it.
   position/cash/statement-total reconciliation results, and source-linked cash
   and summary-total rows. Its unresolved/incomplete/unreconciled filters are
   read-only. Legacy rows without v6 facts are shown as unavailable, not complete.
+- Schema v8 constrains new ledger currencies to CAD/USD, validates canonical
+  business dates/UTC timestamps and SHA-256 text, and stores replaceable PDF
+  geometry separately from `ev2` semantic evidence. Verify reads persisted
+  exact links; ambiguous/unmatched rows remain visibly unlinked.
 - Transactions exposes initial-position anchors separately from broker events.
   Transactions and Monthly can deep-link exact source rows into Verify; the
   preference is controlled in Settings. Monthly no longer repeats a portfolio
@@ -102,10 +106,10 @@ over to it.
 
 ## Ticker-change support (fixture validated 2026-07-18)
 
-- Schema v7 preserves old and new tickers as separate canonical instruments
+- Schema v8 preserves old and new tickers as separate canonical instruments
   linked by an effective date and source transaction/evidence. It does not use
   the timeless alias table for this purpose.
-- Parser-contract v3 accepts only explicit printed old/new pairs. Generic name
+- Parser-contract v4 accepts only explicit printed old/new pairs. Generic name
   changes remain incomplete rather than being inferred from names or residuals.
 - Reconciliation debits the whole old-symbol balance and credits the new-symbol
   balance at the stored ratio. Holdings, Monthly diff, Performance filters, and
@@ -173,7 +177,7 @@ over to it.
 ## Confirmed remaining correctness work
 
 1. **The dated live ledger still has broken historical instrument identity.**
-   Schema v7 gives new/migrated rows one canonical key per listing plus dated
+   Schema v8 gives new/migrated rows one canonical key per listing plus dated
    ticker relationships, but the 2026-07-12 live snapshot is not the shadow
    target. It contains 803 duplicate logical
    groups, 31,567 excess IDs, and 28,587 unreferenced instrument rows.

@@ -892,6 +892,26 @@ After every phase, update the focused owner spec from Phase 0. At completion:
 - This implementation has not triggered a live cutover or a new corpus claim;
   Phase 7 source review/sign-off remains the operational gate.
 
+### Post-Phase 8 schema-domain and geometry record (2026-07-18)
+
+- Schema v8 keeps SQLite business dates and audit timestamps as canonical text
+  because SQLite has no separate date/datetime storage class. New writes are
+  constrained to real `YYYY-MM-DD` calendar dates, UTC
+  `YYYY-MM-DDTHH:MM:SSZ` timestamps, CAD/USD ledger currencies, and lowercase
+  64-hex SHA-256 values. Schema versions remain integers; semantic algorithm
+  versions remain text.
+- Parser-contract v4 and `ev2` evidence keys separate semantic extraction from
+  drawing coordinates. Normal ingest is text-first and no longer requests
+  word/box layout.
+- `ledger ingest enrich-layout` is an independent, rebuildable CLI pass. It
+  verifies the immutable PDF hash, persists page/line geometry, and records
+  exact, unique-token, ambiguous, unmatched, or no-coordinate status without
+  changing financial rows or semantic ingestion hashes.
+- Verify consumes only persisted geometry links (plus legacy persisted boxes),
+  so an HTTP request never fuzzy-matches repeated financial text into a
+  plausible wrong highlight. No live/shadow re-ingest or cutover was performed
+  as part of this implementation.
+
 ## 5. Final acceptance criteria
 
 The refactor is complete only when all of the following are true:

@@ -7,6 +7,8 @@ __pycache__/
 .ruff_cache/
 temp/
 data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
 data/*.duckdb
 data/*.duckdb.wal
 data/text_dumps/

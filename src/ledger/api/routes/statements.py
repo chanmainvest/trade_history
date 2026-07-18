@@ -8,6 +8,7 @@ with the parsed items they came from.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
@@ -17,8 +18,6 @@ from fastapi.responses import FileResponse
 
 from ...config import ROOT, STATEMENTS_DIR
 from ...db import sqlite as sqlite_db
-from ...parsers import registry as _registered_parsers  # noqa: F401  (register parsers)
-from ...pdf_text import extract_pdf
 
 router = APIRouter(prefix="/statements", tags=["statements"])
 
@@ -228,18 +227,6 @@ def _list_statement_rows(conn: sqlite3.Connection, limit: int) -> list[dict]:
     return rows
 
 
-def _repo_root_for(path: Path) -> Path:
-    try:
-        path.resolve().relative_to(Path(ROOT).resolve())
-        return Path(ROOT)
-    except ValueError:
-        return Path(STATEMENTS_DIR).parent
-
-
-def _extract_statement_pdf(path: Path):
-    return extract_pdf(path, repo_root=_repo_root_for(path))
-
-
 @router.get("")
 def list_statements(limit: int = Query(200, ge=1, le=2000)) -> dict:
     with sqlite_db.session() as conn:
@@ -250,68 +237,170 @@ def list_statements(limit: int = Query(200, ge=1, le=2000)) -> dict:
 def _source_path(relpath: str | None) -> Path | None:
     if not relpath:
         return None
-    candidates = [Path(ROOT) / relpath, Path(STATEMENTS_DIR).parent / relpath]
-    for candidate in candidates:
-        if candidate.exists():
+    roots = (Path(ROOT).resolve(), Path(STATEMENTS_DIR).parent.resolve())
+    for root in roots:
+        candidate = (root / relpath).resolve()
+        if not candidate.is_relative_to(root):
+            continue
+        if candidate.is_file():
             return candidate
     return None
 
 
-def _norm_line(value: str | None) -> str:
-    import re
-
-    return re.sub(r"\s+", " ", (value or "").strip()).upper()
-
-
-def _annotated_boxes(pdf_path: Path, references: list[dict]) -> list[dict] | None:
-    """Return per-page line bounding boxes annotated with matched references.
-
-    Uses pdfplumber's ``extract_text_lines()`` (real PDF user-space, top-left
-    origin). Line/reference matching is identical to the old explainer so a
-    parsed item highlights the same PDF line(s) it was extracted from.
-
-    Returns ``None`` if the PDF cannot be opened (e.g. image-only / encrypted),
-    so the caller can report a clean 422 instead of crashing.
-    """
-    import pdfplumber
-
-    normalized_refs = [
-        {**reference, "_normalized": _norm_line(reference.get("raw_line"))}
+def _persisted_boxes(
+    pdf_path: Path,
+    *,
+    source_file_id: int,
+    references: list[dict],
+    path: Path | str | None = None,
+) -> list[dict] | None:
+    """Return only persisted evidence geometry; never rematch text at request time."""
+    ref_by_evidence = {
+        int(reference["evidence_id"]): reference
         for reference in references
-        if _norm_line(reference.get("raw_line"))
-    ]
-    pages: list[dict] = []
-    try:
-        with pdfplumber.open(str(pdf_path)) as pdf:
-            for page_number, page in enumerate(pdf.pages, start=1):
-                lines: list[dict] = []
-                for raw_line in page.extract_text_lines():
-                    text = raw_line.get("text", "")
-                    normalized = _norm_line(text)
-                    refs: list[dict] = []
-                    if normalized:
-                        for reference in normalized_refs:
-                            raw = reference["_normalized"]
-                            if raw == normalized or raw in normalized or (len(normalized) > 12 and normalized in raw):
-                                refs.append({key: value for key, value in reference.items() if not key.startswith("_")})
-                    x0 = raw_line.get("x0", 0.0)
-                    top = raw_line.get("top", 0.0)
-                    x1 = raw_line.get("x1", 0.0)
-                    bottom = raw_line.get("bottom", 0.0)
-                    lines.append({
-                        "bbox": [round(x0, 2), round(top, 2), round(x1, 2), round(bottom, 2)],
-                        "text": text,
-                        "refs": refs,
-                    })
-                pages.append({
-                    "page_number": page_number,
-                    "width": page.width,
-                    "height": page.height,
-                    "lines": lines,
-                })
-    except Exception:
-        return None
-    return pages
+        if reference.get("evidence_id") is not None
+    }
+    page_map: dict[int, dict] = {}
+    line_map: dict[int, dict] = {}
+    linked_evidence: set[int] = set()
+    with sqlite_db.session(path if path is not None else sqlite_db.SQLITE_PATH) as conn:
+        geometry_tables = {
+            "source_pages",
+            "source_lines",
+            "source_evidence_geometry",
+            "source_evidence_lines",
+        }
+        available = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        if geometry_tables.issubset(available):
+            pages = conn.execute(
+                """
+                SELECT sp.source_page_id, sp.page_number, sp.width, sp.height
+                  FROM source_pages sp
+                  JOIN source_files sf ON sf.active_ingestion_run_id = sp.ingestion_run_id
+                 WHERE sp.source_file_id = ?
+                   AND sf.source_file_id = sp.source_file_id
+                 ORDER BY sp.page_number
+                """,
+                (source_file_id,),
+            ).fetchall()
+            for page in pages:
+                page_map[int(page["page_number"])] = {
+                    "page_number": int(page["page_number"]),
+                    "width": float(page["width"]),
+                    "height": float(page["height"]),
+                    "lines": [],
+                }
+            if ref_by_evidence:
+                placeholders = ",".join("?" * len(ref_by_evidence))
+                rows = conn.execute(
+                    f"""
+                    SELECT line.source_line_id, page.page_number, page.width, page.height,
+                           line.raw_text, line.x0, line.top, line.x1, line.bottom,
+                           link.evidence_id, geometry.status, geometry.match_method,
+                           geometry.confidence
+                      FROM source_evidence_lines link
+                      JOIN source_evidence_geometry geometry
+                        ON geometry.evidence_id = link.evidence_id
+                      JOIN source_lines line ON line.source_line_id = link.source_line_id
+                      JOIN source_pages page ON page.source_page_id = line.source_page_id
+                     WHERE link.evidence_id IN ({placeholders})
+                     ORDER BY page.page_number, line.line_number, link.ordinal
+                    """,
+                    tuple(ref_by_evidence),
+                ).fetchall()
+                for row in rows:
+                    evidence_id = int(row["evidence_id"])
+                    linked_evidence.add(evidence_id)
+                    source_line_id = int(row["source_line_id"])
+                    line = line_map.setdefault(
+                        source_line_id,
+                        {
+                            "bbox": [
+                                float(row["x0"]),
+                                float(row["top"]),
+                                float(row["x1"]),
+                                float(row["bottom"]),
+                            ],
+                            "text": row["raw_text"],
+                            "refs": [],
+                            "page_number": int(row["page_number"]),
+                        },
+                    )
+                    reference = ref_by_evidence[evidence_id]
+                    line["refs"].append(
+                        {
+                            "kind": reference["kind"],
+                            "id": reference["id"],
+                            "label": reference["label"],
+                            "match_status": row["status"],
+                            "match_method": row["match_method"],
+                            "match_confidence": row["confidence"],
+                        }
+                    )
+
+        # Schema-v6/v7 rows may already contain a defensible persisted box.
+        legacy_ids = set(ref_by_evidence) - linked_evidence
+        if legacy_ids and _table_columns(conn, "source_evidence"):
+            placeholders = ",".join("?" * len(legacy_ids))
+            rows = conn.execute(
+                f"""
+                SELECT evidence_id, page_number, raw_text, bbox_json
+                  FROM source_evidence
+                 WHERE evidence_id IN ({placeholders})
+                   AND page_number IS NOT NULL AND bbox_json IS NOT NULL
+                """,
+                tuple(legacy_ids),
+            ).fetchall()
+            for row in rows:
+                try:
+                    bbox = json.loads(row["bbox_json"])
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(bbox, list) or len(bbox) != 4:
+                    continue
+                evidence_id = int(row["evidence_id"])
+                reference = ref_by_evidence[evidence_id]
+                source_line_id = -evidence_id
+                line_map[source_line_id] = {
+                    "bbox": [float(value) for value in bbox],
+                    "text": row["raw_text"] or "",
+                    "refs": [{
+                        "kind": reference["kind"],
+                        "id": reference["id"],
+                        "label": reference["label"],
+                        "match_status": "exact",
+                        "match_method": "legacy_persisted_box",
+                        "match_confidence": 1.0,
+                    }],
+                    "page_number": int(row["page_number"]),
+                }
+
+    # Page dimensions are presentation metadata only. Reading them never
+    # performs evidence matching or changes the persisted extraction.
+    if not page_map:
+        try:
+            import pdfplumber
+
+            with pdfplumber.open(str(pdf_path)) as pdf:
+                for page_number, page in enumerate(pdf.pages, start=1):
+                    page_map[page_number] = {
+                        "page_number": page_number,
+                        "width": float(page.width),
+                        "height": float(page.height),
+                        "lines": [],
+                    }
+        except Exception:
+            return None
+    for line in line_map.values():
+        page = page_map.get(int(line.pop("page_number")))
+        if page is not None:
+            page["lines"].append(line)
+    return [page_map[number] for number in sorted(page_map)]
 
 
 def _evidence_projection(
@@ -320,17 +409,18 @@ def _evidence_projection(
     table: str,
     table_alias: str,
     evidence_alias: str,
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     """Return a source-evidence join and raw-text expression when available."""
     columns = _table_columns(conn, table)
     raw_text = f"{table_alias}.raw_line" if "raw_line" in columns else "NULL"
     evidence_columns = _table_columns(conn, "source_evidence")
     if "evidence_id" not in columns or "raw_text" not in evidence_columns:
-        return "", raw_text
+        return "", raw_text, "NULL"
     return (
         f" LEFT JOIN source_evidence {evidence_alias} "
         f"ON {evidence_alias}.evidence_id = {table_alias}.evidence_id ",
         f"COALESCE({raw_text}, {evidence_alias}.raw_text)",
+        f"{evidence_alias}.evidence_id",
     )
 
 
@@ -356,7 +446,7 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             (s["source_file_id"],),
         ).fetchone()
 
-        transaction_join, transaction_raw_line = _evidence_projection(
+        transaction_join, transaction_raw_line, transaction_evidence_id = _evidence_projection(
             conn,
             table="transactions",
             table_alias="t",
@@ -366,6 +456,7 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             f"""
             SELECT t.transaction_id, t.trade_date, t.txn_type, t.quantity, t.price,
                    t.net_amount, t.currency, t.description, {transaction_raw_line} AS raw_line,
+                   {transaction_evidence_id} AS evidence_id,
                    COALESCE(inst.option_root, inst.symbol) AS symbol
               FROM transactions t
               LEFT JOIN instruments inst ON inst.instrument_id = t.instrument_id
@@ -375,7 +466,7 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             (statement_id,),
         ).fetchall()]
 
-        position_join, position_raw_line = _evidence_projection(
+        position_join, position_raw_line, position_evidence_id = _evidence_projection(
             conn,
             table="position_snapshots",
             table_alias="ps",
@@ -385,6 +476,7 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             f"""
             SELECT ps.snapshot_id, ps.as_of_date, ps.quantity, ps.market_value,
                    ps.currency, {position_raw_line} AS raw_line,
+                   {position_evidence_id} AS evidence_id,
                    COALESCE(inst.option_root, inst.symbol) AS symbol
               FROM position_snapshots ps
               JOIN instruments inst ON inst.instrument_id = ps.instrument_id
@@ -394,7 +486,7 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             (statement_id,),
         ).fetchall()]
 
-        cash_join, cash_raw_line = _evidence_projection(
+        cash_join, cash_raw_line, cash_evidence_id = _evidence_projection(
             conn,
             table="cash_balances",
             table_alias="cb",
@@ -403,7 +495,8 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
         cash_balances = [dict(r) for r in conn.execute(
             f"""
             SELECT cb.cash_balance_id, cb.as_of_date, cb.currency, cb.opening_balance,
-                   cb.closing_balance, {cash_raw_line} AS raw_line
+                   cb.closing_balance, {cash_raw_line} AS raw_line,
+                   {cash_evidence_id} AS evidence_id
               FROM cash_balances cb
               {cash_join}
              WHERE cb.statement_id = ? ORDER BY cb.currency
@@ -411,7 +504,7 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             (statement_id,),
         ).fetchall()]
 
-        quarantine_join, quarantine_raw_line = _evidence_projection(
+        quarantine_join, quarantine_raw_line, quarantine_evidence_id = _evidence_projection(
             conn,
             table="quarantine_transactions",
             table_alias="q",
@@ -419,7 +512,8 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
         )
         quarantine = [dict(r) for r in conn.execute(
             f"""
-            SELECT q.quarantine_id, {quarantine_raw_line} AS raw_line, q.reason
+            SELECT q.quarantine_id, {quarantine_raw_line} AS raw_line, q.reason,
+                   {quarantine_evidence_id} AS evidence_id
               FROM quarantine_transactions q
               {quarantine_join}
              WHERE q.source_file_id = ? LIMIT 200
@@ -434,7 +528,7 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             snapshot_columns
         )
         if has_snapshot_scopes:
-            summary_join, summary_raw_line = _evidence_projection(
+            summary_join, summary_raw_line, summary_evidence_id = _evidence_projection(
                 conn,
                 table="snapshot_sets",
                 table_alias="ss",
@@ -444,7 +538,8 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
                 f"""
                 SELECT ss.snapshot_set_id, ss.currency, ss.section_type, ss.scope_key,
                        ss.completeness, ss.validation_status, ss.reported_total,
-                       {summary_raw_line} AS raw_line
+                       {summary_raw_line} AS raw_line,
+                       {summary_evidence_id} AS evidence_id
                   FROM snapshot_sets ss
                   {summary_join}
                  WHERE ss.statement_id = ?
@@ -497,6 +592,59 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             ).fetchall()]
 
         quality = _statement_quality(conn, [statement_id]).get(statement_id, _empty_quality())
+        evidence_rows = [*txns, *positions, *cash_balances, *summary_totals, *quarantine]
+        evidence_ids = {
+            int(row["evidence_id"])
+            for row in evidence_rows
+            if row.get("evidence_id") is not None
+        }
+        geometry_by_evidence: dict[int, dict] = {}
+        if evidence_ids and _table_columns(conn, "source_evidence_geometry"):
+            placeholders = ",".join("?" * len(evidence_ids))
+            geometry_by_evidence = {
+                int(row["evidence_id"]): dict(row)
+                for row in conn.execute(
+                    f"""
+                    SELECT evidence_id, status AS geometry_status,
+                           match_method AS geometry_match_method,
+                           confidence AS geometry_confidence
+                      FROM source_evidence_geometry
+                     WHERE evidence_id IN ({placeholders})
+                    """,
+                    tuple(evidence_ids),
+                ).fetchall()
+            }
+        legacy_geometry: set[int] = set()
+        if evidence_ids and _table_columns(conn, "source_evidence"):
+            placeholders = ",".join("?" * len(evidence_ids))
+            legacy_geometry = {
+                int(row[0])
+                for row in conn.execute(
+                    f"""
+                    SELECT evidence_id FROM source_evidence
+                     WHERE evidence_id IN ({placeholders})
+                       AND page_number IS NOT NULL AND bbox_json IS NOT NULL
+                    """,
+                    tuple(evidence_ids),
+                ).fetchall()
+            }
+        for row in evidence_rows:
+            evidence_id = row.get("evidence_id")
+            geometry = geometry_by_evidence.get(int(evidence_id)) if evidence_id else None
+            if geometry is not None:
+                row.update(geometry)
+            elif evidence_id is not None and int(evidence_id) in legacy_geometry:
+                row.update(
+                    geometry_status="exact",
+                    geometry_match_method="legacy_persisted_box",
+                    geometry_confidence=1.0,
+                )
+            else:
+                row.update(
+                    geometry_status="unavailable",
+                    geometry_match_method=None,
+                    geometry_confidence=None,
+                )
 
     references: list[dict] = []
     for row in txns:
@@ -505,6 +653,7 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             "id": row["transaction_id"],
             "label": f"{row['txn_type']} {row.get('symbol') or ''}".strip(),
             "raw_line": row.get("raw_line"),
+            "evidence_id": row.get("evidence_id"),
         })
     for row in positions:
         references.append({
@@ -512,6 +661,7 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             "id": row["snapshot_id"],
             "label": f"position {row.get('symbol') or ''}".strip(),
             "raw_line": row.get("raw_line"),
+            "evidence_id": row.get("evidence_id"),
         })
     for row in cash_balances:
         references.append({
@@ -519,6 +669,7 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             "id": row["cash_balance_id"],
             "label": f"cash {row.get('currency') or ''}".strip(),
             "raw_line": row.get("raw_line"),
+            "evidence_id": row.get("evidence_id"),
         })
     for row in summary_totals:
         references.append({
@@ -526,6 +677,7 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             "id": row["snapshot_set_id"],
             "label": f"summary {row.get('currency') or ''}".strip(),
             "raw_line": row.get("raw_line"),
+            "evidence_id": row.get("evidence_id"),
         })
     for row in quarantine:
         references.append({
@@ -533,6 +685,7 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             "id": row["quarantine_id"],
             "label": row.get("reason") or "quarantine",
             "raw_line": row.get("raw_line"),
+            "evidence_id": row.get("evidence_id"),
         })
 
     return {
@@ -573,7 +726,7 @@ def statement_pdf(statement_id: int):
         raise HTTPException(404, "source PDF is not available on disk")
 
     # Path-traversal guard: the relpath must resolve inside the repo root or
-    # the statements dir (mirrors the containment stance of _repo_root_for).
+    # the statements directory's parent.
     resolved = path.resolve()
     allowed_roots = [Path(ROOT).resolve(), Path(STATEMENTS_DIR).parent.resolve()]
     if not any(resolved.is_relative_to(root) for root in allowed_roots):
@@ -603,7 +756,11 @@ def statement_boxes(statement_id: int) -> dict:
     source_path = _source_path(relpath)
     pages: list[dict] = []
     if source_path is not None:
-        boxes = _annotated_boxes(source_path, loaded["references"])
+        boxes = _persisted_boxes(
+            source_path,
+            source_file_id=int(loaded["statement"]["source_file_id"]),
+            references=loaded["references"],
+        )
         if boxes is None:
             raise HTTPException(422, "PDF could not be opened (image-only or encrypted)")
         pages = boxes

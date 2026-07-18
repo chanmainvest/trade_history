@@ -126,8 +126,11 @@ read-only, so the application safety rule still applies).
 
 The current tabs are Transactions, Monthly, Performance, Research,
 Visualisations, Verify extraction, and Settings. Verify renders the original
-PDF beside parsed rows and highlights fuzzy-matched source boxes, while also
+PDF beside parsed rows and highlights persisted exact source boxes, while also
 showing parser/run state, scope completeness, and reconciliation outcomes.
+Run `uv run ledger ingest enrich-layout` after semantic ingest to build those
+replaceable coordinates; ambiguous or unmatched evidence stays visibly
+unlinked instead of being fuzzy-matched.
 Monthly shows reported/reconstructed/incomplete holding state, checkpoint date,
 quality warnings, and dated FX conversion details. Settings manages named
 account portfolios; theme, language, and hide-money controls are in the top

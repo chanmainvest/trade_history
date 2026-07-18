@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Annotated
 
 import duckdb
 from fastapi import APIRouter, Query
@@ -126,12 +127,14 @@ def _symbol_performance(symbols: list[str], as_of: str, period: str) -> dict[str
 
 @router.get("/holdings_by_sector")
 def holdings_by_sector(
-    month_end: str | None = Query(None, description="ISO date; defaults to latest"),
+    month_end: Annotated[
+        date | None, Query(description="ISO date; defaults to latest")
+    ] = None,
     account_id: str | None = Query(None),
     period: str = Query("1m", pattern="^(1d|1w|1m|3m|6m|1y|ytd)$"),
 ) -> dict:
     accts = _csv_ints(account_id)
-    as_of = _resolve_as_of(month_end)
+    as_of = _resolve_as_of(month_end.isoformat() if month_end is not None else None)
     if not as_of:
         return {"as_of_date": None, "rows": []}
     rows = []
@@ -164,13 +167,14 @@ def holdings_by_sector(
 
 @router.get("/correlation")
 def correlation(
-    start: str = Query(...),
-    end: str = Query(...),
+    start: Annotated[date, Query()],
+    end: Annotated[date, Query()],
     account_id: str | None = Query(None),
 ) -> dict:
     """Pairwise correlation of daily returns over [start, end] for held symbols."""
     accts = _csv_ints(account_id)
-    symbols = _held_symbols_at(end, accts)
+    start_text, end_text = start.isoformat(), end.isoformat()
+    symbols = _held_symbols_at(end_text, accts)
     if not symbols:
         return {"symbols": [], "matrix": []}
     con = _duck()
@@ -179,7 +183,7 @@ def correlation(
         df = con.execute(
             f"SELECT symbol, trade_date, adj_close FROM daily_prices "
             f"WHERE symbol IN ({placeholders}) AND trade_date BETWEEN ? AND ?",
-            [*symbols, start, end],
+            [*symbols, start_text, end_text],
         ).df()
     finally:
         con.close()
@@ -196,12 +200,14 @@ def correlation(
 def rrg(
     benchmark: str = Query("SPY"),
     window_days: int = 60,
-    start: str | None = None,
-    end: str | None = None,
+    start: date | None = None,
+    end: date | None = None,
     account_id: str | None = None,
 ) -> dict:
     accts = _csv_ints(account_id)
-    as_of = _resolve_as_of(end)
+    start_text = start.isoformat() if start is not None else None
+    end_text = end.isoformat() if end is not None else None
+    as_of = _resolve_as_of(end_text)
     symbols = _held_symbols_at(as_of, accts) if as_of else []
     con = _duck()
     try:
@@ -221,12 +227,12 @@ def rrg(
         sql = (f"SELECT symbol, trade_date, adj_close FROM daily_prices "
                f"WHERE symbol IN ({ph})")
         params: list = list(targets)
-        if start:
+        if start_text:
             sql += " AND trade_date >= ?"
-            params.append(start)
-        if end:
+            params.append(start_text)
+        if end_text:
             sql += " AND trade_date <= ?"
-            params.append(end)
+            params.append(end_text)
         df = con.execute(sql, params).df()
     finally:
         con.close()

@@ -374,9 +374,10 @@ The screen has two sides:</p>
   Transactions, Positions, Cash, Summary totals, and Quarantine rows.</li>
 </ul>
 <p>Click a box on the left to highlight its item on the right; click an item on
-the right to highlight its box(es) on the left and scroll the PDF to the
-first match. Items with no matching PDF line are dimmed and marked with a
-dot.</p>
+the right to highlight its box(es) on the left and scroll the PDF to the first
+match. Boxes come from persisted exact evidence links, not request-time fuzzy
+text matching. Items with ambiguous, unmatched, or unavailable geometry are
+dimmed and show that reason; they never receive a guessed box.</p>
 <p>Pick which statement to view with the dropdown filters — <strong>Date</strong>,
 <strong>Institution</strong>, and <strong>Account</strong> — which narrow the statement list. The list
 defaults to the latest statement. <strong>Prev / next</strong> chevron buttons next to
@@ -415,6 +416,9 @@ MCP server's allowlisted CLI commands):</p>
 <div class="highlight"><pre><span></span><code><span class="c"># ingest every PDF under Statements/&lt;Institution&gt;/</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">run</span>
 
+<span class="c"># derive replaceable PDF line boxes for Verify after semantic ingest</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">enrich-layout</span>
+
 <span class="c"># infer opening holdings before the first statement</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">infer-initials</span>
 
@@ -432,6 +436,9 @@ after source activation. Reconciliation can attach name-only buys/sells to
 unique same-currency holding evidence and leaves ambiguity null.
 <code>repair-symbols</code> is for legacy/manual data; the reconcile command is mainly
 needed after manual DB edits.</p>
+<p><code>enrich-layout</code> verifies each source hash and writes only derived page/line
+geometry. It does not change semantic extraction or financial values. Re-run it
+after activating new parser output or changing the geometry extractor.</p>
 <p><code>shadow build</code> does not replace the active database. Review its local report
 and source PDFs first; only a human may record <code>shadow sign-off</code> and later run
 the separately guarded <code>shadow cutover</code> command after stopping the backend.</p>
@@ -648,9 +655,9 @@ over to it.</p>
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.</li>
 <li>CIBC, RBC, and TD report parser version <code>2.4.0</code>, while HSBC reports <code>2.2.0</code>.
-  They retain source page/line evidence, available word/box
-  geometry, explicit snapshot scopes, and quarantine rather than fabricate
-  unsupported values.</li>
+  They retain semantic source page/line evidence, explicit snapshot scopes,
+  and quarantine rather than fabricate unsupported values. Word/box geometry
+  is rebuilt separately after semantic activation.</li>
 <li>Monthly, Performance, and Visualisations now consume one read-only scoped
   holdings service. Monthly renders checkpoint/provenance, reported versus
   reconstructed/incomplete state, reconciliation, and stale/unpriced quality
@@ -659,6 +666,10 @@ over to it.</p>
   position/cash/statement-total reconciliation results, and source-linked cash
   and summary-total rows. Its unresolved/incomplete/unreconciled filters are
   read-only. Legacy rows without v6 facts are shown as unavailable, not complete.</li>
+<li>Schema v8 constrains new ledger currencies to CAD/USD, validates canonical
+  business dates/UTC timestamps and SHA-256 text, and stores replaceable PDF
+  geometry separately from <code>ev2</code> semantic evidence. Verify reads persisted
+  exact links; ambiguous/unmatched rows remain visibly unlinked.</li>
 <li>Transactions exposes initial-position anchors separately from broker events.
   Transactions and Monthly can deep-link exact source rows into Verify; the
   preference is controlled in Settings. Monthly no longer repeats a portfolio
@@ -732,10 +743,10 @@ over to it.</p>
 </ul>
 <h2 id="ticker-change-support-fixture-validated-2026-07-18">Ticker-change support (fixture validated 2026-07-18)</h2>
 <ul>
-<li>Schema v7 preserves old and new tickers as separate canonical instruments
+<li>Schema v8 preserves old and new tickers as separate canonical instruments
   linked by an effective date and source transaction/evidence. It does not use
   the timeless alias table for this purpose.</li>
-<li>Parser-contract v3 accepts only explicit printed old/new pairs. Generic name
+<li>Parser-contract v4 accepts only explicit printed old/new pairs. Generic name
   changes remain incomplete rather than being inferred from names or residuals.</li>
 <li>Reconciliation debits the whole old-symbol balance and credits the new-symbol
   balance at the stored ratio. Holdings, Monthly diff, Performance filters, and
@@ -848,7 +859,7 @@ over to it.</p>
 <h2 id="confirmed-remaining-correctness-work">Confirmed remaining correctness work</h2>
 <ol>
 <li><strong>The dated live ledger still has broken historical instrument identity.</strong>
-   Schema v7 gives new/migrated rows one canonical key per listing plus dated
+   Schema v8 gives new/migrated rows one canonical key per listing plus dated
    ticker relationships, but the 2026-07-12 live snapshot is not the shadow
    target. It contains 803 duplicate logical
    groups, 31,567 excess IDs, and 28,587 unreferenced instrument rows.</li>
@@ -922,6 +933,7 @@ not mutate the ledger.</p>
   parsers/                  common types, layout/provenance bridge, four bank parsers
   ingest/
     pipeline.py             discovery, validate, staged source activation, audit export
+    layout_enrichment.py    replaceable PDF geometry extraction and evidence linking
     identity_resolution.py  conservative in-stage printed/alias/holding resolution
     repair_symbols.py       legacy/manual post-parse identity repair
     fund_lookup.py          reviewed fund-code lookup workflow
@@ -971,10 +983,10 @@ as completed behavior.</p>
 <li>Monthly, Performance, and Visualisations consume that same holdings service;
   Research stitches each dated ticker lineage across SQLite trades and DuckDB
   prices/financials.</li>
-<li>Verify serves the original PDF and fuzzy-matches stored <code>raw_line</code> values to
-  <code>pdfplumber</code> text-line boxes.</li>
+<li>Verify serves the original PDF and reads persisted exact evidence-to-line
+  geometry. It never fuzzy-matches financial rows during an API request.</li>
 </ul>
-<p>The GUI does not yet render holdings quality/reconciliation warnings; see
+<p>The GUI renders holdings quality/reconciliation warnings; see
 <a href="#reconciliation">RECONCILIATION.md</a>.</p>
 <h2 id="detailed-context">Detailed context</h2>
 <ul>
@@ -992,9 +1004,14 @@ as completed behavior.</p>
 <p>This document describes the schema currently implemented. Exact SQLite DDL is
 owned by <code>src/ledger/db/schema.sql</code>; exact DuckDB DDL is the <code>DDL</code> string in
 <code>src/ledger/db/duckdb_store.py</code>. Update code and this spec together.</p>
-<h2 id="sqlite-ledger-schema-version-7">SQLite ledger (schema version 7)</h2>
-<p>All dates are ISO text and monetary values remain in the row's native
-<code>currency</code>.</p>
+<h2 id="sqlite-ledger-schema-version-8">SQLite ledger (schema version 8)</h2>
+<p>SQLite has no dedicated date, datetime, or enum storage class. Business dates
+therefore remain canonical <code>YYYY-MM-DD</code> <code>TEXT</code>, and audit timestamps use one
+UTC representation: <code>YYYY-MM-DDTHH:MM:SSZ</code>. Schema-v8 checks/triggers reject
+malformed or impossible new dates, non-canonical timestamps, currencies outside
+the private-ledger CAD/USD domain, and malformed SHA-256 values. API date
+parameters are parsed as dates before a query runs. Monetary values remain in
+the row's native <code>currency</code>.</p>
 <table>
 <thead>
 <tr>
@@ -1027,7 +1044,12 @@ owned by <code>src/ledger/db/schema.sql</code>; exact DuckDB DDL is the <code>DD
 <tr>
 <td>Evidence</td>
 <td><code>source_evidence</code></td>
-<td>deterministic source-row provenance without exposing it in public audit logs</td>
+<td>deterministic semantic source-row provenance without exposing it in public audit logs</td>
+</tr>
+<tr>
+<td>Geometry</td>
+<td><code>source_pages</code>, <code>source_lines</code>, <code>source_evidence_geometry</code>, <code>source_evidence_lines</code></td>
+<td>rebuildable PDF coordinates and evidence-to-line matches</td>
 </tr>
 <tr>
 <td>Ledger</td>
@@ -1099,17 +1121,29 @@ source savepoint, writes its deterministic <code>content_counts_json</code> and
 <code>content_hash</code>, then switches <code>source_files.active_ingestion_run_id</code>. Failed
 attempts retain their own run/status/error while leaving the previous active
 pointer and active metadata intact. Successful replacements remove the prior
-derived run and its source children in that transaction. Schema v7's global
+derived run and its source children in that transaction. Schema v8's global
 statement/evidence uniqueness prevents old/new copies from coexisting, so this
 replacement is uncommitted until activation; readers only see the prior or new
 complete source output.</p>
-<p><code>source_evidence</code> has a deterministic non-content-revealing key, source/run,
-row occurrence, raw text, optional page/line/coordinates/words, and parser
-rule/version. New transactions, holdings, cash balances, and quarantine rows
-link to evidence. Parser v2 rows carry page/line evidence and retain available
-<code>pdfplumber</code> coordinates/words; text-only extraction uses no invented box.
-Legacy migrated cash evidence explicitly has no raw source text rather than a
+<p><code>source_evidence</code> has a deterministic non-content-revealing <code>ev2</code> key,
+source/run, row occurrence, raw text, optional semantic page/line hint, and
+parser rule/version. The key deliberately excludes coordinates and page/line,
+so rerunning a geometry extractor cannot change semantic row identity. New
+transactions, holdings, cash balances, and quarantine rows link to evidence.
+Legacy single-box fields remain readable for compatibility.</p>
+<p>The four geometry tables are derived after semantic extraction. They retain
+page dimensions, normalized line hashes, exact boxes/words, an explicit match
+status, and the lines linked to each evidence row. Geometry is replaceable and
+is excluded from the semantic ingestion content hash. Repeated text without a
+unique persisted hint is <code>ambiguous</code>, not assigned by row order. Legacy
+migrated cash evidence explicitly has no raw source text rather than a
 fabricated line.</p>
+<p><code>sha256</code>, <code>source_sha256</code>, and content/line hashes stay lowercase 64-character
+hex <code>TEXT</code>: this is readable, interoperable with Python tooling, and now
+validated as hash-shaped data. <code>schema_version</code> is an integer because it is a
+monotonic database format number. Parser, parser-contract, resolver, and
+geometry-extractor versions remain <code>TEXT</code> because they are semantic versions
+or named/fingerprinted algorithms, not quantities that support arithmetic.</p>
 <h3 id="transactions-and-normalized-effects">Transactions and normalized effects</h3>
 <p><code>transactions.quantity</code> and amount fields retain the reported parser values.
 <code>position_delta</code>, <code>cash_delta</code>, and <code>cash_effective_date</code> hold the normalized
@@ -1130,8 +1164,10 @@ these rebuildable derived links; <code>resolution_evidence_id</code> points at t
 supporting position row. The description and reported numeric fields remain
 unchanged. Existing transaction and checkpoint evidence is sufficient for this
 derivation, while <code>instrument_aliases</code> remains reserved for reviewed mappings.</p>
-<p>Parser-contract v3 adds <code>related_instrument</code> and <code>corporate_action_ratio</code> to a
-transaction. For a supported ticker change, <code>instrument_id</code> is the old printed
+<p>Parser-contract v4 includes v3's <code>related_instrument</code> and
+<code>corporate_action_ratio</code> support and makes semantic evidence identity
+independent of replaceable geometry. For a supported ticker change,
+<code>instrument_id</code> is the old printed
 listing and the related instrument is persisted through the dated relationship.
 Both must have the same asset type/native currency and different symbols.</p>
 <h3 id="scoped-checkpoints">Scoped checkpoints</h3>
@@ -1225,16 +1261,17 @@ point to evidence-linked transactions. No result creates an adjustment row.</p>
 Price identity is currently symbol/date only; exchange/currency are not part of
 the primary key.</p>
 <h2 id="current-migration-behavior">Current migration behavior</h2>
-<p><code>db init</code> executes idempotent DDL and a tested v5-to-v6 compatibility
-migration in <code>db/sqlite.py</code>. The migration preserves row IDs and foreign keys,
-creates legacy source runs/evidence, and marks migrated snapshot scopes
-<code>unknown</code>. It is not a replacement for the planned shadow rebuild; do not use
+<p><code>db init</code> executes idempotent DDL and a tested v5-to-v6 compatibility migration
+in <code>db/sqlite.py</code>, then installs v8 domain triggers on pre-v8 tables. The
+migration preserves row IDs and foreign keys, creates legacy source
+runs/evidence, and marks migrated snapshot scopes <code>unknown</code>. Historical values
+are not rewritten merely to normalize formatting; new or changed domain values
+are checked. It is not a replacement for the planned shadow rebuild; do not use
 it as a live-data correctness cutover.</p>
 <h2 id="still-pending">Still pending</h2>
-<p>The remaining phase surfaces reconciliation/holdings quality read-only in the
-GUI. A shadow ledger can now be built and compared safely, but human source
-review and explicit cutover remain operational gates. See the plan for
-sequencing.</p>
+<p>The GUI surfaces reconciliation/holdings quality read-only. A shadow ledger can
+be built and compared safely, but human source review and explicit cutover
+remain operational gates. See the plan for sequencing.</p>
 </div>
 
 <div class="doc-section" id="ingestion">
@@ -1246,10 +1283,11 @@ semantics. Institution parsing details are under <code>spec/parsers/</code>.</p>
 <p><code>ledger ingest run</code> walks only <code>*.pdf</code> files directly below each directory in
 <code>STATEMENTS_DIR</code>. Folder names map to institution codes in <code>config.INSTITUTIONS</code>;
 unknown folders use their literal name as the code.</p>
-<p><code>pdf_text.extract_pdf()</code> reads all pages with <code>pdfplumber</code>, retains its
-page-local words/visual lines when available, falls back to <code>pypdf</code> only when
-the first result is empty, fingerprints the file, and marks fewer than 20
-extracted characters as image-only. OCR is not implemented.</p>
+<p><code>pdf_text.extract_pdf()</code> reads text and page dimensions with <code>pdfplumber</code>,
+falls back to <code>pypdf</code> only when the first result is empty, fingerprints the
+file, and marks fewer than 20 extracted characters as image-only. Normal ingest
+does not request word/box extraction. This keeps semantic parsing independent
+from PDF drawing order and coordinate heuristics. OCR is not implemented.</p>
 <p>PDFs are immutable inputs. Text dumps under <code>&lt;DATA_DIR&gt;/text_dumps/</code> and logs
 are derived artifacts.</p>
 <h2 id="current-flow">Current flow</h2>
@@ -1271,6 +1309,19 @@ are derived artifacts.</p>
 <code>2.4.0</code>; HSBC reports <code>2.2.0</code>. Parser, contract, schema, and resolver changes
 intentionally invalidate older active cache entries so a reviewed re-ingest
 exercises the current extraction contract.</p>
+<h2 id="independent-layout-enrichment">Independent layout enrichment</h2>
+<p>After semantic rows have been reviewed and activated,
+<code>ledger ingest enrich-layout</code> reopens immutable PDFs with word geometry
+enabled. It verifies each PDF's SHA-256, replaces only derived geometry for the
+active run, and links stored semantic evidence to exact PDF lines. Matching
+accepts a unique persisted page/line hint, a unique exact line sequence, or one
+unique contiguous token sequence. Repeated candidates are stored as
+<code>ambiguous</code>; unmatched text and PDFs without coordinate lines remain explicit
+statuses. It never changes a transaction, amount, quantity, instrument, scope,
+or semantic evidence key.</p>
+<p>Use <code>--source-file-id ID</code> to rebuild one source. The command is intentionally
+CLI-only. A geometry failure rolls back that source's geometry savepoint and
+does not affect active semantic data.</p>
 <h2 id="status-and-cache-behavior">Status and cache behavior</h2>
 <p><code>source_files.parse_status</code> is a compatibility summary of the active
 extraction. It is <code>pending</code>, <code>ok</code>, <code>partial</code>, <code>failed</code>, or <code>skipped</code>. A parser
@@ -1419,9 +1470,10 @@ reason)</code> quarantine tuples remain accepted during the parser migration.</p
 <code>src/ledger/parsers/types.py</code>. <code>parsers/validation.py</code> enforces the runtime
 contract on the complete <code>ParseResult</code> before staged ingestion writes any
 statement children.</p>
-<p>The active parser contract is version <code>3</code>. <code>ParsedTxn.related_instrument</code> and
-<code>corporate_action_ratio</code> represent an explicitly printed corporate-action
-replacement without overwriting the original instrument.</p>
+<p>The active parser contract is version <code>4</code>. It retains v3's
+<code>ParsedTxn.related_instrument</code> and <code>corporate_action_ratio</code> support for an
+explicitly printed corporate-action replacement, and changes evidence identity
+so replaceable geometry cannot alter semantic rows.</p>
 <h2 id="required-semantics">Required semantics</h2>
 <ul>
 <li>Parsing is deterministic and side-effect free: no database writes or network.</li>
@@ -1459,19 +1511,23 @@ underdetermined movement and makes reconciliation incomplete.</p>
 <h2 id="evidence-and-quarantine">Evidence and quarantine</h2>
 <p><code>SourceSpan</code> can carry raw text, page/line, bounding box, words, and parser
 rule. Transactions, positions, cash balances, snapshot sets, and the richer
-quarantine type can carry one. The writer assigns every parsed/quarantined row
-a deterministic evidence record, using a stable row occurrence when layout
-coordinates are not yet available. Cash balances now carry their opening/
-closing source line(s).</p>
+quarantine type can carry one. Normal ingest uses raw text plus deterministic
+page/line hints; it does not request boxes. The writer assigns every
+parsed/quarantined row a deterministic evidence record from source identity,
+row kind/occurrence, raw text, and parser rule. Page, line, boxes, and words do
+not participate in the <code>ev2</code> key. Cash balances carry their opening/closing
+source line(s).</p>
 <p>The validator reports missing cash evidence and undeclared row scopes as
 explicit warnings. It treats malformed dates/currencies/numerics, invalid
 transaction vocabulary, incomplete options, duplicate statement identities,
 invalid snapshot declarations, and parser-reported errors as fatal.</p>
-<p><code>PdfText</code> now retains raw page text plus <code>PdfWord</code>/<code>PdfLine</code> layout rows when
-<code>pdfplumber</code> exposes coordinates. The parser bridge normalizes text only for
-matching; it keeps the original raw evidence in the stored span. Text fixtures
-and the <code>pypdf</code> fallback still receive deterministic page/line evidence but no
-invented bounding box or word coordinates.</p>
+<p><code>PdfText</code> retains raw page text and page dimensions. It carries
+<code>PdfWord</code>/<code>PdfLine</code> layout rows only when the separate geometry pass explicitly
+sets <code>include_layout=True</code>. The parser bridge normalizes text only for matching
+and keeps original raw evidence. Normal ingest, text fixtures, and the <code>pypdf</code>
+fallback receive deterministic page/line evidence but no invented box or word
+coordinates. See <a href="#ingestion">INGESTION.md</a> for the replaceable enrichment
+pass.</p>
 <p>The four bank parsers are at layout/state-machine version 2. They attach spans
 to transactions, positions, cash, and quarantine rows, and declare a scope
 <code>complete</code> only after recognizing the full relevant section (and, for cash, a
@@ -1502,9 +1558,10 @@ owned by <a href="#reconciliation">RECONCILIATION.md</a>.</p>
 <ul>
 <li>The database still accepts arbitrary transaction text, although new parser
   output is checked against <code>TxnType</code> before persistence.</li>
-<li>Layout coordinates are preserved when available, but the bank parsers still
-  use broker-specific text state machines rather than a general table engine.
-  Debit/credit coverage must be spot-checked for each new layout.</li>
+<li>The bank parsers use broker-specific text state machines rather than a
+  general table engine. Geometry enrichment is for visual verification, not a
+  second authority for financial values. Debit/credit coverage must be
+  spot-checked for each new semantic layout.</li>
 <li>A <code>complete</code> declaration proves a recognized printed section and valid parsed
   rows; it is not yet independently validated against every broker total.</li>
 <li>Existing active/live runs predate parser v2. They retain their historical
@@ -1815,7 +1872,7 @@ reconciliation-rebuild endpoints in the current route set.</p>
    fetched history before the visible period is clipped. Dated ticker lineages
    are stitched without using post-change prices under the old symbol.</li>
 <li>Visualisations: holdings treemap, correlation, and RRG.</li>
-<li>Verify extraction: PDF.js rendering with <code>pdfplumber</code> text-line boxes,
+<li>Verify extraction: PDF.js rendering with persisted <code>pdfplumber</code> line boxes,
    parsed transaction/position/cash/summary/quarantine lists, scope
    completeness, active parser/run metadata, and reconciliation outcomes.</li>
 <li>Settings: named account portfolios.</li>
@@ -1829,12 +1886,15 @@ unexplained residuals. The React filter checkboxes apply those flags locally to
 the fetched picker rows.</p>
 <p><code>GET /statements/{id}/boxes</code> returns the active parser/run metadata, every
 currency/section/scope completeness declaration, persisted position/cash/total
-reconciliation results, and the parsed lists. It re-extracts PDF text lines,
-normalizes whitespace/case, and fuzzy-matches stored transaction, position,
-cash, summary-total, and quarantine evidence text. Repeated text can match
-multiple boxes; legacy rows with no recorded source text remain visibly
-unlinked. A legacy database without v6 scope/reconciliation tables returns
-explicitly empty quality facts rather than treating those facts as complete.
+reconciliation result, and the parsed lists. It reads exact evidence-to-line
+links produced by the separate layout-enrichment command; it does not fuzzy
+match text during an HTTP request. Each row reports its geometry status/method.
+Repeated text without a unique semantic page/line hint is visibly <code>ambiguous</code>;
+unmatched, coordinate-free, and legacy rows remain visibly unlinked rather
+than receiving a plausible wrong box. Legacy single-box evidence remains a
+persisted compatibility fallback. A legacy database without v6
+scope/reconciliation tables returns explicitly empty quality facts rather than
+treating those facts as complete.
 <code>/verify?statement=&lt;id&gt;&amp;ref=&lt;kind&gt;:&lt;id&gt;</code> selects a persisted row and waits for
 its PDF page to render before scrolling. Only boxes containing that exact
 reference receive selected styling.</p>
@@ -1905,6 +1965,7 @@ ledger pdf dump-samples [--per-folder N]
 ledger audit extraction [--statements-dir PATH] [--output PATH]
                         [--institution FOLDER] [--limit N] [--fail-on-errors]
 ledger ingest run [--institution FOLDER] [--limit N] [--force]
+ledger ingest enrich-layout [--source-file-id ID]
 ledger ingest infer-initials
 ledger ingest repair-symbols
 ledger ingest reconcile
@@ -1932,14 +1993,17 @@ use yfinance; US financial history can fall back to SEC Company Facts.</p>
 name-only buy/sell links from observed same-currency holdings, transfer pairs,
 position attribution, and checkpoint equations. It does not edit statement
 PDFs or reported transaction numerics; ambiguous identities remain null.</p>
+<p><code>ingest enrich-layout</code> is also CLI-only. It verifies the immutable PDF hash and
+rebuilds replaceable PDF page/line coordinates for active semantic evidence.
+Ambiguous/unmatched rows remain explicit and no financial row is changed.</p>
 <p>The extraction audit is read-only with respect to SQLite. It accepts either
 source PDFs or stored <code>.txt</code> dumps, overwrites a deterministic JSONL report
 (default <code>logs/extraction_audit.jsonl</code>), and omits raw statement text. Use
 <code>--fail-on-errors</code> in a gate where invalid/unclaimed/crashed outputs must
 return non-zero.</p>
-<p><code>ledger db init</code> creates or upgrades schema version 7. The API/server does not
+<p><code>ledger db init</code> creates or upgrades schema version 8. The API/server does not
 silently migrate a database at startup; run <code>db init</code> deliberately before
-serving a v6 database. For an existing real ledger, use the guarded shadow
+serving an older database. For an existing real ledger, use the guarded shadow
 workflow below rather than treating a compatibility migration as live cutover.</p>
 <h2 id="shadow-rebuild-review-and-cutover">Shadow rebuild, review, and cutover</h2>
 <p><code>ledger shadow build</code> opens the source SQLite file read-only, copies only

@@ -5,11 +5,11 @@ import hashlib
 import json
 import logging
 from dataclasses import asdict
-from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import config
 from ..db import sqlite as sqlite_db
+from ..domains import utc_now_text
 from ..identity import canonical_statement_key, evidence_occurrence
 from ..logging_setup import get_logger
 from ..parsers import registry  # noqa: F401  (ensures parsers register)
@@ -147,7 +147,7 @@ def _update_source_metadata(
             int(pdf.is_image_only),
             parser_name,
             parser_version,
-            datetime.now(UTC).isoformat(timespec="seconds"),
+            utc_now_text(),
             parse_status,
             source_file_id,
         ),

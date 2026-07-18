@@ -1,7 +1,9 @@
 """GET /monthly — canonical point-in-time holdings and comparisons."""
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
+from typing import Annotated
 
 import duckdb
 from fastapi import APIRouter, Query
@@ -87,11 +89,13 @@ def _snapshot_totals(rows: list[dict], as_of: str) -> dict:
 
 @router.get("/snapshot")
 def snapshot(
-    month_end: str | None = Query(None, description="ISO date; defaults to latest"),
+    month_end: Annotated[
+        date | None, Query(description="ISO date; defaults to latest")
+    ] = None,
     account_id: str | None = Query(None),
 ) -> dict:
     accts = _csv_ints(account_id)
-    month_end = month_end or latest_holdings_date(account_ids=accts)
+    month_end = month_end.isoformat() if month_end is not None else latest_holdings_date(account_ids=accts)
     rows = _holdings_at(month_end, accts) if month_end else []
     return {
         "as_of_date": month_end or "",
@@ -102,18 +106,19 @@ def snapshot(
 
 @router.get("/diff")
 def diff(
-    a: str = Query(...),
-    b: str = Query(...),
+    a: Annotated[date, Query()],
+    b: Annotated[date, Query()],
     account_id: str | None = Query(None),
 ) -> dict:
     accts = _csv_ints(account_id)
+    a_text, b_text = a.isoformat(), b.isoformat()
     rows_a = {
         (row["account_id"], row["instrument_key"], row["currency"]): row
-        for row in _holdings_at(a, accts)
+        for row in _holdings_at(a_text, accts)
     }
     rows_b = {
         (row["account_id"], row["instrument_key"], row["currency"]): row
-        for row in _holdings_at(b, accts)
+        for row in _holdings_at(b_text, accts)
     }
     keys = set(rows_a) | set(rows_b)
     diffs = []
@@ -144,4 +149,4 @@ def diff(
                 "mv_b": (row_b or {}).get("market_value"),
             }
         )
-    return {"a": a, "b": b, "rows": diffs}
+    return {"a": a_text, "b": b_text, "rows": diffs}
