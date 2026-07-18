@@ -9,7 +9,7 @@ This guide is written for **humans**. Technical context starts at
 [INDEX.md](INDEX.md), while coding-agent rules live in
 [AGENTS.md](../AGENTS.md).
 
-> **Current data-quality notice (2026-07-16):** the GUI is operational and
+> **Current data-quality notice (2026-07-18):** the GUI is operational and
 > source ingestion preserves the prior active extraction if parsing or staging
 > fails. Parser v2 fixes the audited RBC dual-currency and TD bundled layouts,
 > and the CLI now persists month-end reconciliation results. A non-live shadow
@@ -177,18 +177,21 @@ just close the terminal.
     uv run ledger ingest repair-symbols
     ```
 
-6. *(Optional after manual DB edits)* Rebuild automatic transfer links,
-    position-to-transaction links, and reconciliation results:
+6. *(Optional after manual DB edits)* Rebuild conservative name-only trade
+    links, automatic transfer links, position-to-transaction links, and
+    reconciliation results:
 
     ```powershell
     uv run ledger ingest reconcile
     ```
 
     Normal `ingest run` performs this after active source activation; the command
-    is mainly for manual maintenance. It stores expected-versus-reported
-    position, cash, and printed-total equations, including incomplete inputs and
-    unexplained residuals. It does not alter a reported transaction or create a
-    balancing entry.
+    is mainly for manual maintenance. A name-only buy/sell is linked only when
+    one equity/ETF holding name in the same native currency is uniquely
+    supported; generic or ambiguous fund-family names stay unresolved. The
+    command stores expected-versus-reported position, cash, and printed-total
+    equations, including incomplete inputs and unexplained residuals. It does
+    not alter reported quantities/amounts or create a balancing entry.
 
 7. Reload the browser. The Transactions tab should now have data.
 
@@ -376,7 +379,7 @@ uv run ledger ingest run
 # infer opening holdings before the first statement
 uv run ledger ingest infer-initials
 
-# rebuild transfer counterpart, movement links, and reconciliation results after manual edits
+# rebuild name/transfer links, movement links, and reconciliation results after manual edits
 uv run ledger ingest reconcile
 
 # repair symbols (resolve aliases, fund-code lookups, etc.)
@@ -387,8 +390,10 @@ uv run ledger shadow build
 ```
 
 `ingest run` performs conservative staged identity resolution and reconciliation
-after source activation. `repair-symbols` is for legacy/manual data; the
-reconcile command is mainly needed after manual DB edits.
+after source activation. Reconciliation can attach name-only buys/sells to
+unique same-currency holding evidence and leaves ambiguity null.
+`repair-symbols` is for legacy/manual data; the reconcile command is mainly
+needed after manual DB edits.
 
 `shadow build` does not replace the active database. Review its local report
 and source PDFs first; only a human may record `shadow sign-off` and later run

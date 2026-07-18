@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections import Counter
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -24,6 +25,64 @@ EXACT_TOLERANCE = 1e-9
 POSITION_TOLERANCE = 1e-8
 CASH_TOLERANCE = 0.01
 POSITION_EFFECT_TYPES = POSITION_AFFECTING_TYPES
+AUTOMATIC_NAME_METHODS = {"account_holding_name", "portfolio_holding_name"}
+
+_TRADE_VERB_RE = re.compile(r"^\s*(?:BOUGHT|SOLD|BUY|SELL)\s+", re.IGNORECASE)
+_TRADE_NUMERIC_TAIL_RE = re.compile(
+    r"(?<!\S)[+-]?\$?\d[\d,]*(?:\.\d+)?-?\s+"
+    r"\$?[+-]?\d[\d,]*(?:\.\d+)?\s+"
+    r"\$?[+-]?\d[\d,]*(?:\.\d+)?"
+)
+_BROKER_REFERENCE_RE = re.compile(r"\b[A-Z]{2}-\d{6}\b")
+_NAME_TOKEN_RE = re.compile(r"[A-Z0-9]+")
+_NAME_STOP_WORDS = {
+    "A", "AN", "THE", "AND", "OF", "ON", "INC", "LTD", "PLC",
+    "CORP", "CORPORATION", "COMPANY", "CO", "COM", "COMMON", "STOCK",
+    "SHARE", "SHARES", "ETF", "UNIT", "UNITS", "TRUST", "FUND", "FUNDS",
+    "FD", "FDS", "CLASS", "CL", "SPONSORED", "ADR", "UNSOLICITED",
+    "LIMITED", "NEW", "SER", "SERIES", "SEG", "AS",
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+}
+_NAME_ABBREVIATIONS = {
+    "RTY": "REALTY",
+    "PPTYS": "PROPERTIES",
+    "SVGS": "SAVINGS",
+    "INT": "INTEREST",
+    "MNG": "MINING",
+    "INVT": "INVESTMENT",
+    "INVTS": "INVESTMENT",
+    "GRP": "GROUP",
+    "ENER": "ENERGY",
+    "RES": "RESOURCES",
+    "BND": "BOND",
+    "INDX": "INDEX",
+    "TREAS": "TREASURY",
+    "YR": "YEAR",
+    "MKT": "MARKET",
+    "GLB": "GLOBAL",
+    "HORZN": "HORIZONS",
+}
+_GENERIC_NAME_TOKENS = {
+    "BMO", "CIBC", "DIREXION", "GLOBAL", "HORIZONS", "INVESCO",
+    "ISHARES", "PURPOSE", "RBB", "RBC", "SPROTT", "TD", "VANECK",
+}
+
+
+@dataclass(frozen=True)
+class _NameObservation:
+    instrument_id: int
+    evidence_id: int | None
+    as_of_date: str
+    words: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _NameMatch:
+    instrument_id: int
+    evidence_id: int | None
+    score: float
+    words: tuple[str, ...]
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -33,6 +92,255 @@ def _parse_date(value: str | None) -> date | None:
         return date.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _security_name_prefix(value: str | None) -> str:
+    """Keep the printed security-name portion before trade/holding numerics."""
+    text = (value or "").upper().replace("|", " ")
+    text = _TRADE_VERB_RE.sub("", text)
+    numeric_tail = _TRADE_NUMERIC_TAIL_RE.search(text)
+    if numeric_tail:
+        text = text[: numeric_tail.start()]
+    text = _BROKER_REFERENCE_RE.sub(" ", text)
+    return " ".join(text.split())
+
+
+def _security_name_words(value: str | None) -> tuple[str, ...]:
+    words: list[str] = []
+    for raw_token in _NAME_TOKEN_RE.findall(_security_name_prefix(value)):
+        token = _NAME_ABBREVIATIONS.get(raw_token, raw_token)
+        # Small numbers can identify products such as a 20-year or 6-month
+        # fund. Large standalone numbers in a name are usually leaked quantity.
+        if token.isdigit() and len(token) > 2:
+            continue
+        if token in _NAME_STOP_WORDS or len(token) <= 1:
+            continue
+        if token not in words:
+            words.append(token)
+    return tuple(words)
+
+
+def _name_similarity(query: tuple[str, ...], candidate: tuple[str, ...]) -> float:
+    query_set = set(query)
+    candidate_set = set(candidate)
+    if not query_set or not candidate_set:
+        return 0.0
+    if query_set == candidate_set:
+        return 1.0
+
+    overlap = query_set & candidate_set
+    if len(overlap) >= 2 and (overlap == query_set or overlap == candidate_set):
+        return 0.97
+    if len(overlap) >= 2:
+        jaccard = len(overlap) / len(query_set | candidate_set)
+        containment = len(overlap) / min(len(query_set), len(candidate_set))
+        if jaccard >= 0.55 and containment >= 0.75:
+            return 0.90
+    if (
+        query[0] == candidate[0]
+        and query[0] not in _GENERIC_NAME_TOKENS
+        and len(query[0]) >= 5
+    ):
+        # Broker abbreviations can leave only the distinctive issuer word in
+        # common (for example BARRICK GOLD vs BARRICK MINING). This is allowed
+        # only for a unique same-account candidate by _choose_name_match().
+        return 0.86
+    return 0.0
+
+
+def _observation_distance(observation: _NameObservation, trade_date: str) -> int:
+    observed = _parse_date(observation.as_of_date)
+    traded = _parse_date(trade_date)
+    if observed is None or traded is None:
+        return 10**9
+    return abs((observed - traded).days)
+
+
+def _choose_name_match(
+    query: tuple[str, ...],
+    observations: dict[int, list[_NameObservation]],
+    *,
+    trade_date: str,
+    portfolio_wide: bool,
+) -> tuple[_NameMatch | None, bool]:
+    """Return one defensible candidate and whether any plausible match existed."""
+    matches: list[_NameMatch] = []
+    for instrument_id, instrument_observations in observations.items():
+        scored = [
+            (_name_similarity(query, observation.words), observation)
+            for observation in instrument_observations
+        ]
+        scored = [item for item in scored if item[0] > 0]
+        if not scored:
+            continue
+        score, evidence = min(
+            scored,
+            key=lambda item: (-item[0], _observation_distance(item[1], trade_date)),
+        )
+        matches.append(
+            _NameMatch(
+                instrument_id=instrument_id,
+                evidence_id=evidence.evidence_id,
+                score=score,
+                words=evidence.words,
+            )
+        )
+
+    matches.sort(key=lambda item: (-item.score, item.instrument_id))
+    if not matches:
+        return None, False
+    best = matches[0]
+    if portfolio_wide:
+        distinctive_overlap = (
+            set(query) & set(best.words)
+        ) - _GENERIC_NAME_TOKENS
+        exact_distinctive_single = (
+            set(query) == set(best.words)
+            and len(distinctive_overlap) == 1
+        )
+        if best.score < 0.97 or (
+            len(distinctive_overlap) < 2 and not exact_distinctive_single
+        ):
+            return None, True
+    elif best.score < 0.85:
+        return None, True
+    if len(matches) > 1 and best.score - matches[1].score < 0.10:
+        return None, True
+    return best, True
+
+
+def _add_name_observation(
+    catalog: dict[tuple[int, str], dict[int, list[_NameObservation]]],
+    portfolio_catalog: dict[str, dict[int, list[_NameObservation]]],
+    row: sqlite3.Row,
+    value: str | None,
+) -> None:
+    words = _security_name_words(value)
+    if not words:
+        return
+    observation = _NameObservation(
+        instrument_id=int(row["instrument_id"]),
+        evidence_id=(int(row["evidence_id"]) if row["evidence_id"] is not None else None),
+        as_of_date=str(row["as_of_date"]),
+        words=words,
+    )
+    account_key = (int(row["account_id"]), str(row["currency"]))
+    account_observations = catalog.setdefault(account_key, {}).setdefault(
+        observation.instrument_id, []
+    )
+    if observation not in account_observations:
+        account_observations.append(observation)
+    portfolio_observations = portfolio_catalog.setdefault(
+        str(row["currency"]), {}
+    ).setdefault(observation.instrument_id, [])
+    if observation not in portfolio_observations:
+        portfolio_observations.append(observation)
+
+
+def resolve_trade_instruments_from_holdings(
+    path: Path | str | None = None,
+) -> dict[str, int]:
+    """Resolve name-only buys/sells from observed, canonical position names.
+
+    This is a rebuildable reconciliation pass, not a public-symbol guesser.
+    It considers only equity/ETF identities already printed in this ledger,
+    requires native-currency agreement, prefers the same account, and leaves
+    every ambiguous or generic family name unresolved.
+    """
+    db_path = path if path is not None else sqlite_db.SQLITE_PATH
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        method_placeholders = ",".join("?" for _ in AUTOMATIC_NAME_METHODS)
+        reset = int(
+            conn.execute(
+                f"""
+                UPDATE transactions
+                   SET instrument_id = NULL,
+                       resolution_method = 'unresolved_printed_identity',
+                       resolution_confidence = 0.0,
+                       resolution_evidence_id = evidence_id
+                 WHERE txn_type IN ('buy', 'sell')
+                   AND resolution_method IN ({method_placeholders})
+                """,
+                sorted(AUTOMATIC_NAME_METHODS),
+            ).rowcount
+            or 0
+        )
+
+        catalog: dict[tuple[int, str], dict[int, list[_NameObservation]]] = {}
+        portfolio_catalog: dict[str, dict[int, list[_NameObservation]]] = {}
+        position_rows = conn.execute(
+            f"""
+            SELECT ps.account_id, ps.currency, ps.instrument_id, ps.evidence_id,
+                   ps.as_of_date, ps.raw_line, i.name
+              FROM position_snapshots ps
+              JOIN instruments i ON i.instrument_id = ps.instrument_id
+             WHERE i.asset_type IN ('equity', 'etf')
+               AND {canonical_statement_clause('ps.statement_id')}
+             ORDER BY ps.account_id, ps.currency, ps.as_of_date, ps.snapshot_id
+            """
+        ).fetchall()
+        for row in position_rows:
+            _add_name_observation(catalog, portfolio_catalog, row, row["name"])
+            _add_name_observation(catalog, portfolio_catalog, row, row["raw_line"])
+
+        transactions = conn.execute(
+            f"""
+            SELECT transaction_id, account_id, trade_date, currency, description
+              FROM transactions
+             WHERE txn_type IN ('buy', 'sell')
+               AND instrument_id IS NULL
+               AND resolution_method = 'unresolved_printed_identity'
+               AND {canonical_statement_clause('statement_id')}
+             ORDER BY trade_date, transaction_id
+            """
+        ).fetchall()
+        metrics: Counter[str] = Counter(reset=reset, scanned=len(transactions))
+        for transaction in transactions:
+            query = _security_name_words(transaction["description"])
+            if not query:
+                metrics["unmatched"] += 1
+                continue
+            account_key = (int(transaction["account_id"]), str(transaction["currency"]))
+            match, plausible = _choose_name_match(
+                query,
+                catalog.get(account_key, {}),
+                trade_date=str(transaction["trade_date"]),
+                portfolio_wide=False,
+            )
+            method = "account_holding_name"
+            if match is None and not plausible:
+                match, plausible = _choose_name_match(
+                    query,
+                    portfolio_catalog.get(str(transaction["currency"]), {}),
+                    trade_date=str(transaction["trade_date"]),
+                    portfolio_wide=True,
+                )
+                method = "portfolio_holding_name"
+            if match is None:
+                metrics["ambiguous" if plausible else "unmatched"] += 1
+                continue
+            conn.execute(
+                """
+                UPDATE transactions
+                   SET instrument_id = ?, resolution_method = ?,
+                       resolution_confidence = ?, resolution_evidence_id = ?
+                 WHERE transaction_id = ?
+                """,
+                (
+                    match.instrument_id,
+                    method,
+                    match.score,
+                    match.evidence_id,
+                    transaction["transaction_id"],
+                ),
+            )
+            metrics[f"resolved_{method.removesuffix('_holding_name')}"] += 1
+        metrics["resolved"] = (
+            metrics["resolved_account"] + metrics["resolved_portfolio"]
+        )
+        metrics["candidate_positions"] = len(position_rows)
+        return dict(metrics)
 
 
 def _clear_auto_transfer_links(conn: sqlite3.Connection) -> int:
@@ -1025,6 +1333,7 @@ def rebuild_reconciliation_results(path: Path | str | None = None) -> dict[str, 
 def reconcile_after_ingest(path: Path | str | None = None) -> dict:
     """Run all automatic reconciliation passes."""
     return {
+        "instrument_names": resolve_trade_instruments_from_holdings(path),
         "transfers": link_transfers(path),
         "positions": rebuild_position_transaction_links(path),
         "results": rebuild_reconciliation_results(path),

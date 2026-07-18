@@ -695,7 +695,7 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
 # ----------------------------------------------------------------- Parser
 class CIBCParser:
     NAME = "cibc"
-    VERSION = "2.2.0"
+    VERSION = "2.3.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name.startswith("CIBC "):

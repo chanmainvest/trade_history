@@ -5,7 +5,7 @@ and TD statements. It extracts read-only PDFs into a native-currency SQLite
 ledger, combines them with public market data in DuckDB, and exposes a FastAPI
 backend plus a React dashboard.
 
-> **Data-quality status (2026-07-16):** the app and GUI run, the CLI persists
+> **Data-quality status (2026-07-18):** the app and GUI run, the CLI persists
 > scoped month-end reconciliation results, and a parser-v2 shadow ledger has
 > passed a double-build comparison. The live database has not been cut over, so
 > do not treat it as fully reconciled. See [Current state](spec/CURRENT-STATE.md)
@@ -99,10 +99,12 @@ uv run ruff check src tests
 cd frontend; npm run build
 ```
 
-`ingest reconcile` pairs conservative transfer candidates, rebuilds
-position-to-transaction links, and persists position, cash, and printed-total
-equations. It reports residuals and incomplete inputs but never creates a
-balancing row. See [Reconciliation](spec/RECONCILIATION.md).
+`ingest reconcile` first resolves uniquely supported name-only buy/sell rows
+from observed same-currency holdings. It then pairs conservative transfer
+candidates, rebuilds position-to-transaction links, and persists position,
+cash, and printed-total equations. Ambiguous names remain unresolved; the
+command reports residuals and incomplete inputs but never creates a balancing
+row. See [Reconciliation](spec/RECONCILIATION.md).
 
 ## Docker
 

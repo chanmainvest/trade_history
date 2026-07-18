@@ -1,9 +1,38 @@
 # Reconciliation and holdings
 
 This document owns movement rules, checkpoint reconciliation, and holdings at
-a date. `ledger ingest reconcile` now writes deterministic, source-linked
-checkpoint equations; it never creates a balancing transaction or changes a
-reported balance.
+a date. `ledger ingest reconcile` now resolves defensible name-only trade
+identities and writes deterministic, source-linked checkpoint equations. It
+never creates a balancing transaction or changes a reported quantity, amount,
+checkpoint, or balance.
+
+## Name-only buy/sell resolution
+
+Before building movement links or equations, reconciliation derives a catalog
+from canonical equity/ETF position checkpoints. Each observation retains its
+account, native currency, canonical instrument, printed name/raw row, date, and
+source evidence. The pass considers only buy/sell rows whose parser outcome is
+`unresolved_printed_identity`:
+
+1. normalize broker abbreviations and remove activity verbs, legal suffixes,
+   execution references, and the numeric trade tail;
+2. require a unique strong match to a position name in the same account and
+   currency; then
+3. only when no same-account candidate exists, allow an exact or near-exact
+   distinctive match that is unique across the portfolio in that currency.
+
+Generic issuer/fund-family text (for example, `ISHARES INC`) and close scores
+remain unresolved. The resolver does not query the internet, call the broad
+name-to-ticker map, use market prices, or choose the candidate that merely
+makes a residual zero. A resolved transaction records `account_holding_name`
+or `portfolio_holding_name`, its score, and the supporting position evidence.
+
+This derived link is rebuildable: the pass first clears only those two prior
+automatic methods and recomputes them. Reviewed aliases, printed symbols,
+same-statement matches, and reported transaction fields are untouched. The
+existing transaction description/evidence plus checkpoint name/evidence are
+sufficient, so no second alias table is required. `instrument_aliases` remains
+reserved for reviewed user mappings rather than inferred corpus observations.
 
 ## Persisted checkpoint equations
 
@@ -100,11 +129,12 @@ incomplete rows retain the missing-input reason.
 
 ## `ingest reconcile` and rebuild behavior
 
-The CLI command performs three separate derived-data passes:
+The CLI command performs four separate derived-data passes:
 
-1. pair unambiguous transfer counterparts;
-2. rebuild `position_transaction_links` for complete position scopes; and
-3. replace generated `recon:v1:*` result rows and their components with the
+1. resolve defensible name-only buys/sells from observed holdings;
+2. pair unambiguous transfer counterparts;
+3. rebuild `position_transaction_links` for complete position scopes; and
+4. replace generated `recon:v1:*` result rows and their components with the
    position, cash, and total equations described above.
 
 The generated-key prefix preserves any future reviewed/manual result rows with

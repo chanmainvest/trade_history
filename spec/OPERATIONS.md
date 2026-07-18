@@ -53,6 +53,11 @@ ledger serve [--host HOST] [--port PORT]
 earnings, and FX. Benchmarks are a separate command. Market fetches primarily
 use yfinance; US financial history can fall back to SEC Company Facts.
 
+`ingest reconcile` is CLI-only derived maintenance. It rebuilds conservative
+name-only buy/sell links from observed same-currency holdings, transfer pairs,
+position attribution, and checkpoint equations. It does not edit statement
+PDFs or reported transaction numerics; ambiguous identities remain null.
+
 The extraction audit is read-only with respect to SQLite. It accepts either
 source PDFs or stored `.txt` dumps, overwrites a deterministic JSONL report
 (default `logs/extraction_audit.jsonl`), and omits raw statement text. Use

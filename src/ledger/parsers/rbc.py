@@ -549,7 +549,7 @@ def _parse_activity(body: str, currency: str, year: int,
                     synthetic_symbol,
                 )
                 cleaned = strip_leading_verbs(desc_only)
-                known = resolve_ticker(cleaned)
+                known = resolve_ticker(cleaned, currency)
                 if known is not None:
                     tkr, atype = known
                     instrument = ParsedInstrument(
@@ -590,7 +590,7 @@ def _parse_activity(body: str, currency: str, year: int,
 # ----------------------------------------------------------------- Parser
 class RBCParser:
     NAME = "rbc"
-    VERSION = "2.2.0"
+    VERSION = "2.3.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "RBC Invest Direct":

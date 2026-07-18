@@ -858,6 +858,25 @@ After every phase, update the focused owner spec from Phase 0. At completion:
   local review server binds an explicit shadow before API imports so Verify and
   Transactions cannot read different ledger files.
 
+### Post-Phase 8 name-resolution repair record (2026-07-18)
+
+- Reconciliation now rebuilds conservative instrument links for name-only
+  buy/sell rows before movement attribution. It derives candidates only from
+  canonical equity/ETF checkpoints in the same native currency, prefers a
+  unique same-account match, and permits portfolio-wide evidence only for a
+  strict distinctive match. Generic issuer/fund-family ambiguity stays null.
+- The existing transaction description/evidence, position name/raw row, and
+  resolution provenance columns are sufficient. `instrument_aliases` remains
+  reviewed user state; no inferred alias table was added.
+- CIBC, RBC, and TD `2.3.0` make the curated dual-listing fallback currency
+  aware. The corpus spot-check caught and fixed USD Barrick as `GOLD` while CAD
+  remains `ABX`.
+- A fresh 338-PDF disposable shadow preserved the exact before/after PDF
+  manifest and resolved 79 of 206 null-instrument buy/sell rows. The remaining
+  127 are deliberately unresolved. Referenced invalid symbols, negative
+  reported non-option positions, and reversed equity buy/sell signs remain
+  zero. The build was not signed off or cut over.
+
 ## 5. Final acceptance criteria
 
 The refactor is complete only when all of the following are true:

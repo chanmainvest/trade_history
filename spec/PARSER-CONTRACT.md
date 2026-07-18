@@ -105,6 +105,11 @@ evidence are persisted in `transactions`. Holdings retain regular source
 evidence and instrument-level provenance. An uncertain parser output must stay
 unresolved/audited, never become a guessed ticker.
 
+After all active sources are available, reconciliation may attach an unresolved
+buy/sell to one uniquely matching equity/ETF name already observed in a
+same-currency checkpoint. That derived corpus match is not parser output and is
+owned by [RECONCILIATION.md](RECONCILIATION.md).
+
 ## Known contract violations
 
 - The database still accepts arbitrary transaction text, although new parser

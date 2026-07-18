@@ -1,7 +1,7 @@
 # RBC parser
 
 Implementation: `src/ledger/parsers/rbc.py`, parser name `rbc`, current
-version `2.2.0`.
+version `2.3.0`.
 
 ## Recognition and account shape
 
@@ -29,6 +29,8 @@ overwrite the first currency while writing the second.
 - Name-only fallback identities are explicitly unresolved. They may match one
   exact same-statement holding during staged resolution but cannot persist as
   invented ticker symbols.
+- When the historical curated name fallback is applicable, it receives the
+  row's native currency so it cannot collapse CAD/USD dual listings.
 - A recognized Asset Review currency block declares a complete positions scope;
   a cash scope is complete only with a valid printed closing balance.
 - Parsed transactions, positions, cash, and quarantines receive source spans,

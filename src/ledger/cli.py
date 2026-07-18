@@ -484,6 +484,7 @@ def ingest_reconcile() -> None:
     from .ingest.reconcile import reconcile_after_ingest
 
     out = reconcile_after_ingest()
+    instrument_names = out["instrument_names"]
     transfers = out["transfers"]
     positions = out["positions"]
     results = out["results"]
@@ -498,6 +499,11 @@ def ingest_reconcile() -> None:
     )
     incomplete = sum(
         section.get("incomplete_input", 0) for section in result_sections
+    )
+    click.echo(
+        f"Resolved {instrument_names['resolved']} name-only buy/sell transactions "
+        f"from observed holdings ({instrument_names.get('ambiguous', 0)} ambiguous, "
+        f"{instrument_names.get('unmatched', 0)} unmatched)."
     )
     click.echo(
         f"Linked {transfers['matched']} transfer pairs "

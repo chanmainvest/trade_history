@@ -110,12 +110,16 @@ old derived data, but normal ingest no longer invokes it.
 
 ## Post-processing
 
-After a scan, `reconcile_after_ingest()` pairs unambiguous transfers and
-recreates position/transaction attribution links for complete scopes, then
-rebuilds generated position, cash, and statement-total results. The
-reconciliation rebuild replaces only its `recon:v1:*` derived rows; it never
-changes a source transaction, reported checkpoint, or balance. A limited scan
-still finishes this active-output maintenance rather than returning mid-command.
+After a scan, `reconcile_after_ingest()` first rebuilds conservative derived
+instrument links for name-only buys/sells from canonical holding names in the
+same native currency. It then pairs unambiguous transfers, recreates
+position/transaction attribution links for complete scopes, and rebuilds
+generated position, cash, and statement-total results. Automatic name links
+change only `instrument_id` and resolution provenance on rows already marked
+`unresolved_printed_identity`; they never change a reported quantity, amount,
+description, checkpoint, or balance. The equation rebuild replaces only its
+`recon:v1:*` derived rows. A limited scan still finishes this active-output
+maintenance rather than returning mid-command.
 
 If several PDFs describe the same account, period, and statement type, every
 source remains available in Verify. Derived initials, holdings, transaction

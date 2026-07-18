@@ -1,6 +1,6 @@
 # Current state
 
-Implementation review: **2026-07-17**. The live-ledger counts below remain a
+Implementation review: **2026-07-18**. The live-ledger counts below remain a
 dated diagnostic snapshot from **2026-07-12**, not a release promise. Parser
 v2 and the reconciliation engine were validated in fixtures and read-only
 corpus audits on 2026-07-14. A new parser-v2 shadow ledger has been built and
@@ -17,7 +17,7 @@ over to it.
 - Ingestion stages one validated PDF source in a savepoint and activates it
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.
-- CIBC, RBC, and TD report parser version `2.2.0`, while HSBC reports `2.1.0`.
+- CIBC, RBC, and TD report parser version `2.3.0`, while HSBC reports `2.1.0`.
   They retain source page/line evidence, available word/box
   geometry, explicit snapshot scopes, and quarantine rather than fabricate
   unsupported values.
@@ -84,6 +84,21 @@ over to it.
   instances of the former name-only buy/sell identity quarantine reason, and
   resolves the May 27 VELO buy to its exact same-statement holding. The false
   May 30 VELO inferred initial is absent.
+- On 2026-07-18, a fresh disposable shadow parsed all 338 PDFs with CIBC/RBC/TD
+  `2.3.0`; the before/after PDF manifest remained identical. It contains 548
+  statements, 657 instruments, 3,519 transactions, 6,669 position snapshots,
+  625 cash balances, 103 initial positions, and 8,490 reconciliation results.
+  A new rebuildable holding-name reconciliation pass resolved 79 of the 206
+  formerly null-instrument buy/sell rows: 75 from unique same-account/native-
+  currency checkpoint evidence and four from strict portfolio-wide evidence.
+  Remaining unresolved buy/sells are 127 (CIBC ID 70, CIBC TFSA 4, HSBC 1,
+  RBC 30, TD 22); generic or ambiguous names remain unresolved. Invalid/
+  reserved referenced symbols, negative reported non-option positions, and
+  reversed-sign equity buys/sells remain zero. USD Barrick name fallback is
+  now `GOLD`, while CAD remains `ABX`. Position results moved from 4,591 to
+  4,094 incomplete inputs and from 2,477 to 2,892 reconciled results; 82 newly
+  calculable intervals expose real residuals instead of being hidden as
+  incomplete. This shadow was not signed off or cut over.
 
 ## Measured live ledger (2026-07-12)
 

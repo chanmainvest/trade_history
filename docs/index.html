@@ -106,7 +106,7 @@ family's accounts.</p>
 <a href="#spec-index">INDEX.md</a>, while coding-agent rules live in
 <a href="../AGENTS.md">AGENTS.md</a>.</p>
 <blockquote>
-<p><strong>Current data-quality notice (2026-07-16):</strong> the GUI is operational and
+<p><strong>Current data-quality notice (2026-07-18):</strong> the GUI is operational and
 source ingestion preserves the prior active extraction if parsing or staging
 fails. Parser v2 fixes the audited RBC dual-currency and TD bundled layouts,
 and the CLI now persists month-end reconciliation results. A non-live shadow
@@ -230,15 +230,18 @@ first monthly cash snapshot for each account/currency.</p>
 </code></pre></div>
 </li>
 <li>
-<p><em>(Optional after manual DB edits)</em> Rebuild automatic transfer links,
-    position-to-transaction links, and reconciliation results:</p>
+<p><em>(Optional after manual DB edits)</em> Rebuild conservative name-only trade
+    links, automatic transfer links, position-to-transaction links, and
+    reconciliation results:</p>
 <div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">reconcile</span>
 </code></pre></div>
 <p>Normal <code>ingest run</code> performs this after active source activation; the command
-is mainly for manual maintenance. It stores expected-versus-reported
-position, cash, and printed-total equations, including incomplete inputs and
-unexplained residuals. It does not alter a reported transaction or create a
-balancing entry.</p>
+is mainly for manual maintenance. A name-only buy/sell is linked only when
+one equity/ETF holding name in the same native currency is uniquely
+supported; generic or ambiguous fund-family names stay unresolved. The
+command stores expected-versus-reported position, cash, and printed-total
+equations, including incomplete inputs and unexplained residuals. It does
+not alter reported quantities/amounts or create a balancing entry.</p>
 </li>
 <li>
 <p>Reload the browser. The Transactions tab should now have data.</p>
@@ -410,7 +413,7 @@ MCP server's allowlisted CLI commands):</p>
 <span class="c"># infer opening holdings before the first statement</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">infer-initials</span>
 
-<span class="c"># rebuild transfer counterpart, movement links, and reconciliation results after manual edits</span>
+<span class="c"># rebuild name/transfer links, movement links, and reconciliation results after manual edits</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">reconcile</span>
 
 <span class="c"># repair symbols (resolve aliases, fund-code lookups, etc.)</span>
@@ -420,8 +423,10 @@ MCP server's allowlisted CLI commands):</p>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">shadow</span> <span class="n">build</span>
 </code></pre></div>
 <p><code>ingest run</code> performs conservative staged identity resolution and reconciliation
-after source activation. <code>repair-symbols</code> is for legacy/manual data; the
-reconcile command is mainly needed after manual DB edits.</p>
+after source activation. Reconciliation can attach name-only buys/sells to
+unique same-currency holding evidence and leaves ambiguity null.
+<code>repair-symbols</code> is for legacy/manual data; the reconcile command is mainly
+needed after manual DB edits.</p>
 <p><code>shadow build</code> does not replace the active database. Review its local report
 and source PDFs first; only a human may record <code>shadow sign-off</code> and later run
 the separately guarded <code>shadow cutover</code> command after stopping the backend.</p>
@@ -617,7 +622,7 @@ the owner rather than copy it.</p>
 <div class="doc-section" id="current-state">
   <div class="section-banner">Current State</div>
   <h1 id="current-state">Current state</h1>
-<p>Implementation review: <strong>2026-07-17</strong>. The live-ledger counts below remain a
+<p>Implementation review: <strong>2026-07-18</strong>. The live-ledger counts below remain a
 dated diagnostic snapshot from <strong>2026-07-12</strong>, not a release promise. Parser
 v2 and the reconciliation engine were validated in fixtures and read-only
 corpus audits on 2026-07-14. A new parser-v2 shadow ledger has been built and
@@ -633,7 +638,7 @@ over to it.</p>
 <li>Ingestion stages one validated PDF source in a savepoint and activates it
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.</li>
-<li>CIBC, RBC, and TD report parser version <code>2.2.0</code>, while HSBC reports <code>2.1.0</code>.
+<li>CIBC, RBC, and TD report parser version <code>2.3.0</code>, while HSBC reports <code>2.1.0</code>.
   They retain source page/line evidence, available word/box
   geometry, explicit snapshot scopes, and quarantine rather than fabricate
   unsupported values.</li>
@@ -700,6 +705,21 @@ over to it.</p>
   instances of the former name-only buy/sell identity quarantine reason, and
   resolves the May 27 VELO buy to its exact same-statement holding. The false
   May 30 VELO inferred initial is absent.</li>
+<li>On 2026-07-18, a fresh disposable shadow parsed all 338 PDFs with CIBC/RBC/TD
+  <code>2.3.0</code>; the before/after PDF manifest remained identical. It contains 548
+  statements, 657 instruments, 3,519 transactions, 6,669 position snapshots,
+  625 cash balances, 103 initial positions, and 8,490 reconciliation results.
+  A new rebuildable holding-name reconciliation pass resolved 79 of the 206
+  formerly null-instrument buy/sell rows: 75 from unique same-account/native-
+  currency checkpoint evidence and four from strict portfolio-wide evidence.
+  Remaining unresolved buy/sells are 127 (CIBC ID 70, CIBC TFSA 4, HSBC 1,
+  RBC 30, TD 22); generic or ambiguous names remain unresolved. Invalid/
+  reserved referenced symbols, negative reported non-option positions, and
+  reversed-sign equity buys/sells remain zero. USD Barrick name fallback is
+  now <code>GOLD</code>, while CAD remains <code>ABX</code>. Position results moved from 4,591 to
+  4,094 incomplete inputs and from 2,477 to 2,892 reconciled results; 82 newly
+  calculable intervals expose real residuals instead of being hidden as
+  incomplete. This shadow was not signed off or cut over.</li>
 </ul>
 <h2 id="measured-live-ledger-2026-07-12">Measured live ledger (2026-07-12)</h2>
 <table>
@@ -1067,6 +1087,13 @@ explicit printed identities, reviewed aliases/fund lookups, and unambiguous
 same-statement holdings are distinguishable from unresolved printed names. The
 database does not constrain <code>txn_type</code>; the Python literal vocabulary and
 validator own it.</p>
+<p>Post-ingest reconciliation may replace a null <code>instrument_id</code> on an unresolved
+buy/sell with a canonical holding identity already observed in the same native
+currency. Methods <code>account_holding_name</code> and <code>portfolio_holding_name</code> identify
+these rebuildable derived links; <code>resolution_evidence_id</code> points at the
+supporting position row. The description and reported numeric fields remain
+unchanged. Existing transaction and checkpoint evidence is sufficient for this
+derivation, while <code>instrument_aliases</code> remains reserved for reviewed mappings.</p>
 <h3 id="scoped-checkpoints">Scoped checkpoints</h3>
 <p><code>snapshot_sets</code> declares a statement/account/date/currency/section scope with
 <code>complete</code>, <code>partial</code>, <code>absent</code>, or <code>unknown</code> completeness. Position snapshots
@@ -1264,12 +1291,16 @@ Resolved instrument rows retain their identity provenance.
 <code>ledger ingest repair-symbols</code> remains a legacy/manual maintenance command for
 old derived data, but normal ingest no longer invokes it.</p>
 <h2 id="post-processing">Post-processing</h2>
-<p>After a scan, <code>reconcile_after_ingest()</code> pairs unambiguous transfers and
-recreates position/transaction attribution links for complete scopes, then
-rebuilds generated position, cash, and statement-total results. The
-reconciliation rebuild replaces only its <code>recon:v1:*</code> derived rows; it never
-changes a source transaction, reported checkpoint, or balance. A limited scan
-still finishes this active-output maintenance rather than returning mid-command.</p>
+<p>After a scan, <code>reconcile_after_ingest()</code> first rebuilds conservative derived
+instrument links for name-only buys/sells from canonical holding names in the
+same native currency. It then pairs unambiguous transfers, recreates
+position/transaction attribution links for complete scopes, and rebuilds
+generated position, cash, and statement-total results. Automatic name links
+change only <code>instrument_id</code> and resolution provenance on rows already marked
+<code>unresolved_printed_identity</code>; they never change a reported quantity, amount,
+description, checkpoint, or balance. The equation rebuild replaces only its
+<code>recon:v1:*</code> derived rows. A limited scan still finishes this active-output
+maintenance rather than returning mid-command.</p>
 <p>If several PDFs describe the same account, period, and statement type, every
 source remains available in Verify. Derived initials, holdings, transaction
 lists, transfer pairing, and reconciliation use only the most recently
@@ -1408,6 +1439,10 @@ one of these outcomes without calling the broad name-to-ticker repair map:</p>
 evidence are persisted in <code>transactions</code>. Holdings retain regular source
 evidence and instrument-level provenance. An uncertain parser output must stay
 unresolved/audited, never become a guessed ticker.</p>
+<p>After all active sources are available, reconciliation may attach an unresolved
+buy/sell to one uniquely matching equity/ETF name already observed in a
+same-currency checkpoint. That derived corpus match is not parser output and is
+owned by <a href="#reconciliation">RECONCILIATION.md</a>.</p>
 <h2 id="known-contract-violations">Known contract violations</h2>
 <ul>
 <li>The database still accepts arbitrary transaction text, although new parser
@@ -1439,9 +1474,35 @@ zero-fallback cases as ordinary regressions once a phase implements them.</p>
   <div class="section-banner">Reconciliation</div>
   <h1 id="reconciliation-and-holdings">Reconciliation and holdings</h1>
 <p>This document owns movement rules, checkpoint reconciliation, and holdings at
-a date. <code>ledger ingest reconcile</code> now writes deterministic, source-linked
-checkpoint equations; it never creates a balancing transaction or changes a
-reported balance.</p>
+a date. <code>ledger ingest reconcile</code> now resolves defensible name-only trade
+identities and writes deterministic, source-linked checkpoint equations. It
+never creates a balancing transaction or changes a reported quantity, amount,
+checkpoint, or balance.</p>
+<h2 id="name-only-buysell-resolution">Name-only buy/sell resolution</h2>
+<p>Before building movement links or equations, reconciliation derives a catalog
+from canonical equity/ETF position checkpoints. Each observation retains its
+account, native currency, canonical instrument, printed name/raw row, date, and
+source evidence. The pass considers only buy/sell rows whose parser outcome is
+<code>unresolved_printed_identity</code>:</p>
+<ol>
+<li>normalize broker abbreviations and remove activity verbs, legal suffixes,
+   execution references, and the numeric trade tail;</li>
+<li>require a unique strong match to a position name in the same account and
+   currency; then</li>
+<li>only when no same-account candidate exists, allow an exact or near-exact
+   distinctive match that is unique across the portfolio in that currency.</li>
+</ol>
+<p>Generic issuer/fund-family text (for example, <code>ISHARES INC</code>) and close scores
+remain unresolved. The resolver does not query the internet, call the broad
+name-to-ticker map, use market prices, or choose the candidate that merely
+makes a residual zero. A resolved transaction records <code>account_holding_name</code>
+or <code>portfolio_holding_name</code>, its score, and the supporting position evidence.</p>
+<p>This derived link is rebuildable: the pass first clears only those two prior
+automatic methods and recomputes them. Reviewed aliases, printed symbols,
+same-statement matches, and reported transaction fields are untouched. The
+existing transaction description/evidence plus checkpoint name/evidence are
+sufficient, so no second alias table is required. <code>instrument_aliases</code> remains
+reserved for reviewed user mappings rather than inferred corpus observations.</p>
 <h2 id="persisted-checkpoint-equations">Persisted checkpoint equations</h2>
 <p>Each generated result belongs to a current <code>snapshot_set</code>, its statement, and
 the statement's ingestion run. Position and cash components point to the exact
@@ -1515,8 +1576,9 @@ These are rounding tolerances, not a mechanism for absorbing missing rows.
 <code>unexplained_residual</code> rows retain a reason with the residual and tolerance;
 incomplete rows retain the missing-input reason.</p>
 <h2 id="ingest-reconcile-and-rebuild-behavior"><code>ingest reconcile</code> and rebuild behavior</h2>
-<p>The CLI command performs three separate derived-data passes:</p>
+<p>The CLI command performs four separate derived-data passes:</p>
 <ol>
+<li>resolve defensible name-only buys/sells from observed holdings;</li>
 <li>pair unambiguous transfer counterparts;</li>
 <li>rebuild <code>position_transaction_links</code> for complete position scopes; and</li>
 <li>replace generated <code>recon:v1:*</code> result rows and their components with the
@@ -1791,6 +1853,10 @@ ledger serve [--host HOST] [--port PORT]
 <p><code>refresh-all</code> runs held-symbol prices, profiles, dividends, splits, financials,
 earnings, and FX. Benchmarks are a separate command. Market fetches primarily
 use yfinance; US financial history can fall back to SEC Company Facts.</p>
+<p><code>ingest reconcile</code> is CLI-only derived maintenance. It rebuilds conservative
+name-only buy/sell links from observed same-currency holdings, transfer pairs,
+position attribution, and checkpoint equations. It does not edit statement
+PDFs or reported transaction numerics; ambiguous identities remain null.</p>
 <p>The extraction audit is read-only with respect to SQLite. It accepts either
 source PDFs or stored <code>.txt</code> dumps, overwrites a deterministic JSONL report
 (default <code>logs/extraction_audit.jsonl</code>), and omits raw statement text. Use
@@ -1959,7 +2025,7 @@ workflow is not a substitute for checking docs in a normal pull request.</p>
   <div class="section-banner">Parser: CIBC</div>
   <h1 id="cibc-parser">CIBC parser</h1>
 <p>Implementation: <code>src/ledger/parsers/cibc.py</code>, parser name <code>cibc</code>, current
-version <code>2.2.0</code>.</p>
+version <code>2.3.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>The parser handles the configured CIBC Imperial Service, Investor's Edge, and
 TFSA folders/text. It extracts <code>###-#####</code> account numbers from text or a
@@ -1987,6 +2053,8 @@ separate positions and cash snapshot scopes.</p>
   printed-name identities pending a reviewed fund-code lookup. The staged
   resolver either proves the identity or removes the pseudo-token before
   persistence.</li>
+<li>Curated name fallback respects native-currency listings for dual-listed
+  securities (for example, Barrick <code>ABX</code> in CAD and <code>GOLD</code> in USD).</li>
 <li>A recognized portfolio section is declared <code>complete</code>; a cash scope is
   complete only after a valid printed closing balance. Invalid/missing numeric
   fields and unclaimed numeric rows are quarantined, never stored as zero.</li>
@@ -2057,7 +2125,7 @@ continued account pages, cash, and source evidence. See
   <div class="section-banner">Parser: RBC</div>
   <h1 id="rbc-parser">RBC parser</h1>
 <p>Implementation: <code>src/ledger/parsers/rbc.py</code>, parser name <code>rbc</code>, current
-version <code>2.2.0</code>.</p>
+version <code>2.3.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>The parser handles monthly Direct Investing statements and annual investment
 performance reports. Monthly text is split at <code>CDN $</code> / <code>U.S. $</code> blocks; annual
@@ -2081,6 +2149,8 @@ overwrite the first currency while writing the second.</p>
 <li>Name-only fallback identities are explicitly unresolved. They may match one
   exact same-statement holding during staged resolution but cannot persist as
   invented ticker symbols.</li>
+<li>When the historical curated name fallback is applicable, it receives the
+  row's native currency so it cannot collapse CAD/USD dual listings.</li>
 <li>A recognized Asset Review currency block declares a complete positions scope;
   a cash scope is complete only with a valid printed closing balance.</li>
 <li>Parsed transactions, positions, cash, and quarantines receive source spans,
@@ -2104,7 +2174,7 @@ transactions, cash, and annual-performance parsing. See
   <div class="section-banner">Parser: TD</div>
   <h1 id="td-webbroker-parser">TD WebBroker parser</h1>
 <p>Implementation: <code>src/ledger/parsers/td.py</code>, parser name <code>td</code>, current version
-<code>2.2.0</code>.</p>
+<code>2.3.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>TD PDFs commonly contain separate <code>Direct Trading - CDN</code> and <code>Direct Trading
 - US</code> subaccounts. They remain distinct accounts/currencies. Annual
@@ -2131,6 +2201,8 @@ scope.</p>
   can then match one exact same-statement holding (for example,
   <code>VELO3D INC-NEW</code> to printed symbol <code>VELO</code>); unmatched names keep a null
   persisted instrument rather than an invented ticker.</li>
+<li>Curated holding-name fallback respects native-currency listings for
+  dual-listed securities.</li>
 <li>Buy/sell numeric tails are parsed as quantity, price, amount, and optional
   running balance. Digits embedded in a security name such as <code>VELO3D</code> or
   <code>12M</code> are never treated as the quantity.</li>

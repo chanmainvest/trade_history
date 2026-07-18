@@ -864,7 +864,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
 # ---------------------------------------------------------------- Parser
 class TDParser:
     NAME = "td"
-    VERSION = "2.2.0"
+    VERSION = "2.3.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "TD Webbroker":

@@ -89,6 +89,14 @@ same-statement holdings are distinguishable from unresolved printed names. The
 database does not constrain `txn_type`; the Python literal vocabulary and
 validator own it.
 
+Post-ingest reconciliation may replace a null `instrument_id` on an unresolved
+buy/sell with a canonical holding identity already observed in the same native
+currency. Methods `account_holding_name` and `portfolio_holding_name` identify
+these rebuildable derived links; `resolution_evidence_id` points at the
+supporting position row. The description and reported numeric fields remain
+unchanged. Existing transaction and checkpoint evidence is sufficient for this
+derivation, while `instrument_aliases` remains reserved for reviewed mappings.
+
 ### Scoped checkpoints
 
 `snapshot_sets` declares a statement/account/date/currency/section scope with

@@ -133,6 +133,12 @@ def resolve_ticker(desc: str, currency: str | None = None) -> tuple[str, str] | 
             best = candidate
     if best is not None:
         _, _idx, tkr, atype = best
+        if tkr == "ABX" and currency == "USD":
+            return "GOLD", atype
+        if tkr == "CCJ" and currency == "CAD":
+            return "CCO", atype
+        if tkr == "NEM" and currency == "CAD":
+            return "NGT", atype
         if tkr == "DLR.U" and currency == "CAD":
             return "DLR", atype
         if tkr == "AG" and currency == "CAD":

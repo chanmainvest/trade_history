@@ -1,7 +1,7 @@
 # TD WebBroker parser
 
 Implementation: `src/ledger/parsers/td.py`, parser name `td`, current version
-`2.2.0`.
+`2.3.0`.
 
 ## Recognition and account shape
 
@@ -32,6 +32,8 @@ scope.
   can then match one exact same-statement holding (for example,
   `VELO3D INC-NEW` to printed symbol `VELO`); unmatched names keep a null
   persisted instrument rather than an invented ticker.
+- Curated holding-name fallback respects native-currency listings for
+  dual-listed securities.
 - Buy/sell numeric tails are parsed as quantity, price, amount, and optional
   running balance. Digits embedded in a security name such as `VELO3D` or
   `12M` are never treated as the quantity.
