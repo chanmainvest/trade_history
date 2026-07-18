@@ -16,6 +16,8 @@ Account type: Direct Trading - US
 Holdings in your account
 US common shares
 BETA CORP (BBB) 5 SEG 30.00 150.00 160.00 10.00 50.00%
+VELO3D INC-NEW 2,000 SEG 25.000 50,000.00 50,000.00 0.00 10.00%
+(VELO)
 Options
 CALL -100 BBB'26-US 1 2.00 100.00 200.00
 20FE@35
@@ -24,4 +26,5 @@ Beginning cash balance $500.00
 Oct 6 Sell BETA CORP (BBB) -2 30.00 60.00 560.00
 Oct 7 Buy CALL -100 BBB'26-US 20FE@35 1 2.00 -200.00 360.00
 Oct 20 Expiration PUT -100 BABA+$'25 JA@80 -10 0.00 360.00
+Oct 21 Buy VELO3D INC-NEW RL-881589 2,000 25.000 -50,009.99 -49,649.99
 Ending cash balance $360.00

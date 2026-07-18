@@ -121,6 +121,20 @@ use PowerShell `Start-Process -WindowStyle Hidden` with stdout/stderr redirected
 to repo logs. Prefer Docker Compose for a service that must outlive the coding
 session.
 
+To review a built frontend against a shadow database without changing the live
+ledger, bind the database explicitly before any API module is imported:
+
+```powershell
+cd frontend; npm run build; cd ..
+uv run python scripts/local_review_server.py --database data/ledger.vnext.sqlite --port 5175
+```
+
+The review server mounts the API at `/api` and serves SPA fallbacks from
+`frontend/dist`. Do not implement a review override by assigning
+`sqlite_db.SQLITE_PATH` after importing the API: helper defaults may already be
+bound, causing different routes to read different databases and Verify links
+to return 404.
+
 ## Docker
 
 `docker compose up --build` exposes the backend on 8000 and the built frontend

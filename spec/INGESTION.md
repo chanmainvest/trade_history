@@ -34,8 +34,8 @@ discover path
   -> regenerate derived ingestion audit indexes
 ```
 
-The registered parsers are CIBC, HSBC, RBC, and TD. CIBC and RBC report
-`2.2.0`; HSBC and TD report `2.1.0`. Parser and resolver version changes
+The registered parsers are CIBC, HSBC, RBC, and TD. CIBC, RBC, and TD report
+`2.2.0`; HSBC reports `2.1.0`. Parser and resolver version changes
 intentionally invalidate older active cache entries so a reviewed re-ingest
 exercises the current extraction contract.
 

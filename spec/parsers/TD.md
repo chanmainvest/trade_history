@@ -1,7 +1,7 @@
 # TD WebBroker parser
 
 Implementation: `src/ledger/parsers/td.py`, parser name `td`, current version
-`2.1.0`.
+`2.2.0`.
 
 ## Recognition and account shape
 
@@ -26,6 +26,15 @@ scope.
 - Adjusted activity identities printed as `ROOT+$'YY MON@STRIKE` retain the
   printed root and option fields; a following signed contract quantity is
   parsed for expiration/exercise/assignment movements.
+- Name-only buy/sell rows retain an unresolved printed identity instead of
+  being discarded. TD execution references such as `RL-881589` and trailing
+  `AS OF` annotations are removed from the identity term. The staged resolver
+  can then match one exact same-statement holding (for example,
+  `VELO3D INC-NEW` to printed symbol `VELO`); unmatched names keep a null
+  persisted instrument rather than an invented ticker.
+- Buy/sell numeric tails are parsed as quantity, price, amount, and optional
+  running balance. Digits embedded in a security name such as `VELO3D` or
+  `12M` are never treated as the quantity.
 - Stock splits map to the canonical `stock_split` type. Buy/sell, option
   buy/sell, known fees/taxes, and known income events receive canonical cash
   directions when TD prints an unsigned debit/credit amount.

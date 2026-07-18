@@ -17,8 +17,8 @@ over to it.
 - Ingestion stages one validated PDF source in a savepoint and activates it
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.
-- CIBC and RBC report parser version `2.2.0`, HSBC reports `2.1.0`, and TD
-  reports `2.1.0`. They retain source page/line evidence, available word/box
+- CIBC, RBC, and TD report parser version `2.2.0`, while HSBC reports `2.1.0`.
+  They retain source page/line evidence, available word/box
   geometry, explicit snapshot scopes, and quarantine rather than fabricate
   unsupported values.
 - Monthly, Performance, and Visualisations now consume one read-only scoped
@@ -71,15 +71,19 @@ over to it.
   canonical instruments, 3,382 transactions, 7,955 position snapshots, 625
   cash balances, and 9,789 reconciliation results. Its redacted comparison
   report is pending human source spot-check/sign-off; no cutover occurred.
-- On 2026-07-17, a disposable post-repair shadow parsed the same 338 PDFs with
-  CIBC/RBC `2.2.0`, HSBC `2.1.0`, and TD `2.1.0`. The PDF manifest was identical
-  before/after. It contains 548 statements, 657 instruments, 3,387
-  transactions, 6,665 position snapshots, 625 cash balances, 120 initial
-  positions, and 8,485 reconciliation results. Its referenced-symbol audit has
+- On 2026-07-17, the latest disposable post-repair shadow parsed the same 338 PDFs with
+  CIBC/RBC/TD `2.2.0` and HSBC `2.1.0`. The PDF manifest was identical
+  before/after. It contains 548 statements, 658 instruments, 3,519
+  transactions, 6,669 position snapshots, 625 cash balances, 105 initial
+  positions, and 8,490 reconciliation results. Its referenced-symbol audit has
   286 instrument/currency identities, zero reserved/invalid symbols, zero
   `TO`/`FROM` instruments, zero negative reported non-option positions, and
   zero reversed-sign equity buys/sells. This disposable build did not request
   the two-build reproducibility check and was not signed off or cut over.
+  TD `2.2.0` retains 132 additional valid transactions, eliminates all 141
+  instances of the former name-only buy/sell identity quarantine reason, and
+  resolves the May 27 VELO buy to its exact same-statement holding. The false
+  May 30 VELO inferred initial is absent.
 
 ## Measured live ledger (2026-07-12)
 

@@ -37,7 +37,7 @@ from .layout import (
     declare_snapshot_scopes,
     quarantine_unsupported_rows,
 )
-from .name_resolver import resolve_ticker
+from .name_resolver import resolve_ticker, synthetic_symbol
 from .registry import register
 from .types import (
     ParsedAccount,
@@ -80,7 +80,7 @@ RE_LEGACY_END_BAL = re.compile(r"Cash-closing balance\s+\$?\(?(-?[\d,]+(?:\.\d+)
 # Option token in activity (single line). Captures: cp, mult sign, root,
 # yy, [dd]mm, strike. Examples: "PUT -100 SLV'26 FB@100", "CALL-100 SLV'26 13FB@115"
 RE_OPT_TOKEN = re.compile(
-    r"(CALL|PUT)\s*[- ]\s*(?:-)?100\s+([A-Z][A-Z0-9.]{0,5})(?:\+\$)?'(\d{2})(?:-US)?\s+"
+    r"(CALL|PUT)\s*[- ]\s*(?:-)?100\s*([A-Z][A-Z0-9.]{0,5})(?:\+\$)?'(\d{2})(?:-US)?\s*"
     r"(\d{0,2})([A-Z]{2})@(\d+(?:\.\d+)?)"
 )
 # Expiry-only token used for stitching position rows: "[dd]mm@strike"
@@ -101,6 +101,13 @@ RE_LEGACY_HOLDING_LINE = re.compile(
     r"(-?[\d,]+(?:\.\d+)?)$"
 )
 RE_TRAIL_SYM = re.compile(r"\(([A-Z][A-Z0-9.\-]{0,8})\s*\)")
+
+_ACTIVITY_NUMBER = r"-?\$?[\d,]+(?:\.\d+)?-?"
+RE_ACTIVITY_NUMERIC_TAIL = re.compile(
+    rf"\s+({_ACTIVITY_NUMBER})\s+({_ACTIVITY_NUMBER})\s+"
+    rf"({_ACTIVITY_NUMBER})(?:\s+({_ACTIVITY_NUMBER}))?\s*$"
+)
+RE_TD_REFERENCE = re.compile(r"\b[A-Z]{2}-\d{6}\b")
 
 # Activity date prefix:  "Oct 31", "Sep 30"
 RE_ACT_DATE = re.compile(
@@ -347,6 +354,18 @@ def _classify(verb_phrase: str) -> str | None:
     return None
 
 
+def _activity_identity(desc: str) -> str:
+    """Remove TD execution/reference suffixes from a printed security name."""
+    cleaned = RE_TD_REFERENCE.sub(" ", desc)
+    cleaned = re.sub(
+        r"\s+AS(?:\s+OF(?:\s+[A-Z]{3})?)?\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
 def _instrument_from_description(desc: str, currency: str) -> ParsedInstrument | None:
     sm = RE_TRAIL_SYM.search(desc)
     if sm:
@@ -354,13 +373,29 @@ def _instrument_from_description(desc: str, currency: str) -> ParsedInstrument |
             asset_type="equity", symbol=sm.group(1),
             currency=currency, name=desc[:sm.start()].strip()[:120],
         )
-    known = resolve_ticker(desc, currency)
-    if known is None:
+    identity = _activity_identity(desc)
+    if not identity:
         return None
-    symbol, asset_type = known
+    known = resolve_ticker(identity, currency)
+    if known is not None:
+        symbol, asset_type = known
+        return ParsedInstrument(
+            asset_type=asset_type, symbol=symbol,
+            currency=currency, name=identity[:120],
+        )
+    asset_type = (
+        "mutual_fund"
+        if "FUND" in identity.upper() or "/NL'FRAC" in identity.upper()
+        else "etf" if " ETF" in identity.upper()
+        else "equity"
+    )
     return ParsedInstrument(
-        asset_type=asset_type, symbol=symbol,
-        currency=currency, name=desc.strip()[:120],
+        asset_type=asset_type,
+        symbol=synthetic_symbol(identity),
+        currency=currency,
+        name=identity[:120],
+        resolution_method="unresolved_printed_identity",
+        resolution_confidence=0.0,
     )
 
 
@@ -461,7 +496,7 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
             continue
 
         opt_head = re.match(
-            r"^(CALL|PUT)\s*[- ]\s*(?:-)?100\s+([A-Z][A-Z0-9.]{0,5})'(\d{2})(?:-US)?\s+(.*)$",
+            r"^(CALL|PUT)\s*[- ]\s*(?:-)?100\s*([A-Z][A-Z0-9.]{0,5})'(\d{2})(?:-US)?\s+(.*)$",
             s,
         )
         if opt_head:
@@ -742,17 +777,21 @@ def _parse_activity(body: str, currency: str, year_end: int,
             elif txn_type in {"option_expiration", "option_exercise", "option_assignment"} and tnums:
                 qty = parse_money(tnums[0])
         elif txn_type in {"buy", "sell"}:
-            if len(nums) < 4:
+            numeric_tail = RE_ACTIVITY_NUMERIC_TAIL.search(desc)
+            if numeric_tail is None:
                 stmt.quarantine.append(ParsedQuarantine(
                     raw_line=ln,
                     reason="buy/sell row has no complete numeric tail",
                 ))
                 cur = None
                 continue
-            qty = parse_money(nums[-4])
-            price = parse_money(nums[-3])
-            amount = parse_money(nums[-2])
-            instrument = _instrument_from_description(desc, currency)
+            qty = parse_money(numeric_tail.group(1))
+            price = parse_money(numeric_tail.group(2))
+            amount = parse_money(numeric_tail.group(3))
+            instrument = _instrument_from_description(
+                desc[:numeric_tail.start()].strip(),
+                currency,
+            )
             if qty is None:
                 stmt.quarantine.append(ParsedQuarantine(
                     raw_line=ln,
@@ -825,7 +864,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
 # ---------------------------------------------------------------- Parser
 class TDParser:
     NAME = "td"
-    VERSION = "2.1.0"
+    VERSION = "2.2.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "TD Webbroker":

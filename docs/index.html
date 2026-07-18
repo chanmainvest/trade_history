@@ -633,8 +633,8 @@ over to it.</p>
 <li>Ingestion stages one validated PDF source in a savepoint and activates it
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.</li>
-<li>CIBC and RBC report parser version <code>2.2.0</code>, HSBC reports <code>2.1.0</code>, and TD
-  reports <code>2.1.0</code>. They retain source page/line evidence, available word/box
+<li>CIBC, RBC, and TD report parser version <code>2.2.0</code>, while HSBC reports <code>2.1.0</code>.
+  They retain source page/line evidence, available word/box
   geometry, explicit snapshot scopes, and quarantine rather than fabricate
   unsupported values.</li>
 <li>Monthly, Performance, and Visualisations now consume one read-only scoped
@@ -687,15 +687,19 @@ over to it.</p>
   canonical instruments, 3,382 transactions, 7,955 position snapshots, 625
   cash balances, and 9,789 reconciliation results. Its redacted comparison
   report is pending human source spot-check/sign-off; no cutover occurred.</li>
-<li>On 2026-07-17, a disposable post-repair shadow parsed the same 338 PDFs with
-  CIBC/RBC <code>2.2.0</code>, HSBC <code>2.1.0</code>, and TD <code>2.1.0</code>. The PDF manifest was identical
-  before/after. It contains 548 statements, 657 instruments, 3,387
-  transactions, 6,665 position snapshots, 625 cash balances, 120 initial
-  positions, and 8,485 reconciliation results. Its referenced-symbol audit has
+<li>On 2026-07-17, the latest disposable post-repair shadow parsed the same 338 PDFs with
+  CIBC/RBC/TD <code>2.2.0</code> and HSBC <code>2.1.0</code>. The PDF manifest was identical
+  before/after. It contains 548 statements, 658 instruments, 3,519
+  transactions, 6,669 position snapshots, 625 cash balances, 105 initial
+  positions, and 8,490 reconciliation results. Its referenced-symbol audit has
   286 instrument/currency identities, zero reserved/invalid symbols, zero
   <code>TO</code>/<code>FROM</code> instruments, zero negative reported non-option positions, and
   zero reversed-sign equity buys/sells. This disposable build did not request
-  the two-build reproducibility check and was not signed off or cut over.</li>
+  the two-build reproducibility check and was not signed off or cut over.
+  TD <code>2.2.0</code> retains 132 additional valid transactions, eliminates all 141
+  instances of the former name-only buy/sell identity quarantine reason, and
+  resolves the May 27 VELO buy to its exact same-statement holding. The false
+  May 30 VELO inferred initial is absent.</li>
 </ul>
 <h2 id="measured-live-ledger-2026-07-12">Measured live ledger (2026-07-12)</h2>
 <table>
@@ -1195,8 +1199,8 @@ are derived artifacts.</p>
   -&gt; pair transfers, rebuild movement links, and persist checkpoint equations
   -&gt; regenerate derived ingestion audit indexes
 </code></pre></div>
-<p>The registered parsers are CIBC, HSBC, RBC, and TD. CIBC and RBC report
-<code>2.2.0</code>; HSBC and TD report <code>2.1.0</code>. Parser and resolver version changes
+<p>The registered parsers are CIBC, HSBC, RBC, and TD. CIBC, RBC, and TD report
+<code>2.2.0</code>; HSBC reports <code>2.1.0</code>. Parser and resolver version changes
 intentionally invalidate older active cache entries so a reviewed re-ingest
 exercises the current extraction contract.</p>
 <h2 id="status-and-cache-behavior">Status and cache behavior</h2>
@@ -1843,6 +1847,16 @@ IPv6-only listener.</p>
 use PowerShell <code>Start-Process -WindowStyle Hidden</code> with stdout/stderr redirected
 to repo logs. Prefer Docker Compose for a service that must outlive the coding
 session.</p>
+<p>To review a built frontend against a shadow database without changing the live
+ledger, bind the database explicitly before any API module is imported:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">cd </span><span class="n">frontend</span><span class="p">;</span> <span class="n">npm</span> <span class="n">run</span> <span class="n">build</span><span class="p">;</span> <span class="nb">cd </span><span class="p">..</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">local_review_server</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-database</span> <span class="n">data</span><span class="p">/</span><span class="n">ledger</span><span class="p">.</span><span class="n">vnext</span><span class="p">.</span><span class="n">sqlite</span> <span class="p">-</span><span class="n">-port</span> <span class="n">5175</span>
+</code></pre></div>
+<p>The review server mounts the API at <code>/api</code> and serves SPA fallbacks from
+<code>frontend/dist</code>. Do not implement a review override by assigning
+<code>sqlite_db.SQLITE_PATH</code> after importing the API: helper defaults may already be
+bound, causing different routes to read different databases and Verify links
+to return 404.</p>
 <h2 id="docker">Docker</h2>
 <p><code>docker compose up --build</code> exposes the backend on 8000 and the built frontend
 on 5173. It mounts <code>data/</code>, <code>logs/</code>, and <code>Statements/</code> into the backend. The
@@ -2090,7 +2104,7 @@ transactions, cash, and annual-performance parsing. See
   <div class="section-banner">Parser: TD</div>
   <h1 id="td-webbroker-parser">TD WebBroker parser</h1>
 <p>Implementation: <code>src/ledger/parsers/td.py</code>, parser name <code>td</code>, current version
-<code>2.1.0</code>.</p>
+<code>2.2.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>TD PDFs commonly contain separate <code>Direct Trading - CDN</code> and <code>Direct Trading
 - US</code> subaccounts. They remain distinct accounts/currencies. Annual
@@ -2111,6 +2125,15 @@ scope.</p>
 <li>Adjusted activity identities printed as <code>ROOT+$'YY MON@STRIKE</code> retain the
   printed root and option fields; a following signed contract quantity is
   parsed for expiration/exercise/assignment movements.</li>
+<li>Name-only buy/sell rows retain an unresolved printed identity instead of
+  being discarded. TD execution references such as <code>RL-881589</code> and trailing
+  <code>AS OF</code> annotations are removed from the identity term. The staged resolver
+  can then match one exact same-statement holding (for example,
+  <code>VELO3D INC-NEW</code> to printed symbol <code>VELO</code>); unmatched names keep a null
+  persisted instrument rather than an invented ticker.</li>
+<li>Buy/sell numeric tails are parsed as quantity, price, amount, and optional
+  running balance. Digits embedded in a security name such as <code>VELO3D</code> or
+  <code>12M</code> are never treated as the quantity.</li>
 <li>Stock splits map to the canonical <code>stock_split</code> type. Buy/sell, option
   buy/sell, known fees/taxes, and known income events receive canonical cash
   directions when TD prints an unsigned debit/credit amount.</li>

@@ -849,6 +849,14 @@ After every phase, update the focused owner spec from Phase 0. At completion:
   fetched history, and Verify scroll/highlight waits for the target page render.
 - Phase 7 manual PDF review, explicit sign-off, and cutover remain open. This
   repair does not mutate the live ledger and does not waive those gates.
+- A subsequent TD audit found that name-only buy/sell rows were quarantined
+  before the staged same-statement resolver could run. TD `2.2.0` retains the
+  unresolved printed identity, removes execution references such as
+  `RL-881589`, parses an anchored three/four-cell numeric tail, and permits one
+  exact same-statement holding match. The VELO regression must resolve its
+  printed May 27 buy and eliminate the false May 30 inferred initial. A tracked
+  local review server binds an explicit shadow before API imports so Verify and
+  Transactions cannot read different ledger files.
 
 ## 5. Final acceptance criteria
 

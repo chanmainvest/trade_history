@@ -1,4 +1,6 @@
 """Self-contained tests for the TD parser."""
+from ledger.db import sqlite as sqlite_db
+from ledger.ingest.identity_resolution import resolve_parse_result
 from ledger.parsers.td import TDParser
 from ledger.parsers.validation import validate_parse_result
 
@@ -53,6 +55,36 @@ def test_td_modern_dual_account_holdings_activity_and_cash():
     assert adjusted_expiry.instrument.option_expiry == "2025-01-17"
     assert adjusted_expiry.quantity == -10
     assert validate_parse_result(result).is_valid
+
+
+def test_td_name_only_buy_resolves_to_exact_same_statement_holding(tmp_path):
+    result = TDParser().parse(load_fixture("td/modern_monthly.txt"))
+    usd = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "USD"
+    )
+    velo_buy = next(
+        transaction
+        for transaction in usd.transactions
+        if "VELO3D" in (transaction.description or "")
+    )
+    assert velo_buy.quantity == 2_000
+    assert velo_buy.price == 25
+    assert velo_buy.net_amount == -50_009.99
+    assert velo_buy.instrument is not None
+    assert velo_buy.instrument.name == "VELO3D INC-NEW"
+    assert velo_buy.instrument.resolution_method == "unresolved_printed_identity"
+
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        counts = resolve_parse_result(conn, institution_code="TD_WB", result=result)
+
+    assert counts["same_statement_holding"] == 1
+    assert velo_buy.instrument is not None
+    assert velo_buy.instrument.symbol == "VELO"
+    assert velo_buy.resolution_method == "same_statement_holding"
 
 
 def test_td_legacy_bundle_splits_every_month_and_currency():
