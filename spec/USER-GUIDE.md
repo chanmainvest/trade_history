@@ -292,6 +292,11 @@ Per-symbol deep dive.
   US-listed symbols when available.
 - **Trade history** table at the bottom lists every transaction the
   app has for this symbol, including account / description.
+- When an ingested statement explicitly reports a ticker change, Research
+  shows the dated old-to-new history. Searching either ticker opens one joined
+  history: old prices are used only before the effective date, new prices after
+  it, and trades from both listings are shown. The app does not infer a change
+  from a similar company name.
 
 ### 4.5 Visualisations
 

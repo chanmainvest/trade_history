@@ -31,6 +31,7 @@ src/ledger/
   cli.py                    Click command tree
   pdf_text.py               raw PDF text, optional word/line geometry, fingerprinting
   quantity.py               transaction-type quantity movement rules
+  ticker_changes.py         explicit ticker-pair parsing, persistence, lineage queries
   holdings.py               canonical read-only scoped holdings reconstruction
   shadow.py                 read-only source export, staged rebuild, compare, guarded cutover
   db/
@@ -79,6 +80,7 @@ See [DATA-MODEL.md](DATA-MODEL.md) for persisted contracts.
   missing checkpoint.
 - Preserve uncertainty instead of manufacturing values.
 - Keep every derived row traceable to its source statement.
+- Preserve old/new ticker listings as dated identities rather than aliases.
 
 The current implementation violates parts of the last three invariants. Those
 violations are enumerated in [CURRENT-STATE.md](CURRENT-STATE.md), not hidden
@@ -90,7 +92,8 @@ as completed behavior.
 - `holdings.py` selects complete scoped checkpoints, replays normalized
   movements, prices reconstructed quantities, and returns provenance/quality.
 - Monthly, Performance, and Visualisations consume that same holdings service;
-  Research combines its holdings/trades context with DuckDB data.
+  Research stitches each dated ticker lineage across SQLite trades and DuckDB
+  prices/financials.
 - Verify serves the original PDF and fuzzy-matches stored `raw_line` values to
   `pdfplumber` text-line boxes.
 

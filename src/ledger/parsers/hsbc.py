@@ -142,6 +142,9 @@ def _classify_activity(verb: str) -> str | None:
         "withdrawal": "withdrawal", "withdraw": "withdrawal",
         "journal": "journal",
         "split": "stock_split",
+        "namechange": "name_change",
+        "symbolchange": "name_change",
+        "tickerchange": "name_change",
     }
     return table.get(v)
 
@@ -488,7 +491,7 @@ def _parse_activity(text: str, currency: str, year_default: int,
 # ----------------------------------------------------------------- Parser
 class HSBCParser:
     NAME = "hsbc"
-    VERSION = "2.1.0"
+    VERSION = "2.2.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "HSBC direct invest":

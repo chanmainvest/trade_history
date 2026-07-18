@@ -151,6 +151,13 @@ export default function Research() {
   return (
     <>
       <h2>{t("nav.research")} {symbol && <>— {symbol}</>}</h2>
+      {(pricesQ.data?.ticker_changes?.length ?? 0) > 0 && (
+        <p className="muted">
+          {t("research.tickerHistory")}: {pricesQ.data!.ticker_changes.map((change) =>
+            `${change.from_symbol} → ${change.to_symbol} (${change.effective_date})`
+          ).join(", ")}. {t("research.currentTicker")}: {pricesQ.data!.symbol}.
+        </p>
+      )}
       <div className="filters">
         <div className="ticker-search">
           <input value={input}

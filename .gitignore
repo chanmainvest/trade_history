@@ -3,7 +3,9 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.pytest-tmp-*/
 .ruff_cache/
+temp/
 data/*.sqlite
 data/*.duckdb
 data/*.duckdb.wal

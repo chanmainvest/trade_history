@@ -39,6 +39,7 @@ class CuratedState:
     accounts: list[dict] = field(default_factory=list)
     instruments: dict[str, dict] = field(default_factory=dict)
     aliases: list[dict] = field(default_factory=list)
+    ticker_changes: list[dict] = field(default_factory=list)
     identifier_lookups: list[dict] = field(default_factory=list)
     initial_positions: list[dict] = field(default_factory=list)
     initial_cash: list[dict] = field(default_factory=list)
@@ -55,6 +56,7 @@ class CuratedState:
         return {
             "accounts": len(self.accounts),
             "aliases": len(self.aliases),
+            "ticker_changes": len(self.ticker_changes),
             "identifier_lookups": len(self.identifier_lookups),
             "initial_positions": len(self.initial_positions),
             "initial_cash": len(self.initial_cash),
@@ -257,6 +259,48 @@ def export_curated_state(source_db: Path | str) -> CuratedState:
                 )
         elif _table_exists(conn, "instrument_aliases"):
             state.unavailable["aliases"] = "source aliases table has an unsupported schema"
+
+        ticker_change_columns = _columns(conn, "instrument_ticker_changes")
+        required_ticker_change_columns = {
+            "from_instrument_id",
+            "to_instrument_id",
+            "effective_date",
+            "conversion_ratio",
+            "status",
+            "resolution_method",
+            "resolution_confidence",
+        }
+        if required_ticker_change_columns.issubset(ticker_change_columns):
+            rows = conn.execute(
+                """
+                SELECT * FROM instrument_ticker_changes
+                 WHERE status = 'reviewed'
+                 ORDER BY effective_date, ticker_change_id
+                """
+            ).fetchall()
+            for row in rows:
+                old_key = remember_instrument(row["from_instrument_id"])
+                new_key = remember_instrument(row["to_instrument_id"])
+                if old_key is None or new_key is None:
+                    state.unavailable["ticker_changes"] = (
+                        "one or more reviewed ticker changes reference missing instruments"
+                    )
+                    continue
+                state.ticker_changes.append(
+                    {
+                        "from_instrument_key": old_key,
+                        "to_instrument_key": new_key,
+                        "effective_date": str(row["effective_date"]),
+                        "conversion_ratio": row["conversion_ratio"],
+                        "resolution_method": str(row["resolution_method"]),
+                        "resolution_confidence": row["resolution_confidence"],
+                        "notes": row["notes"] if "notes" in row.keys() else None,
+                    }
+                )
+        elif _table_exists(conn, "instrument_ticker_changes"):
+            state.unavailable["ticker_changes"] = (
+                "source ticker-change table has an unsupported schema"
+            )
 
         lookup_columns = _columns(conn, "instrument_identifier_lookups")
         required_lookup_columns = {
@@ -575,6 +619,7 @@ def import_identity_state(target_db: Path | str, state: CuratedState) -> dict[st
         "account_ids_preserved": 0,
         "instruments": 0,
         "aliases": 0,
+        "ticker_changes": 0,
         "identifier_lookups": 0,
     }
     sqlite_db.init_db(target_db)
@@ -632,6 +677,44 @@ def import_identity_state(target_db: Path | str, state: CuratedState) -> dict[st
                     (instrument["instrument_id"], existing["alias_id"]),
                 )
             summary["aliases"] += 1
+
+        for change in state.ticker_changes:
+            old = conn.execute(
+                "SELECT instrument_id FROM instruments WHERE instrument_key = ?",
+                (change["from_instrument_key"],),
+            ).fetchone()
+            new = conn.execute(
+                "SELECT instrument_id FROM instruments WHERE instrument_key = ?",
+                (change["to_instrument_key"],),
+            ).fetchone()
+            if old is None or new is None:
+                continue
+            conn.execute(
+                """
+                INSERT INTO instrument_ticker_changes(
+                    from_instrument_id, to_instrument_id, effective_date,
+                    conversion_ratio, status, resolution_method,
+                    resolution_confidence, notes
+                ) VALUES (?, ?, ?, ?, 'reviewed', ?, ?, ?)
+                ON CONFLICT(from_instrument_id, to_instrument_id, effective_date)
+                DO UPDATE SET
+                    conversion_ratio = excluded.conversion_ratio,
+                    status = 'reviewed',
+                    resolution_method = excluded.resolution_method,
+                    resolution_confidence = excluded.resolution_confidence,
+                    notes = excluded.notes
+                """,
+                (
+                    old["instrument_id"],
+                    new["instrument_id"],
+                    change["effective_date"],
+                    change["conversion_ratio"],
+                    change["resolution_method"],
+                    change["resolution_confidence"],
+                    change.get("notes"),
+                ),
+            )
+            summary["ticker_changes"] += 1
 
         for lookup in state.identifier_lookups:
             conn.execute(
@@ -861,6 +944,8 @@ def _table_counts(path: Path | str) -> dict[str, int]:
         "source_files",
         "statements",
         "transactions",
+        "instrument_ticker_changes",
+        "instrument_ticker_change_sources",
         "position_snapshots",
         "cash_balances",
         "quarantine_transactions",
@@ -890,7 +975,7 @@ def _content_hash(path: Path | str) -> str:
         payload: dict[str, list[tuple]] = {}
 
         def add_rows(name: str, query: str) -> None:
-            """Add a v6 query when its tables/columns are available.
+            """Add a current semantic query when its tables/columns are available.
 
             A legacy source can be compared at a coarse level, so unsupported
             queries are omitted rather than treating absent columns as data.
@@ -1012,6 +1097,31 @@ def _content_hash(path: Path | str) -> str:
                  ORDER BY source.relpath, statement.statement_key, evidence.evidence_key,
                           institution.code, account.account_number, txn.trade_date,
                           txn.txn_type, instrument.instrument_key
+            """,
+            "ticker_changes": """
+                SELECT old.instrument_key, new.instrument_key,
+                       change.effective_date, change.conversion_ratio,
+                       change.status, change.resolution_method,
+                       change.resolution_confidence, change.notes
+                  FROM instrument_ticker_changes change
+                  JOIN instruments old ON old.instrument_id = change.from_instrument_id
+                  JOIN instruments new ON new.instrument_id = change.to_instrument_id
+                 ORDER BY old.instrument_key, change.effective_date, new.instrument_key
+            """,
+            "ticker_change_sources": """
+                SELECT old.instrument_key, new.instrument_key,
+                       change.effective_date, statement.statement_key,
+                       evidence.evidence_key
+                  FROM instrument_ticker_change_sources source
+                  JOIN instrument_ticker_changes change
+                    ON change.ticker_change_id = source.ticker_change_id
+                  JOIN instruments old ON old.instrument_id = change.from_instrument_id
+                  JOIN instruments new ON new.instrument_id = change.to_instrument_id
+                  JOIN transactions txn ON txn.transaction_id = source.transaction_id
+                  LEFT JOIN statements statement ON statement.statement_id = txn.statement_id
+                  LEFT JOIN source_evidence evidence ON evidence.evidence_id = source.evidence_id
+                 ORDER BY old.instrument_key, change.effective_date,
+                          new.instrument_key, statement.statement_key, evidence.evidence_key
             """,
             "quarantine": """
                 SELECT source.relpath, statement.statement_key, institution.code, account.account_number,

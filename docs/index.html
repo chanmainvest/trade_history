@@ -337,6 +337,11 @@ the same read-only scope/reconciliation state. See
   US-listed symbols when available.</li>
 <li><strong>Trade history</strong> table at the bottom lists every transaction the
   app has for this symbol, including account / description.</li>
+<li>When an ingested statement explicitly reports a ticker change, Research
+  shows the dated old-to-new history. Searching either ticker opens one joined
+  history: old prices are used only before the effective date, new prices after
+  it, and trades from both listings are shown. The app does not infer a change
+  from a similar company name.</li>
 </ul>
 <h3 id="45-visualisations">4.5 Visualisations</h3>
 <p>Three views, all filtered by the active portfolio, with institution and
@@ -584,6 +589,10 @@ plan is not evidence that a target behavior already exists.</p>
 <td><a href="#reconciliation">RECONCILIATION.md</a></td>
 </tr>
 <tr>
+<td>How are old/new ticker symbols linked over time?</td>
+<td><a href="#data-model">DATA-MODEL.md</a>, <a href="#parser-contract">PARSER-CONTRACT.md</a>, <a href="#reconciliation">RECONCILIATION.md</a></td>
+</tr>
+<tr>
 <td>Which HTTP routes and tabs exist?</td>
 <td><a href="#api-ui">API-UI.md</a></td>
 </tr>
@@ -638,7 +647,7 @@ over to it.</p>
 <li>Ingestion stages one validated PDF source in a savepoint and activates it
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.</li>
-<li>CIBC, RBC, and TD report parser version <code>2.3.0</code>, while HSBC reports <code>2.1.0</code>.
+<li>CIBC, RBC, and TD report parser version <code>2.4.0</code>, while HSBC reports <code>2.2.0</code>.
   They retain source page/line evidence, available word/box
   geometry, explicit snapshot scopes, and quarantine rather than fabricate
   unsupported values.</li>
@@ -720,6 +729,22 @@ over to it.</p>
   4,094 incomplete inputs and from 2,477 to 2,892 reconciled results; 82 newly
   calculable intervals expose real residuals instead of being hidden as
   incomplete. This shadow was not signed off or cut over.</li>
+</ul>
+<h2 id="ticker-change-support-fixture-validated-2026-07-18">Ticker-change support (fixture validated 2026-07-18)</h2>
+<ul>
+<li>Schema v7 preserves old and new tickers as separate canonical instruments
+  linked by an effective date and source transaction/evidence. It does not use
+  the timeless alias table for this purpose.</li>
+<li>Parser-contract v3 accepts only explicit printed old/new pairs. Generic name
+  changes remain incomplete rather than being inferred from names or residuals.</li>
+<li>Reconciliation debits the whole old-symbol balance and credits the new-symbol
+  balance at the stored ratio. Holdings, Monthly diff, Performance filters, and
+  Research consume the same non-branching lineage; Research constrains each
+  ticker's public data to its validity dates.</li>
+<li>Synthetic activation, reconciliation, holdings, and ambiguity regressions
+  pass. No fresh full-corpus audit or live/shadow re-ingest has been performed
+  for parser 2.4/2.2, so the dated counts above do not claim observed ticker
+  changes and the live ledger remains unchanged.</li>
 </ul>
 <h2 id="measured-live-ledger-2026-07-12">Measured live ledger (2026-07-12)</h2>
 <table>
@@ -823,8 +848,9 @@ over to it.</p>
 <h2 id="confirmed-remaining-correctness-work">Confirmed remaining correctness work</h2>
 <ol>
 <li><strong>The dated live ledger still has broken historical instrument identity.</strong>
-   Schema v6 gives new/migrated rows one canonical key, but the 2026-07-12 live
-   snapshot is not the shadow target. It contains 803 duplicate logical
+   Schema v7 gives new/migrated rows one canonical key per listing plus dated
+   ticker relationships, but the 2026-07-12 live snapshot is not the shadow
+   target. It contains 803 duplicate logical
    groups, 31,567 excess IDs, and 28,587 unreferenced instrument rows.</li>
 <li><strong>The reconciliation engine is implemented, but the dated live ledger has
    not been rebuilt with it.</strong> <code>ledger ingest reconcile</code> now stores
@@ -886,6 +912,7 @@ not mutate the ledger.</p>
   cli.py                    Click command tree
   pdf_text.py               raw PDF text, optional word/line geometry, fingerprinting
   quantity.py               transaction-type quantity movement rules
+  ticker_changes.py         explicit ticker-pair parsing, persistence, lineage queries
   holdings.py               canonical read-only scoped holdings reconstruction
   shadow.py                 read-only source export, staged rebuild, compare, guarded cutover
   db/
@@ -931,6 +958,7 @@ inside the API route modules.</p>
   missing checkpoint.</li>
 <li>Preserve uncertainty instead of manufacturing values.</li>
 <li>Keep every derived row traceable to its source statement.</li>
+<li>Preserve old/new ticker listings as dated identities rather than aliases.</li>
 </ul>
 <p>The current implementation violates parts of the last three invariants. Those
 violations are enumerated in <a href="#current-state">CURRENT-STATE.md</a>, not hidden
@@ -941,7 +969,8 @@ as completed behavior.</p>
 <li><code>holdings.py</code> selects complete scoped checkpoints, replays normalized
   movements, prices reconstructed quantities, and returns provenance/quality.</li>
 <li>Monthly, Performance, and Visualisations consume that same holdings service;
-  Research combines its holdings/trades context with DuckDB data.</li>
+  Research stitches each dated ticker lineage across SQLite trades and DuckDB
+  prices/financials.</li>
 <li>Verify serves the original PDF and fuzzy-matches stored <code>raw_line</code> values to
   <code>pdfplumber</code> text-line boxes.</li>
 </ul>
@@ -963,7 +992,7 @@ as completed behavior.</p>
 <p>This document describes the schema currently implemented. Exact SQLite DDL is
 owned by <code>src/ledger/db/schema.sql</code>; exact DuckDB DDL is the <code>DDL</code> string in
 <code>src/ledger/db/duckdb_store.py</code>. Update code and this spec together.</p>
-<h2 id="sqlite-ledger-schema-version-6">SQLite ledger (schema version 6)</h2>
+<h2 id="sqlite-ledger-schema-version-7">SQLite ledger (schema version 7)</h2>
 <p>All dates are ISO text and monetary values remain in the row's native
 <code>currency</code>.</p>
 <table>
@@ -987,8 +1016,8 @@ owned by <code>src/ledger/db/schema.sql</code>; exact DuckDB DDL is the <code>DD
 </tr>
 <tr>
 <td>Securities</td>
-<td><code>instruments</code>, <code>instrument_aliases</code>, <code>instrument_identifier_lookups</code></td>
-<td>one non-null canonical key per logical instrument plus reviewed aliases</td>
+<td><code>instruments</code>, <code>instrument_aliases</code>, <code>instrument_identifier_lookups</code>, <code>instrument_ticker_changes</code>, <code>instrument_ticker_change_sources</code></td>
+<td>canonical listing identities, reviewed aliases, and dated ticker lineages</td>
 </tr>
 <tr>
 <td>Source</td>
@@ -1038,6 +1067,13 @@ owned by <code>src/ledger/db/schema.sql</code>; exact DuckDB DDL is the <code>DD
 native currency; option keys additionally include root, expiry, strike, type,
 and multiplier. <code>upsert_instrument()</code> conflicts only on this key, never on
 nullable option columns.</p>
+<p>A ticker change does <strong>not</strong> merge those keys. <code>instrument_ticker_changes</code>
+links the old and new instrument IDs with an ISO effective date, positive
+conversion ratio, resolution provenance, and a non-branching/non-cyclic
+lineage contract. <code>instrument_ticker_change_sources</code> links every corroborating
+statement transaction and its evidence. Extracted relationships are removed
+only when their final source transaction is replaced; aliases remain reserved
+for names that are equivalent without a date.</p>
 <p>The v5-to-v6 migration repoints dependent rows to the oldest canonical ID. If
 two duplicate legacy holding/initial rows collide, it preserves their total
 reported quantity/value and marks no new source facts. The shadow rebuild in
@@ -1051,8 +1087,8 @@ configuration's <code>account_ids</code> remain valid after a database-only cuto
 ID collision or an unmapped configured account aborts/blocks normal sign-off
 rather than silently remapping preferences. It separately transfers manual
 (not <code>inferred:</code>) initial anchors, reviewed aliases/lookups, and non-generated
-reconciliation annotations only when their canonical target references can be
-mapped.</p>
+reconciliation annotations and reviewed ticker changes only when their
+canonical target references can be mapped.</p>
 <h3 id="statements-attempts-and-evidence">Statements, attempts, and evidence</h3>
 <p><code>statements</code> is unique on
 <code>(source_file_id, account_id, period_start, period_end, statement_type)</code> and
@@ -1063,7 +1099,7 @@ source savepoint, writes its deterministic <code>content_counts_json</code> and
 <code>content_hash</code>, then switches <code>source_files.active_ingestion_run_id</code>. Failed
 attempts retain their own run/status/error while leaving the previous active
 pointer and active metadata intact. Successful replacements remove the prior
-derived run and its source children in that transaction. Schema v6's global
+derived run and its source children in that transaction. Schema v7's global
 statement/evidence uniqueness prevents old/new copies from coexisting, so this
 replacement is uncommitted until activation; readers only see the prior or new
 complete source output.</p>
@@ -1094,6 +1130,10 @@ these rebuildable derived links; <code>resolution_evidence_id</code> points at t
 supporting position row. The description and reported numeric fields remain
 unchanged. Existing transaction and checkpoint evidence is sufficient for this
 derivation, while <code>instrument_aliases</code> remains reserved for reviewed mappings.</p>
+<p>Parser-contract v3 adds <code>related_instrument</code> and <code>corporate_action_ratio</code> to a
+transaction. For a supported ticker change, <code>instrument_id</code> is the old printed
+listing and the related instrument is persisted through the dated relationship.
+Both must have the same asset type/native currency and different symbols.</p>
 <h3 id="scoped-checkpoints">Scoped checkpoints</h3>
 <p><code>snapshot_sets</code> declares a statement/account/date/currency/section scope with
 <code>complete</code>, <code>partial</code>, <code>absent</code>, or <code>unknown</code> completeness. Position snapshots
@@ -1219,6 +1259,7 @@ are derived artifacts.</p>
   -&gt; skip image-only, explicit non-broker documents / fail unclaimed
   -&gt; first registered parser whose can_handle() returns true
   -&gt; parser.parse(PdfText)
+  -&gt; enrich explicit old/new ticker-change pairs
   -&gt; validate the complete ParseResult
   -&gt; conservatively resolve printed identities
   -&gt; stage one source in a SQLite savepoint
@@ -1227,7 +1268,7 @@ are derived artifacts.</p>
   -&gt; regenerate derived ingestion audit indexes
 </code></pre></div>
 <p>The registered parsers are CIBC, HSBC, RBC, and TD. CIBC, RBC, and TD report
-<code>2.2.0</code>; HSBC reports <code>2.1.0</code>. Parser and resolver version changes
+<code>2.4.0</code>; HSBC reports <code>2.2.0</code>. Parser, contract, schema, and resolver changes
 intentionally invalidate older active cache entries so a reviewed re-ingest
 exercises the current extraction contract.</p>
 <h2 id="status-and-cache-behavior">Status and cache behavior</h2>
@@ -1251,12 +1292,16 @@ duplicate statement identities, parser errors, periods/transaction dates,
 transaction vocabulary, currencies, finite numerics, option identity, and
 source-span/scope declarations. An undeclared scope remains a visible warning
 and becomes an <code>unknown</code> persisted set rather than a clearing checkpoint.</p>
+<p>Explicit <code>NAME/SYMBOL/TICKER CHANGE ... FROM &lt;old&gt; TO &lt;new&gt;</code> rows are enriched
+before validation. Activation resolves and writes both printed instruments,
+the dated 1:1 relationship, and the source transaction/evidence in the same
+savepoint. Rows without both printed symbols are not guessed.</p>
 <p>For one valid source, the pipeline first checks every emitted statement/source
 row key in memory, then opens one SQLite savepoint. It creates a <code>validated</code>
 run; resolves identities; replaces the source's old <em>derived</em> run only inside
 that uncommitted savepoint; writes every statement, evidence row, normalized
 delta, scope, and child row under the new run; records a deterministic content
-count/hash; switches the source pointer; and commits. SQLite's v6 global
+count/hash; switches the source pointer; and commits. SQLite's v6-and-later global
 statement/evidence identities mean the old derived rows are deleted just before
 new child writes rather than held side-by-side, but no reader can observe that
 intermediate state. Any exception rolls back to the prior committed source.</p>
@@ -1374,6 +1419,9 @@ reason)</code> quarantine tuples remain accepted during the parser migration.</p
 <code>src/ledger/parsers/types.py</code>. <code>parsers/validation.py</code> enforces the runtime
 contract on the complete <code>ParseResult</code> before staged ingestion writes any
 statement children.</p>
+<p>The active parser contract is version <code>3</code>. <code>ParsedTxn.related_instrument</code> and
+<code>corporate_action_ratio</code> represent an explicitly printed corporate-action
+replacement without overwriting the original instrument.</p>
 <h2 id="required-semantics">Required semantics</h2>
 <ul>
 <li>Parsing is deterministic and side-effect free: no database writes or network.</li>
@@ -1389,6 +1437,9 @@ statement children.</p>
 <li>A parser declares the scope and completeness of every holdings/cash section.</li>
 <li>A parser preserves its printed instrument identity; it does not need to guess
   a public ticker from an uncertain free-form name.</li>
+<li>A ticker/name-change row may link old and new instruments only when both
+  symbols are printed explicitly. The pair must differ and retain one asset
+  type/native currency; the conversion ratio must be positive.</li>
 </ul>
 <p>Unique output identity, date/type/currency/option validity, finite numbers,
 declared scope validity, and source-span shape are enforced now. Correct
@@ -1401,6 +1452,10 @@ assignment/exercise/expiration, income/interest, transfers/journals,
 deposits/withdrawals, taxes/fees/FX/adjustments, reinvestment, splits, and
 corporate actions. Add a new value only with parser, quantity/cash semantics,
 schema/docs, API, and tests updated together.</p>
+<p>For <code>name_change</code>, the shared enrichment accepts explicit phrases such as
+<code>SYMBOL CHANGE FROM FB TO META</code>. It rejects company-name-only text and transfer
+direction words. A generic name change with no explicit pair remains an
+underdetermined movement and makes reconciliation incomplete.</p>
 <h2 id="evidence-and-quarantine">Evidence and quarantine</h2>
 <p><code>SourceSpan</code> can carry raw text, page/line, bounding box, words, and parser
 rule. Transactions, positions, cash balances, snapshot sets, and the richer
@@ -1524,6 +1579,12 @@ the equation when both scopes are complete. A first checkpoint is
 <code>incomplete_input</code>. Transactions which could affect a position but lack an
 instrument or a usable quantity/delta also make the interval incomplete rather
 than silently contributing zero.</p>
+<p>An explicit ticker change is replayed across the whole interval: immediately
+before the effective date, the engine debits the complete old-symbol balance
+and credits the new-symbol balance multiplied by the stored ratio. The same
+source transaction is therefore an auditable negative component for the old
+instrument and positive component for the new one. It never derives a ticker
+relationship from the closing residual.</p>
 <p>For an empty scope, one scope-level result is stored. It records the same
 missing-prior or incomplete condition, or <code>not_applicable</code> when both complete
 checkpoints are known empty and no unresolved movement is present.</p>
@@ -1614,9 +1675,15 @@ position-affecting effect as incomplete.</p>
 <h2 id="canonical-holdings-service">Canonical holdings service</h2>
 <p><code>ledger.holdings.holdings_at()</code> is the read-only source of truth for Monthly,
 Performance, and all Visualisation holdings/symbol selection. It returns one
-row per <code>(account_id, instrument_key, currency)</code> with a stable <code>holding_key</code>.
+row per <code>(account_id, security lineage, currency)</code> with a stable <code>holding_key</code>.
 <code>/monthly/diff</code> and the React table use that key, so a CAD and USD position with
 the same display symbol cannot overwrite one another.</p>
+<p>For a dated ticker change after the selected checkpoint, holdings moves the
+entire old-symbol quantity to the new listing and preserves book value. The
+row exposes the current <code>instrument_key</code>/symbol plus ordered <code>ticker_symbols</code>;
+its <code>holding_key</code> uses the lineage root, so Monthly diff and Performance do not
+show a 1:1 rename as a sale and purchase. Performance symbol filters accept any
+symbol in that lineage.</p>
 <p>For securities, the service chooses the latest <strong>complete</strong> position scope per
 <code>(account, currency, scope_key)</code> on or before the requested day and adds later
 normalized position movements by canonical instrument key. A complete empty
@@ -1717,7 +1784,7 @@ it updates preferences in JSON, not SQLite.</p>
 <tr>
 <td><code>/research</code></td>
 <td><code>GET /prices</code>, <code>/trades</code>, <code>/financials</code></td>
-<td>security research</td>
+<td>dated multi-ticker security research</td>
 </tr>
 <tr>
 <td><code>/viz</code></td>
@@ -1745,7 +1812,8 @@ reconciliation-rebuild endpoints in the current route set.</p>
    portfolio comes from the top-bar selector.</li>
 <li>Performance: native-currency value/cash history with bounded forward fill.</li>
 <li>Research: price, trade, and fundamental detail; moving averages use full
-   fetched history before the visible period is clipped.</li>
+   fetched history before the visible period is clipped. Dated ticker lineages
+   are stitched without using post-change prices under the old symbol.</li>
 <li>Visualisations: holdings treemap, correlation, and RRG.</li>
 <li>Verify extraction: PDF.js rendering with <code>pdfplumber</code> text-line boxes,
    parsed transaction/position/cash/summary/quarantine lists, scope
@@ -1787,7 +1855,14 @@ reference receive selected styling.</p>
 <code>ledger.holdings.holdings_at()</code> service. It anchors only on complete scoped
 checkpoints, applies normalized position/cash movements afterward, and never
 writes SQLite. Monthly rows include a stable <code>holding_key</code> made from account,
-canonical instrument key, and currency; diff rows use the same identity.</p>
+canonical instrument key, and currency; diff rows use the same identity.
+For a ticker lineage the stable key uses its root identity, while the row also
+returns <code>ticker_symbols</code> and displays the symbol valid at the requested date.</p>
+<p>Research responses include <code>requested_symbol</code>, current <code>symbol</code>, ordered
+<code>symbols</code>, and dated <code>ticker_changes</code>. Prices are selected only inside each
+symbol's validity window, trades include every linked instrument, and
+financial periods prefer the newest applicable ticker. The UI displays the
+ticker history and current symbol.</p>
 <p>Each holdings row also returns checkpoint statement/scope identifiers, an
 optional exact <code>source_ref</code> (or checkpoint reference for reconstructed rows),
 reported-versus-reconstructed state, reconciliation status/reason, price/date
@@ -1862,7 +1937,7 @@ source PDFs or stored <code>.txt</code> dumps, overwrites a deterministic JSONL 
 (default <code>logs/extraction_audit.jsonl</code>), and omits raw statement text. Use
 <code>--fail-on-errors</code> in a gate where invalid/unclaimed/crashed outputs must
 return non-zero.</p>
-<p><code>ledger db init</code> creates or upgrades schema version 6. The API/server does not
+<p><code>ledger db init</code> creates or upgrades schema version 7. The API/server does not
 silently migrate a database at startup; run <code>db init</code> deliberately before
 serving a v6 database. For an existing real ledger, use the guarded shadow
 workflow below rather than treating a compatibility migration as live cutover.</p>
@@ -2025,7 +2100,7 @@ workflow is not a substitute for checking docs in a normal pull request.</p>
   <div class="section-banner">Parser: CIBC</div>
   <h1 id="cibc-parser">CIBC parser</h1>
 <p>Implementation: <code>src/ledger/parsers/cibc.py</code>, parser name <code>cibc</code>, current
-version <code>2.3.0</code>.</p>
+version <code>2.4.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>The parser handles the configured CIBC Imperial Service, Investor's Edge, and
 TFSA folders/text. It extracts <code>###-#####</code> account numbers from text or a
@@ -2055,6 +2130,8 @@ separate positions and cash snapshot scopes.</p>
   persistence.</li>
 <li>Curated name fallback respects native-currency listings for dual-listed
   securities (for example, Barrick <code>ABX</code> in CAD and <code>GOLD</code> in USD).</li>
+<li>Explicit name/symbol/ticker-change verbs are retained for the shared v3
+  contract; only a printed <code>FROM &lt;old&gt; TO &lt;new&gt;</code> pair becomes a dated lineage.</li>
 <li>A recognized portfolio section is declared <code>complete</code>; a cash scope is
   complete only after a valid printed closing balance. Invalid/missing numeric
   fields and unclaimed numeric rows are quarantined, never stored as zero.</li>
@@ -2079,7 +2156,7 @@ shared output rules.</p>
   <div class="section-banner">Parser: HSBC</div>
   <h1 id="hsbc-parser">HSBC parser</h1>
 <p>Implementation: <code>src/ledger/parsers/hsbc.py</code>, parser name <code>hsbc</code>, current
-version <code>2.1.0</code>.</p>
+version <code>2.2.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>HSBC PDFs can contain several account sections. The parser emits one statement
 per printed account and infers currency from the account type or the observed
@@ -2104,6 +2181,8 @@ a continued account page does not create a duplicate account-period statement.</
 <li>Parsed transactions, positions, cash, and quarantine rows receive source
   spans. Real PDF coordinates are retained when available; text-only fallback
   evidence is deterministic page/line information.</li>
+<li>Normalized name/symbol/ticker-change activity verbs are recognized; the
+  shared contract still requires both printed symbols before linking them.</li>
 </ul>
 <h2 id="remaining-limits">Remaining limits</h2>
 <ul>
@@ -2125,7 +2204,7 @@ continued account pages, cash, and source evidence. See
   <div class="section-banner">Parser: RBC</div>
   <h1 id="rbc-parser">RBC parser</h1>
 <p>Implementation: <code>src/ledger/parsers/rbc.py</code>, parser name <code>rbc</code>, current
-version <code>2.3.0</code>.</p>
+version <code>2.4.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>The parser handles monthly Direct Investing statements and annual investment
 performance reports. Monthly text is split at <code>CDN $</code> / <code>U.S. $</code> blocks; annual
@@ -2155,6 +2234,8 @@ overwrite the first currency while writing the second.</p>
   a cash scope is complete only with a valid printed closing balance.</li>
 <li>Parsed transactions, positions, cash, and quarantines receive source spans,
   including coordinate/word evidence when extraction exposes it.</li>
+<li>Explicit name/symbol/ticker-change activity is retained, but a relationship
+  is emitted only when both old and new symbols are printed.</li>
 </ul>
 <h2 id="remaining-limits">Remaining limits</h2>
 <ul>
@@ -2174,7 +2255,7 @@ transactions, cash, and annual-performance parsing. See
   <div class="section-banner">Parser: TD</div>
   <h1 id="td-webbroker-parser">TD WebBroker parser</h1>
 <p>Implementation: <code>src/ledger/parsers/td.py</code>, parser name <code>td</code>, current version
-<code>2.3.0</code>.</p>
+<code>2.4.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>TD PDFs commonly contain separate <code>Direct Trading - CDN</code> and <code>Direct Trading
 - US</code> subaccounts. They remain distinct accounts/currencies. Annual
@@ -2203,6 +2284,8 @@ scope.</p>
   persisted instrument rather than an invented ticker.</li>
 <li>Curated holding-name fallback respects native-currency listings for
   dual-listed securities.</li>
+<li>Explicit name/symbol/ticker-change activity can populate the v3 related-
+  instrument contract when the row prints both symbols.</li>
 <li>Buy/sell numeric tails are parsed as quantity, price, amount, and optional
   running balance. Digits embedded in a security name such as <code>VELO3D</code> or
   <code>12M</code> are never treated as the quantity.</li>

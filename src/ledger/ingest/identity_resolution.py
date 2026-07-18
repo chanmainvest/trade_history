@@ -25,7 +25,7 @@ from .fund_lookup import lookup_fund_code
 
 # Bump this when the deterministic resolver's meaning changes.  The cache also
 # includes a fingerprint of reviewed aliases and reviewed fund lookups.
-RESOLVER_VERSION = "identity-resolver-v2"
+RESOLVER_VERSION = "identity-resolver-v3"
 
 _EXPLICIT_SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,19}$")
 _UNRESOLVED_SYMBOLS = {"", "UNKNOWN", "N/A", "NONE"}
@@ -176,7 +176,13 @@ def _resolve_instrument(
 ) -> str:
     """Resolve one parsed instrument without guessing from free-form names."""
     if _looks_explicit(instrument):
-        method = "printed_option_contract" if instrument.asset_type == "option" else "printed_symbol"
+        method = (
+            "printed_ticker_change"
+            if instrument.resolution_method == "printed_ticker_change"
+            else "printed_option_contract"
+            if instrument.asset_type == "option"
+            else "printed_symbol"
+        )
         _set_resolution(instrument, method, 1.0)
         return method
 
@@ -317,4 +323,14 @@ def resolve_parse_result(
                 # persist a made-up name token as though it were a ticker.
                 transaction.instrument = None
             methods[method] += 1
+            if transaction.related_instrument is not None:
+                related_method = _resolve_instrument(
+                    conn,
+                    institution_code=institution_code,
+                    instrument=transaction.related_instrument,
+                    description=transaction.description,
+                )
+                if related_method == "unresolved_printed_identity":
+                    transaction.related_instrument = None
+                methods[f"related:{related_method}"] += 1
     return dict(sorted(methods.items()))

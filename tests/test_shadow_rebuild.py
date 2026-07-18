@@ -40,6 +40,23 @@ def _seed_curated_source(path: Path) -> tuple[int, int, int]:
             symbol="ABC",
             currency="CAD",
         )
+        successor_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="equity",
+            symbol="XYZ",
+            currency="CAD",
+        )
+        conn.execute(
+            """
+            INSERT INTO instrument_ticker_changes(
+                from_instrument_id, to_instrument_id, effective_date,
+                conversion_ratio, status, resolution_method,
+                resolution_confidence, notes
+            ) VALUES (?, ?, '2023-06-01', 1, 'reviewed',
+                      'reviewed_source_notice', 1, 'manual: ticker notice')
+            """,
+            (instrument_id, successor_id),
+        )
         conn.execute(
             "INSERT INTO instrument_aliases(instrument_id, alias, institution_id) VALUES (?, 'ABC LTD', ?)",
             (instrument_id, institution_id),
@@ -128,7 +145,8 @@ def test_export_curated_state_is_read_only_and_excludes_inferred_cash(tmp_path):
     assert source.read_bytes() == before
     assert state.counts() == {
         "accounts": 1,
-        "aliases": 1,
+            "aliases": 1,
+            "ticker_changes": 1,
         "identifier_lookups": 1,
         "initial_positions": 1,
         "initial_cash": 1,
@@ -208,6 +226,9 @@ def test_shadow_build_preserves_curated_state_and_requires_signed_cutover(tmp_pa
         assert conn.execute("SELECT opened_on FROM accounts WHERE account_number = 'A-1'").fetchone()[0] == "2010-01-01"
         assert conn.execute("SELECT notes FROM accounts WHERE account_number = 'A-1'").fetchone()[0] == "manual: account note"
         assert conn.execute("SELECT COUNT(*) FROM instrument_aliases WHERE alias = 'ABC LTD'").fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM instrument_ticker_changes WHERE status = 'reviewed'"
+        ).fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM initial_positions WHERE notes = 'manual: opening lot'").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM initial_cash WHERE notes = 'manual: opening cash'").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM initial_cash WHERE notes LIKE 'inferred:%'").fetchone()[0] >= 1

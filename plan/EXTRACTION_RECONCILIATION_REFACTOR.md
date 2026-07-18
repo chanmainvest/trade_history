@@ -877,6 +877,21 @@ After every phase, update the focused owner spec from Phase 0. At completion:
   reported non-option positions, and reversed equity buy/sell signs remain
   zero. The build was not signed off or cut over.
 
+### Post-Phase 8 ticker-change support record (2026-07-18)
+
+- Schema v7 and parser-contract v3 model a ticker change as a dated,
+  source-backed old-instrument to new-instrument relationship. The old symbol
+  remains historically valid and is not collapsed into an alias.
+- CIBC/RBC/TD `2.4.0` and HSBC `2.2.0` recognize explicit change verbs. Shared
+  enrichment requires a printed `FROM <old> TO <new>` pair and rejects
+  name-only or direction-token guesses.
+- Reconciliation, holdings, Monthly stable keys, Performance filters, and all
+  Research endpoints consume the same non-branching lineage. Focused synthetic
+  tests cover activation evidence, ambiguity rejection, old/new reconciliation,
+  and point-in-time reconstruction.
+- This implementation has not triggered a live cutover or a new corpus claim;
+  Phase 7 source review/sign-off remains the operational gate.
+
 ## 5. Final acceptance criteria
 
 The refactor is complete only when all of the following are true:

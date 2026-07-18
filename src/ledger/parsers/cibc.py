@@ -231,6 +231,8 @@ ACTIVITY_VERBS = {
     "Fee": "fee",
     "Adjustment": "adjustment",
     "Reinvest": "dividend", "Reinvested": "dividend",
+    "Name Change": "name_change", "Symbol Change": "name_change",
+    "Ticker Change": "name_change",
 }
 
 
@@ -505,7 +507,8 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
             verb_match = re.match(
                 r"(Bought|Sold|Dividend|Distribution|Tax|Interest|Expired|Expire|"
                 r"Exercised|Assigned|Transfer|Journal|Deposit|Withdrawal|Fee|"
-                r"Adjustment|Reinvested|Reinvest)\b",
+                r"Adjustment|Reinvested|Reinvest|Name Change|Symbol Change|"
+                r"Ticker Change)\b",
                 rest,
             )
             if verb_match:
@@ -695,7 +698,7 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
 # ----------------------------------------------------------------- Parser
 class CIBCParser:
     NAME = "cibc"
-    VERSION = "2.3.0"
+    VERSION = "2.4.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name.startswith("CIBC "):

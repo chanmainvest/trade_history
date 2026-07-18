@@ -46,12 +46,19 @@ def list_transactions(
                    a.account_id, a.account_number, a.account_type, a.nickname,
                    i.code AS institution_code, i.display_name AS institution_name,
                    COALESCE(inst.option_root, inst.symbol) AS symbol,
+                   successor.symbol AS related_symbol,
                    inst.asset_type, inst.option_expiry, inst.option_strike,
                    inst.option_type
               FROM transactions t
               JOIN accounts a ON a.account_id = t.account_id
               JOIN institutions i ON i.institution_id = a.institution_id
               LEFT JOIN instruments inst ON inst.instrument_id = t.instrument_id
+              LEFT JOIN instrument_ticker_change_sources source
+                     ON source.transaction_id = t.transaction_id
+              LEFT JOIN instrument_ticker_changes tc
+                     ON tc.ticker_change_id = source.ticker_change_id
+              LEFT JOIN instruments successor
+                     ON successor.instrument_id = tc.to_instrument_id
              WHERE {canonical_sql}
             UNION ALL
             SELECT 'initial_position' AS row_kind,
@@ -70,6 +77,7 @@ def list_transactions(
                    a.account_id, a.account_number, a.account_type, a.nickname,
                    i.code AS institution_code, i.display_name AS institution_name,
                    COALESCE(inst.option_root, inst.symbol) AS symbol,
+                   NULL AS related_symbol,
                    inst.asset_type, inst.option_expiry, inst.option_strike,
                    inst.option_type
               FROM initial_positions ip
@@ -97,7 +105,11 @@ def list_transactions(
         params.extend(accts)
     syms = [s.upper() for s in _csv_list(symbol)]
     if syms:
-        filters.append(f" AND symbol IN ({','.join('?' * len(syms))})")
+        filters.append(
+            f" AND (symbol IN ({','.join('?' * len(syms))})"
+            f" OR related_symbol IN ({','.join('?' * len(syms))}))"
+        )
+        params.extend(syms)
         params.extend(syms)
     types = _csv_list(txn_type)
     if types:
@@ -141,7 +153,10 @@ def symbols() -> dict:
             "WHERE i.asset_type IN ('equity','etf','option','mutual_fund','bond') "
             "  AND (EXISTS (SELECT 1 FROM transactions t WHERE t.instrument_id = i.instrument_id) "
             "       OR EXISTS (SELECT 1 FROM position_snapshots ps WHERE ps.instrument_id = i.instrument_id) "
-            "       OR EXISTS (SELECT 1 FROM initial_positions ip WHERE ip.instrument_id = i.instrument_id)) "
+            "       OR EXISTS (SELECT 1 FROM initial_positions ip WHERE ip.instrument_id = i.instrument_id) "
+            "       OR EXISTS (SELECT 1 FROM instrument_ticker_changes tc "
+            "                   WHERE tc.from_instrument_id = i.instrument_id "
+            "                      OR tc.to_instrument_id = i.instrument_id)) "
             "ORDER BY symbol"
         ).fetchall()]
     return {"rows": rows}

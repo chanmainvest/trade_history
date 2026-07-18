@@ -365,7 +365,9 @@ export default function Transactions() {
                 <td>{row.institution_code}</td>
                 <td>{acctById[row.account_id] || row.account_number}</td>
                 <td>{row.txn_type === "initial_position" ? t("transaction.type.initial_position") : row.txn_type}</td>
-                <td>{row.symbol ? <Link to={`/research/${row.symbol}`}>{row.symbol}</Link> : ""}</td>
+                <td>{row.symbol ? <Link to={`/research/${row.symbol}`}>
+                  {row.related_symbol ? `${row.symbol} → ${row.related_symbol}` : row.symbol}
+                </Link> : ""}</td>
                 <td>{row.option_type ? `${row.option_type} ${fmtNum(row.option_strike, 2)} ${row.option_expiry || ""}` : ""}</td>
                 <td className="num">{fmtNum(row.quantity, 0)}</td>
                 <td className="num">{fmtNum(row.price)}</td>

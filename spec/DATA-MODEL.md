@@ -4,7 +4,7 @@ This document describes the schema currently implemented. Exact SQLite DDL is
 owned by `src/ledger/db/schema.sql`; exact DuckDB DDL is the `DDL` string in
 `src/ledger/db/duckdb_store.py`. Update code and this spec together.
 
-## SQLite ledger (schema version 6)
+## SQLite ledger (schema version 7)
 
 All dates are ISO text and monetary values remain in the row's native
 `currency`.
@@ -13,7 +13,7 @@ All dates are ISO text and monetary values remain in the row's native
 |---|---|---|
 | Brokers | `institutions`, `accounts` | institution code; `(institution_id, account_number)` |
 | Transfers | `account_links` | automatically paired account-to-account transfers |
-| Securities | `instruments`, `instrument_aliases`, `instrument_identifier_lookups` | one non-null canonical key per logical instrument plus reviewed aliases |
+| Securities | `instruments`, `instrument_aliases`, `instrument_identifier_lookups`, `instrument_ticker_changes`, `instrument_ticker_change_sources` | canonical listing identities, reviewed aliases, and dated ticker lineages |
 | Source | `source_files`, `ingestion_runs`, `statements` | source metadata, immutable attempts, and account-period output |
 | Evidence | `source_evidence` | deterministic source-row provenance without exposing it in public audit logs |
 | Ledger | `transactions`, `quarantine_transactions` | reported rows plus normalized deltas and evidence links |
@@ -31,6 +31,14 @@ native currency; option keys additionally include root, expiry, strike, type,
 and multiplier. `upsert_instrument()` conflicts only on this key, never on
 nullable option columns.
 
+A ticker change does **not** merge those keys. `instrument_ticker_changes`
+links the old and new instrument IDs with an ISO effective date, positive
+conversion ratio, resolution provenance, and a non-branching/non-cyclic
+lineage contract. `instrument_ticker_change_sources` links every corroborating
+statement transaction and its evidence. Extracted relationships are removed
+only when their final source transaction is replaced; aliases remain reserved
+for names that are equivalent without a date.
+
 The v5-to-v6 migration repoints dependent rows to the oldest canonical ID. If
 two duplicate legacy holding/initial rows collide, it preserves their total
 reported quantity/value and marks no new source facts. The shadow rebuild in
@@ -46,8 +54,8 @@ configuration's `account_ids` remain valid after a database-only cutover. An
 ID collision or an unmapped configured account aborts/blocks normal sign-off
 rather than silently remapping preferences. It separately transfers manual
 (not `inferred:`) initial anchors, reviewed aliases/lookups, and non-generated
-reconciliation annotations only when their canonical target references can be
-mapped.
+reconciliation annotations and reviewed ticker changes only when their
+canonical target references can be mapped.
 
 ### Statements, attempts, and evidence
 
@@ -61,7 +69,7 @@ source savepoint, writes its deterministic `content_counts_json` and
 `content_hash`, then switches `source_files.active_ingestion_run_id`. Failed
 attempts retain their own run/status/error while leaving the previous active
 pointer and active metadata intact. Successful replacements remove the prior
-derived run and its source children in that transaction. Schema v6's global
+derived run and its source children in that transaction. Schema v7's global
 statement/evidence uniqueness prevents old/new copies from coexisting, so this
 replacement is uncommitted until activation; readers only see the prior or new
 complete source output.
@@ -96,6 +104,11 @@ these rebuildable derived links; `resolution_evidence_id` points at the
 supporting position row. The description and reported numeric fields remain
 unchanged. Existing transaction and checkpoint evidence is sufficient for this
 derivation, while `instrument_aliases` remains reserved for reviewed mappings.
+
+Parser-contract v3 adds `related_instrument` and `corporate_action_ratio` to a
+transaction. For a supported ticker change, `instrument_id` is the old printed
+listing and the related instrument is persisted through the dated relationship.
+Both must have the same asset type/native currency and different symbols.
 
 ### Scoped checkpoints
 

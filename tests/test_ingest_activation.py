@@ -119,6 +119,58 @@ def _result(*statements: ParsedStatement) -> ParseResult:
     )
 
 
+def test_activation_persists_explicit_ticker_change_with_source_evidence(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    statement = _statement(symbol="META")
+    transaction = statement.transactions[0]
+    transaction.txn_type = "name_change"
+    transaction.instrument = None
+    transaction.quantity = None
+    transaction.price = None
+    transaction.gross_amount = None
+    transaction.net_amount = None
+    transaction.description = "SYMBOL CHANGE FROM FB TO META"
+    transaction.raw_line = "Jan 01 SYMBOL CHANGE FROM FB TO META"
+    transaction.source_span = SourceSpan(
+        raw_text=transaction.raw_line,
+        page_number=1,
+        parser_rule="fixture:ticker-change",
+    )
+
+    with sqlite_db.session(db_path) as conn:
+        activate_source_result(
+            conn,
+            pdf=_pdf(),
+            institution_code="TD_WB",
+            parser_name="td",
+            parser_version=TDParser.VERSION,
+            result=_result(statement),
+        )
+        row = conn.execute(
+            """
+            SELECT old.symbol AS old_symbol, new.symbol AS new_symbol,
+                   tc.effective_date, tc.conversion_ratio,
+                   tc.resolution_method, source.evidence_id
+              FROM instrument_ticker_changes tc
+              JOIN instruments old ON old.instrument_id = tc.from_instrument_id
+              JOIN instruments new ON new.instrument_id = tc.to_instrument_id
+              JOIN instrument_ticker_change_sources source
+                ON source.ticker_change_id = tc.ticker_change_id
+            """
+        ).fetchone()
+
+    assert dict(row) == {
+        "old_symbol": "FB",
+        "new_symbol": "META",
+        "effective_date": "2024-01-01",
+        "conversion_ratio": 1.0,
+        "resolution_method": "printed_ticker_change",
+        "evidence_id": row["evidence_id"],
+    }
+    assert row["evidence_id"] is not None
+
+
 def _activate(conn, result: ParseResult, *, pdf: PdfText | None = None) -> dict:
     return activate_source_result(
         conn,

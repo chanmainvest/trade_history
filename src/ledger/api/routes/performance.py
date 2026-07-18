@@ -80,7 +80,10 @@ def _filter_rows(
         if row["asset_type"] == "cash":
             if not cash_allowed:
                 continue
-        elif symbols and str(row["symbol"]).upper() not in symbols:
+        elif symbols and not symbols.intersection(
+            str(value).upper()
+            for value in row.get("ticker_symbols", [row["symbol"]])
+        ):
             continue
         elif asset_type and row["asset_type"] != asset_type:
             continue

@@ -30,6 +30,10 @@ Exact fields and the `TxnType` literal vocabulary are defined in
 contract on the complete `ParseResult` before staged ingestion writes any
 statement children.
 
+The active parser contract is version `3`. `ParsedTxn.related_instrument` and
+`corporate_action_ratio` represent an explicitly printed corporate-action
+replacement without overwriting the original instrument.
+
 ## Required semantics
 
 - Parsing is deterministic and side-effect free: no database writes or network.
@@ -45,6 +49,9 @@ statement children.
 - A parser declares the scope and completeness of every holdings/cash section.
 - A parser preserves its printed instrument identity; it does not need to guess
   a public ticker from an uncertain free-form name.
+- A ticker/name-change row may link old and new instruments only when both
+  symbols are printed explicitly. The pair must differ and retain one asset
+  type/native currency; the conversion ratio must be positive.
 
 Unique output identity, date/type/currency/option validity, finite numbers,
 declared scope validity, and source-span shape are enforced now. Correct
@@ -59,6 +66,11 @@ assignment/exercise/expiration, income/interest, transfers/journals,
 deposits/withdrawals, taxes/fees/FX/adjustments, reinvestment, splits, and
 corporate actions. Add a new value only with parser, quantity/cash semantics,
 schema/docs, API, and tests updated together.
+
+For `name_change`, the shared enrichment accepts explicit phrases such as
+`SYMBOL CHANGE FROM FB TO META`. It rejects company-name-only text and transfer
+direction words. A generic name change with no explicit pair remains an
+underdetermined movement and makes reconciliation incomplete.
 
 ## Evidence and quarantine
 

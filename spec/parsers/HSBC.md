@@ -1,7 +1,7 @@
 # HSBC parser
 
 Implementation: `src/ledger/parsers/hsbc.py`, parser name `hsbc`, current
-version `2.1.0`.
+version `2.2.0`.
 
 ## Recognition and account shape
 
@@ -30,6 +30,8 @@ a continued account page does not create a duplicate account-period statement.
 - Parsed transactions, positions, cash, and quarantine rows receive source
   spans. Real PDF coordinates are retained when available; text-only fallback
   evidence is deterministic page/line information.
+- Normalized name/symbol/ticker-change activity verbs are recognized; the
+  shared contract still requires both printed symbols before linking them.
 
 ## Remaining limits
 

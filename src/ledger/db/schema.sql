@@ -282,6 +282,53 @@ CREATE INDEX IF NOT EXISTS idx_txn_statement     ON transactions(statement_id);
 CREATE INDEX IF NOT EXISTS idx_txn_run           ON transactions(ingestion_run_id);
 CREATE INDEX IF NOT EXISTS idx_txn_counterpart   ON transactions(counterpart_txn_id);
 
+-- A ticker change is a dated relationship, not an alias. The two instrument
+-- rows preserve the symbols printed before and after the effective date.
+-- Multiple statements/accounts may provide evidence for the same event.
+CREATE TABLE IF NOT EXISTS instrument_ticker_changes (
+    ticker_change_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_instrument_id INTEGER NOT NULL REFERENCES instruments(instrument_id),
+    to_instrument_id   INTEGER NOT NULL REFERENCES instruments(instrument_id),
+    effective_date     TEXT NOT NULL,
+    conversion_ratio   REAL NOT NULL DEFAULT 1.0 CHECK (conversion_ratio > 0),
+    status             TEXT NOT NULL DEFAULT 'extracted'
+                       CHECK (status IN ('extracted','reviewed')),
+    resolution_method  TEXT NOT NULL,
+    resolution_confidence REAL NOT NULL CHECK
+                          (resolution_confidence >= 0 AND resolution_confidence <= 1),
+    notes              TEXT,
+    CHECK (from_instrument_id <> to_instrument_id),
+    UNIQUE(from_instrument_id, to_instrument_id, effective_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ticker_changes_from
+    ON instrument_ticker_changes(from_instrument_id, effective_date);
+CREATE INDEX IF NOT EXISTS idx_ticker_changes_to
+    ON instrument_ticker_changes(to_instrument_id, effective_date);
+
+CREATE TABLE IF NOT EXISTS instrument_ticker_change_sources (
+    ticker_change_source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker_change_id INTEGER NOT NULL REFERENCES instrument_ticker_changes(ticker_change_id)
+                                      ON DELETE CASCADE,
+    transaction_id INTEGER NOT NULL UNIQUE REFERENCES transactions(transaction_id)
+                                      ON DELETE CASCADE,
+    evidence_id INTEGER REFERENCES source_evidence(evidence_id) ON DELETE SET NULL
+);
+
+-- Extracted relationships disappear only when their final source row does.
+-- Reviewed relationships are curated state and are never removed by ingest.
+CREATE TRIGGER IF NOT EXISTS cleanup_orphan_extracted_ticker_change
+AFTER DELETE ON instrument_ticker_change_sources
+BEGIN
+    DELETE FROM instrument_ticker_changes
+     WHERE ticker_change_id = OLD.ticker_change_id
+       AND status = 'extracted'
+       AND NOT EXISTS (
+           SELECT 1 FROM instrument_ticker_change_sources s
+            WHERE s.ticker_change_id = OLD.ticker_change_id
+       );
+END;
+
 -- Quarantine: rows we couldn't confidently parse.
 CREATE TABLE IF NOT EXISTS quarantine_transactions (
     quarantine_id    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -454,4 +501,4 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value            TEXT NOT NULL
 );
 
-INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '6');
+INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '7');

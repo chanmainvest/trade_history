@@ -64,7 +64,7 @@ source PDFs or stored `.txt` dumps, overwrites a deterministic JSONL report
 `--fail-on-errors` in a gate where invalid/unclaimed/crashed outputs must
 return non-zero.
 
-`ledger db init` creates or upgrades schema version 6. The API/server does not
+`ledger db init` creates or upgrades schema version 7. The API/server does not
 silently migrate a database at startup; run `db init` deliberately before
 serving a v6 database. For an existing real ledger, use the guarded shadow
 workflow below rather than treating a compatibility migration as live cutover.

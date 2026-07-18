@@ -107,6 +107,9 @@ ACT_VERBS = {
     "DEPOSIT": "deposit",
     "CONTRIBUTION": "deposit",
     "RETURN OF CAPITAL": "return_of_capital",
+    "NAME CHANGE": "name_change",
+    "SYMBOL CHANGE": "name_change",
+    "TICKER CHANGE": "name_change",
 }
 
 
@@ -590,7 +593,7 @@ def _parse_activity(body: str, currency: str, year: int,
 # ----------------------------------------------------------------- Parser
 class RBCParser:
     NAME = "rbc"
-    VERSION = "2.3.0"
+    VERSION = "2.4.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "RBC Invest Direct":

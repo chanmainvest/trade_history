@@ -16,7 +16,7 @@ from ..identity import (
 from ..quantity import normalized_position_delta
 
 _SCHEMA = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def connect(path: Path | str = SQLITE_PATH) -> sqlite3.Connection:

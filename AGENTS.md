@@ -10,10 +10,12 @@ the focused specifications under `spec/`.
 3. Store statement amounts in native currency. FX conversion is presentation-only.
 4. Complete broker snapshots are checkpoints; transactions are the audit trail.
    Do not treat a partial extraction as a complete snapshot.
-5. Preserve user changes in a dirty worktree. Do not revert unrelated edits.
-6. Keep parsed data traceable to its source. Parser changes require a defensible
+5. A ticker change is a dated relationship, not an alias. Preserve both printed
+   symbols and require explicit source evidence; never join by name or residual.
+6. Preserve user changes in a dirty worktree. Do not revert unrelated edits.
+7. Keep parsed data traceable to its source. Parser changes require a defensible
    source fixture or a spot-check against the cited PDF.
-7. Documentation is part of the change. Update the owning spec with the code.
+8. Documentation is part of the change. Update the owning spec with the code.
 
 ## Load context on demand
 
@@ -28,6 +30,7 @@ Start at [spec/INDEX.md](spec/INDEX.md), then load only the files needed:
 | Parser types or validation | `spec/PARSER-CONTRACT.md` |
 | CIBC, HSBC, RBC, or TD | `spec/parsers/<INSTITUTION>.md` |
 | Reconciliation or holdings-at-date | `spec/RECONCILIATION.md` |
+| Ticker changes/corporate-action identity | `spec/DATA-MODEL.md` + `spec/PARSER-CONTRACT.md` + `spec/RECONCILIATION.md` |
 | FastAPI or React | `spec/API-UI.md` |
 | Profiles, CLI, Docker, servers, release | `spec/OPERATIONS.md` |
 | Human-facing behavior | `spec/USER-GUIDE.md` |
@@ -45,6 +48,9 @@ not implemented behavior.
 - Use `npm` in `frontend/`.
 - Prefer `rg`/`rg --files` for repository searches.
 - Edit files with patch-based changes and preserve unrelated local modifications.
+- Put every disposable script, scratch database, generated diagnostic, and
+  temporary directory under the repository-root `temp/` folder. Do not create
+  new temporary artifacts elsewhere in the worktree.
 
 Set a profile before Python imports `ledger.config`:
 

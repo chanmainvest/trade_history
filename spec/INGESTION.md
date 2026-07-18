@@ -26,6 +26,7 @@ discover path
   -> skip image-only, explicit non-broker documents / fail unclaimed
   -> first registered parser whose can_handle() returns true
   -> parser.parse(PdfText)
+  -> enrich explicit old/new ticker-change pairs
   -> validate the complete ParseResult
   -> conservatively resolve printed identities
   -> stage one source in a SQLite savepoint
@@ -35,7 +36,7 @@ discover path
 ```
 
 The registered parsers are CIBC, HSBC, RBC, and TD. CIBC, RBC, and TD report
-`2.2.0`; HSBC reports `2.1.0`. Parser and resolver version changes
+`2.4.0`; HSBC reports `2.2.0`. Parser, contract, schema, and resolver changes
 intentionally invalidate older active cache entries so a reviewed re-ingest
 exercises the current extraction contract.
 
@@ -65,12 +66,17 @@ transaction vocabulary, currencies, finite numerics, option identity, and
 source-span/scope declarations. An undeclared scope remains a visible warning
 and becomes an `unknown` persisted set rather than a clearing checkpoint.
 
+Explicit `NAME/SYMBOL/TICKER CHANGE ... FROM <old> TO <new>` rows are enriched
+before validation. Activation resolves and writes both printed instruments,
+the dated 1:1 relationship, and the source transaction/evidence in the same
+savepoint. Rows without both printed symbols are not guessed.
+
 For one valid source, the pipeline first checks every emitted statement/source
 row key in memory, then opens one SQLite savepoint. It creates a `validated`
 run; resolves identities; replaces the source's old *derived* run only inside
 that uncommitted savepoint; writes every statement, evidence row, normalized
 delta, scope, and child row under the new run; records a deterministic content
-count/hash; switches the source pointer; and commits. SQLite's v6 global
+count/hash; switches the source pointer; and commits. SQLite's v6-and-later global
 statement/evidence identities mean the old derived rows are deleted just before
 new child writes rather than held side-by-side, but no reader can observe that
 intermediate state. Any exception rolls back to the prior committed source.

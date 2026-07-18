@@ -12,7 +12,7 @@ it updates preferences in JSON, not SQLite.
 | `/transactions` | list (including read-only opening positions), accounts, referenced symbols, transaction types, latest date | Transactions/filter controls |
 | `/monthly` | `GET /snapshot`, `GET /diff` | canonical point-in-time holdings and comparison |
 | `/performance` | `GET /total`, `GET /cash` | canonical holdings value series and reported cash checkpoints |
-| `/research` | `GET /prices`, `/trades`, `/financials` | security research |
+| `/research` | `GET /prices`, `/trades`, `/financials` | dated multi-ticker security research |
 | `/viz` | `GET /holdings_by_sector`, `/correlation`, `/rrg` | visual analytics |
 | `/config` | `GET`, `PUT` | portfolios/theme/hide-money/language |
 | `/statements` | list, `GET /{id}/pdf`, `GET /{id}/boxes` | read-only extraction/reconciliation verification |
@@ -27,7 +27,8 @@ reconciliation-rebuild endpoints in the current route set.
    portfolio comes from the top-bar selector.
 3. Performance: native-currency value/cash history with bounded forward fill.
 4. Research: price, trade, and fundamental detail; moving averages use full
-   fetched history before the visible period is clipped.
+   fetched history before the visible period is clipped. Dated ticker lineages
+   are stitched without using post-change prices under the old symbol.
 5. Visualisations: holdings treemap, correlation, and RRG.
 6. Verify extraction: PDF.js rendering with `pdfplumber` text-line boxes,
    parsed transaction/position/cash/summary/quarantine lists, scope
@@ -79,6 +80,14 @@ Monthly, Performance, and Visualisation routes share the read-only
 checkpoints, applies normalized position/cash movements afterward, and never
 writes SQLite. Monthly rows include a stable `holding_key` made from account,
 canonical instrument key, and currency; diff rows use the same identity.
+For a ticker lineage the stable key uses its root identity, while the row also
+returns `ticker_symbols` and displays the symbol valid at the requested date.
+
+Research responses include `requested_symbol`, current `symbol`, ordered
+`symbols`, and dated `ticker_changes`. Prices are selected only inside each
+symbol's validity window, trades include every linked instrument, and
+financial periods prefer the newest applicable ticker. The UI displays the
+ticker history and current symbol.
 
 Each holdings row also returns checkpoint statement/scope identifiers, an
 optional exact `source_ref` (or checkpoint reference for reconstructed rows),

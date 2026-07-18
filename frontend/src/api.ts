@@ -50,10 +50,10 @@ export const api = {
       "/performance/cash", p),
 
   prices: (symbol: string, freq: "D" | "W" | "M" = "D") =>
-    getJSON<{ symbol: string; freq: string; rows: any[] }>(
+    getJSON<{ symbol: string; requested_symbol: string; symbols: string[]; ticker_changes: { from_symbol: string; to_symbol: string; effective_date: string }[]; freq: string; rows: any[] }>(
       "/research/prices", { symbol, freq }),
   trades: (symbol: string) =>
-    getJSON<{ symbol: string; rows: any[] }>("/research/trades", { symbol }),
+    getJSON<{ symbol: string; requested_symbol: string; symbols: string[]; ticker_changes: { from_symbol: string; to_symbol: string; effective_date: string }[]; rows: any[] }>("/research/trades", { symbol }),
   financials: (symbol: string, period: "quarterly" | "annual" = "quarterly") =>
     getJSON<{ symbol: string; period: string; rows: any[] }>(
       "/research/financials", { symbol, period }),
@@ -96,6 +96,7 @@ export type TxnRow = {
   institution_code: string;
   institution_name: string;
   symbol: string | null;
+  related_symbol: string | null;
   asset_type: string | null;
   option_expiry: string | null;
   option_strike: number | null;
@@ -124,6 +125,7 @@ export type HoldingRow = {
   instrument_key: string;
   holding_key: string;
   symbol: string;
+  ticker_symbols: string[];
   asset_type: string;
   currency: string;
   option_expiry: string | null;

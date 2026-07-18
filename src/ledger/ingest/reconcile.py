@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -723,38 +723,78 @@ def _position_rows_by_key(
     }
 
 
-def _position_components(
+def _position_interval_replay(
     conn: sqlite3.Connection,
     *,
     account_id: int,
-    instrument_key: str,
+    currency: str,
     prior_checkpoint: str,
     current_checkpoint: str,
-) -> tuple[list[tuple[int, float]], int]:
+    prior_rows: dict[str, tuple[int, float]],
+) -> tuple[
+    dict[str, float],
+    dict[str, list[tuple[int, float]]],
+    dict[str, int],
+    dict[str, int],
+]:
+    """Replay one checkpoint interval, including whole-position ticker moves."""
     rows = conn.execute(
         f"""
-        SELECT t.transaction_id, t.txn_type, t.quantity, t.position_delta
+        SELECT t.transaction_id, t.txn_type, t.quantity, t.position_delta,
+               i.instrument_key,
+               tc.conversion_ratio,
+               successor.instrument_key AS successor_key,
+               successor.instrument_id AS successor_id
           FROM transactions t
-          JOIN instruments i ON i.instrument_id = t.instrument_id
+          LEFT JOIN instruments i ON i.instrument_id = t.instrument_id
+          LEFT JOIN instrument_ticker_change_sources source
+                 ON source.transaction_id = t.transaction_id
+          LEFT JOIN instrument_ticker_changes tc
+                 ON tc.ticker_change_id = source.ticker_change_id
+          LEFT JOIN instruments successor
+                 ON successor.instrument_id = tc.to_instrument_id
          WHERE t.account_id = ?
-           AND i.instrument_key = ?
+           AND t.currency = ?
            AND t.trade_date > ?
            AND t.trade_date <= ?
            AND {canonical_statement_clause("t.statement_id")}
          ORDER BY t.trade_date, t.transaction_id
         """,
-        (account_id, instrument_key, prior_checkpoint, current_checkpoint),
+        (account_id, currency, prior_checkpoint, current_checkpoint),
     ).fetchall()
-    components: list[tuple[int, float]] = []
-    missing_effects = 0
+    balances = {key: value for key, (_instrument_id, value) in prior_rows.items()}
+    instrument_ids = {key: iid for key, (iid, _value) in prior_rows.items()}
+    components: dict[str, list[tuple[int, float]]] = defaultdict(list)
+    missing: dict[str, int] = defaultdict(int)
     for row in rows:
+        key = row["instrument_key"]
+        if key is None:
+            continue
+        key = str(key)
+        transaction_id = int(row["transaction_id"])
+        if row["successor_key"] is not None:
+            successor_key = str(row["successor_key"])
+            moved = balances.get(key, 0.0)
+            ratio = float(row["conversion_ratio"])
+            old_delta = -moved
+            new_delta = moved * ratio
+            balances[key] = 0.0
+            balances[successor_key] = balances.get(successor_key, 0.0) + new_delta
+            instrument_ids[successor_key] = int(row["successor_id"])
+            if abs(old_delta) > EXACT_TOLERANCE:
+                components[key].append((transaction_id, old_delta))
+            if abs(new_delta) > EXACT_TOLERANCE:
+                components[successor_key].append((transaction_id, new_delta))
+            continue
         effect = _position_effect(row)
         if effect is None:
-            missing_effects += 1
+            if row["txn_type"] in POSITION_EFFECT_TYPES:
+                missing[key] += 1
             continue
+        balances[key] = balances.get(key, 0.0) + effect
         if abs(effect) > EXACT_TOLERANCE:
-            components.append((int(row["transaction_id"]), effect))
-    return components, missing_effects
+            components[key].append((transaction_id, effect))
+    return balances, components, missing, instrument_ids
 
 
 def _unresolved_position_effect_count(
@@ -818,7 +858,27 @@ def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
             if prior is not None
             else {}
         )
-        instrument_keys = sorted(set(prior_rows) | set(current_rows))
+        interval_balances: dict[str, float] = {}
+        interval_components: dict[str, list[tuple[int, float]]] = {}
+        interval_missing: dict[str, int] = {}
+        interval_ids: dict[str, int] = {}
+        if prior is not None:
+            (
+                interval_balances,
+                interval_components,
+                interval_missing,
+                interval_ids,
+            ) = _position_interval_replay(
+                conn,
+                account_id=int(scope["account_id"]),
+                currency=str(scope["currency"]),
+                prior_checkpoint=str(prior["as_of_date"]),
+                current_checkpoint=str(scope["as_of_date"]),
+                prior_rows=prior_rows,
+            )
+        instrument_keys = sorted(
+            set(prior_rows) | set(current_rows) | set(interval_balances)
+        )
 
         if not instrument_keys:
             if scope["completeness"] != "complete":
@@ -893,7 +953,7 @@ def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
                 if current_value is not None
                 else prior_value[0]
                 if prior_value is not None
-                else None
+                else interval_ids.get(instrument_key)
             )
             opening_value = prior_value[1] if prior_value is not None else None
             reported_close = current_value[1] if current_value is not None else 0.0
@@ -912,13 +972,8 @@ def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
                 status = "incomplete_input"
                 reason = "prior position scope is not complete"
             else:
-                components, missing_effects = _position_components(
-                    conn,
-                    account_id=scope["account_id"],
-                    instrument_key=instrument_key,
-                    prior_checkpoint=prior["as_of_date"],
-                    current_checkpoint=scope["as_of_date"],
-                )
+                components = interval_components.get(instrument_key, [])
+                missing_effects = interval_missing.get(instrument_key, 0)
                 summed_deltas = sum(delta for _transaction_id, delta in components)
                 if unresolved_effects or missing_effects:
                     status = "incomplete_input"
@@ -934,7 +989,7 @@ def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
                     reason = "; ".join(reason_parts)
                 else:
                     opening_value = prior_value[1] if prior_value is not None else 0.0
-                    expected_close = opening_value + summed_deltas
+                    expected_close = interval_balances.get(instrument_key, opening_value)
                     residual = reported_close - expected_close
                     status = _result_status(residual, POSITION_TOLERANCE)
                     reason = _residual_reason(residual, POSITION_TOLERANCE)

@@ -1,7 +1,7 @@
 # CIBC parser
 
 Implementation: `src/ledger/parsers/cibc.py`, parser name `cibc`, current
-version `2.3.0`.
+version `2.4.0`.
 
 ## Recognition and account shape
 
@@ -35,6 +35,8 @@ separate positions and cash snapshot scopes.
   persistence.
 - Curated name fallback respects native-currency listings for dual-listed
   securities (for example, Barrick `ABX` in CAD and `GOLD` in USD).
+- Explicit name/symbol/ticker-change verbs are retained for the shared v3
+  contract; only a printed `FROM <old> TO <new>` pair becomes a dated lineage.
 - A recognized portfolio section is declared `complete`; a cash scope is
   complete only after a valid printed closing balance. Invalid/missing numeric
   fields and unclaimed numeric rows are quarantined, never stored as zero.

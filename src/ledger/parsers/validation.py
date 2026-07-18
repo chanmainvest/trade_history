@@ -461,10 +461,64 @@ def _validate_statement(
                 row_index=row_index,
                 row_currency=transaction.currency,
             )
+        if transaction.related_instrument is not None:
+            _instrument(
+                report,
+                transaction.related_instrument,
+                statement_index=statement_index,
+                row_kind=row_kind,
+                row_index=row_index,
+                row_currency=transaction.currency,
+            )
+            if transaction.txn_type != "name_change":
+                _issue(
+                    report,
+                    "unexpected_related_instrument",
+                    "related_instrument is supported only for a ticker/name change",
+                    statement_index=statement_index,
+                    row_kind=row_kind,
+                    row_index=row_index,
+                )
+            if transaction.instrument is None:
+                _issue(
+                    report,
+                    "ticker_change_without_old_instrument",
+                    "ticker change has a new instrument but no old instrument",
+                    statement_index=statement_index,
+                    row_kind=row_kind,
+                    row_index=row_index,
+                )
+            elif (
+                transaction.instrument.asset_type
+                != transaction.related_instrument.asset_type
+                or transaction.instrument.currency
+                != transaction.related_instrument.currency
+                or transaction.instrument.symbol
+                == transaction.related_instrument.symbol
+            ):
+                _issue(
+                    report,
+                    "invalid_ticker_change_pair",
+                    "ticker change requires different symbols with the same asset type and currency",
+                    statement_index=statement_index,
+                    row_kind=row_kind,
+                    row_index=row_index,
+                )
+        if transaction.txn_type == "name_change" and transaction.related_instrument is not None:
+            ratio = transaction.corporate_action_ratio
+            if ratio is None or not isinstance(ratio, (int, float)) or ratio <= 0:
+                _issue(
+                    report,
+                    "invalid_ticker_change_ratio",
+                    "ticker change requires a positive corporate_action_ratio",
+                    statement_index=statement_index,
+                    row_kind=row_kind,
+                    row_index=row_index,
+                )
         for field_name in (
             "quantity", "price", "gross_amount", "commission", "other_fees",
             "net_amount", "tax_rate", "parser_confidence", "position_delta",
-            "cash_delta", "resolution_confidence",
+            "cash_delta", "resolution_confidence", "corporate_action_ratio",
         ):
             _finite(
                 report,

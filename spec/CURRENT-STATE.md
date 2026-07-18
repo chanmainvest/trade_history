@@ -17,7 +17,7 @@ over to it.
 - Ingestion stages one validated PDF source in a savepoint and activates it
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.
-- CIBC, RBC, and TD report parser version `2.3.0`, while HSBC reports `2.1.0`.
+- CIBC, RBC, and TD report parser version `2.4.0`, while HSBC reports `2.2.0`.
   They retain source page/line evidence, available word/box
   geometry, explicit snapshot scopes, and quarantine rather than fabricate
   unsupported values.
@@ -100,6 +100,22 @@ over to it.
   calculable intervals expose real residuals instead of being hidden as
   incomplete. This shadow was not signed off or cut over.
 
+## Ticker-change support (fixture validated 2026-07-18)
+
+- Schema v7 preserves old and new tickers as separate canonical instruments
+  linked by an effective date and source transaction/evidence. It does not use
+  the timeless alias table for this purpose.
+- Parser-contract v3 accepts only explicit printed old/new pairs. Generic name
+  changes remain incomplete rather than being inferred from names or residuals.
+- Reconciliation debits the whole old-symbol balance and credits the new-symbol
+  balance at the stored ratio. Holdings, Monthly diff, Performance filters, and
+  Research consume the same non-branching lineage; Research constrains each
+  ticker's public data to its validity dates.
+- Synthetic activation, reconciliation, holdings, and ambiguity regressions
+  pass. No fresh full-corpus audit or live/shadow re-ingest has been performed
+  for parser 2.4/2.2, so the dated counts above do not claim observed ticker
+  changes and the live ledger remains unchanged.
+
 ## Measured live ledger (2026-07-12)
 
 | Item | Count |
@@ -157,8 +173,9 @@ over to it.
 ## Confirmed remaining correctness work
 
 1. **The dated live ledger still has broken historical instrument identity.**
-   Schema v6 gives new/migrated rows one canonical key, but the 2026-07-12 live
-   snapshot is not the shadow target. It contains 803 duplicate logical
+   Schema v7 gives new/migrated rows one canonical key per listing plus dated
+   ticker relationships, but the 2026-07-12 live snapshot is not the shadow
+   target. It contains 803 duplicate logical
    groups, 31,567 excess IDs, and 28,587 unreferenced instrument rows.
 2. **The reconciliation engine is implemented, but the dated live ledger has
    not been rebuilt with it.** `ledger ingest reconcile` now stores

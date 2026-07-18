@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-PARSER_CONTRACT_VERSION = "2"
+PARSER_CONTRACT_VERSION = "3"
 
 # Canonical transaction-type vocabulary. See schema.sql for definitions.
 TxnType = Literal[
@@ -88,6 +88,11 @@ class ParsedTxn:
     resolution_confidence: float | None = None
     resolution_evidence: SourceSpan | None = None
     source_span: SourceSpan | None = None
+    # Corporate actions may replace the printed instrument with another
+    # instrument. Keep both identities instead of collapsing the old ticker
+    # into an undated alias.
+    related_instrument: ParsedInstrument | None = None
+    corporate_action_ratio: float | None = None
 
 
 @dataclass

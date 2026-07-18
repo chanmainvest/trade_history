@@ -62,6 +62,13 @@ the equation when both scopes are complete. A first checkpoint is
 instrument or a usable quantity/delta also make the interval incomplete rather
 than silently contributing zero.
 
+An explicit ticker change is replayed across the whole interval: immediately
+before the effective date, the engine debits the complete old-symbol balance
+and credits the new-symbol balance multiplied by the stored ratio. The same
+source transaction is therefore an auditable negative component for the old
+instrument and positive component for the new one. It never derives a ticker
+relationship from the closing residual.
+
 For an empty scope, one scope-level result is stored. It records the same
 missing-prior or incomplete condition, or `not_applicable` when both complete
 checkpoints are known empty and no unresolved movement is present.
@@ -172,9 +179,16 @@ position-affecting effect as incomplete.
 
 `ledger.holdings.holdings_at()` is the read-only source of truth for Monthly,
 Performance, and all Visualisation holdings/symbol selection. It returns one
-row per `(account_id, instrument_key, currency)` with a stable `holding_key`.
+row per `(account_id, security lineage, currency)` with a stable `holding_key`.
 `/monthly/diff` and the React table use that key, so a CAD and USD position with
 the same display symbol cannot overwrite one another.
+
+For a dated ticker change after the selected checkpoint, holdings moves the
+entire old-symbol quantity to the new listing and preserves book value. The
+row exposes the current `instrument_key`/symbol plus ordered `ticker_symbols`;
+its `holding_key` uses the lineage root, so Monthly diff and Performance do not
+show a 1:1 rename as a sale and purchase. Performance symbol filters accept any
+symbol in that lineage.
 
 For securities, the service chooses the latest **complete** position scope per
 `(account, currency, scope_key)` on or before the requested day and adds later

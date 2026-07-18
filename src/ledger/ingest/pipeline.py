@@ -24,6 +24,7 @@ from ..parsers.types import (
 from ..parsers.validation import validate_parse_result
 from ..pdf_text import PdfText, extract_pdf
 from ..quantity import normalized_position_delta
+from ..ticker_changes import enrich_ticker_change_transactions, record_ticker_change
 from .identity_resolution import resolve_parse_result, resolver_cache_version
 
 log = get_logger("ingest")
@@ -420,13 +421,31 @@ def _write_statement(
                     else i.resolution_confidence
                 ),
             )
+        related_instr_id = None
+        if t.related_instrument is not None:
+            related = t.related_instrument
+            related_instr_id = sqlite_db.upsert_instrument(
+                conn,
+                asset_type=related.asset_type,
+                symbol=related.symbol,
+                currency=related.currency,
+                exchange=related.exchange,
+                name=related.name,
+                option_root=related.option_root,
+                option_expiry=related.option_expiry,
+                option_strike=related.option_strike,
+                option_type=related.option_type,
+                option_multiplier=related.option_multiplier,
+                resolution_method=related.resolution_method,
+                resolution_confidence=related.resolution_confidence,
+            )
         position_effect = (
             t.position_delta
             if t.position_delta is not None
             else normalized_position_delta(t.txn_type, t.quantity)
         )
         cash_effect = t.cash_delta if t.cash_delta is not None else t.net_amount
-        conn.execute(
+        transaction_id = int(conn.execute(
             """INSERT INTO transactions
             (account_id, statement_id, source_file_id, ingestion_run_id,
              evidence_id, trade_date, settle_date, txn_type, instrument_id,
@@ -434,7 +453,8 @@ def _write_statement(
              other_fees, net_amount, cash_delta, cash_effective_date, currency,
              tax_country, tax_rate, description, raw_line, parser_confidence,
              resolution_method, resolution_confidence, resolution_evidence_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            RETURNING transaction_id""",
             (
                 acct_id, statement_id, source_file_id, run_id, evidence_id,
                 t.trade_date, t.settle_date, t.txn_type, instr_id, t.quantity,
@@ -445,7 +465,21 @@ def _write_statement(
                 t.raw_line, t.parser_confidence, t.resolution_method,
                 t.resolution_confidence, resolution_evidence_id,
             ),
-        )
+        ).fetchone()[0])
+        if related_instr_id is not None:
+            if instr_id is None or t.txn_type != "name_change":
+                raise ValueError("related instrument requires a resolved name-change source")
+            record_ticker_change(
+                conn,
+                from_instrument_id=instr_id,
+                to_instrument_id=related_instr_id,
+                effective_date=t.trade_date,
+                conversion_ratio=t.corporate_action_ratio or 1.0,
+                transaction_id=transaction_id,
+                evidence_id=evidence_id,
+                resolution_method=t.resolution_method or "printed_ticker_change",
+                resolution_confidence=t.resolution_confidence or 1.0,
+            )
 
     for row_index, p in enumerate(stmt.positions):
         evidence_id = _write_evidence(
@@ -670,7 +704,7 @@ def activate_source_result(
 ) -> dict[str, object]:
     """Stage, activate, and replace one validated source in one savepoint.
 
-    SQLite's v6 statement/evidence identities cannot coexist for an old and a
+    SQLite's v6-and-later statement/evidence identities cannot coexist for an old and a
     replacement extraction.  The old derived run is therefore removed only
     inside this uncommitted savepoint, immediately before the new rows are
     written.  Readers see either the previous committed extraction or the new
@@ -678,6 +712,7 @@ def activate_source_result(
     """
     if result.status != "parsed":
         raise ValueError("cannot activate a skipped parser result")
+    enrich_ticker_change_transactions(result)
     validation = validate_parse_result(result)
     if not validation.is_valid:
         messages = "; ".join(issue.message for issue in validation.errors[:3])
@@ -1002,6 +1037,7 @@ def run_ingest(
                 active_log.info("Skipped %s: %s", pdf.relpath, result.skip_reason)
                 continue
 
+            enrich_ticker_change_transactions(result)
             validation = validate_parse_result(result)
             if not validation.is_valid:
                 summary = "; ".join(

@@ -242,7 +242,10 @@ def test_init_db_migrates_v5_identity_runs_scopes_and_evidence(tmp_path):
     with sqlite_db.session(db_path) as conn:
         assert conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'schema_version'"
-        ).fetchone()[0] == "6"
+        ).fetchone()[0] == "7"
+        assert conn.execute(
+            "SELECT COUNT(*) FROM instrument_ticker_changes"
+        ).fetchone()[0] == 0
         instruments = conn.execute(
             "SELECT instrument_id, instrument_key FROM instruments"
         ).fetchall()

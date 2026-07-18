@@ -106,6 +106,11 @@ cash, and printed-total equations. Ambiguous names remain unresolved; the
 command reports residuals and incomplete inputs but never creates a balancing
 row. See [Reconciliation](spec/RECONCILIATION.md).
 
+Explicit statement ticker changes are stored as dated old-to-new instrument
+relationships, not undated aliases. Reconciliation and holdings move the
+position across that relationship, while Research joins the valid price,
+trade, and financial history for either ticker.
+
 ## Docker
 
 ```powershell

@@ -28,6 +28,7 @@ plan is not evidence that a target behavior already exists.
 | How does a PDF become ledger rows? | [INGESTION.md](INGESTION.md) |
 | What must a parser emit? | [PARSER-CONTRACT.md](PARSER-CONTRACT.md) |
 | How are movements, checkpoints, and views related? | [RECONCILIATION.md](RECONCILIATION.md) |
+| How are old/new ticker symbols linked over time? | [DATA-MODEL.md](DATA-MODEL.md), [PARSER-CONTRACT.md](PARSER-CONTRACT.md), [RECONCILIATION.md](RECONCILIATION.md) |
 | Which HTTP routes and tabs exist? | [API-UI.md](API-UI.md) |
 | How are profiles, commands, servers, and releases run? | [OPERATIONS.md](OPERATIONS.md) |
 | How does a person use the app? | [USER-GUIDE.md](USER-GUIDE.md) |

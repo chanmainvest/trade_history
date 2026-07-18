@@ -1,0 +1,13 @@
+{
+  "portfolios": [
+    {
+      "id": "all",
+      "name": "All accounts",
+      "account_ids": []
+    }
+  ],
+  "active_portfolio": "all",
+  "theme": "dark",
+  "hide_money": false,
+  "language": "en"
+}

@@ -61,8 +61,12 @@ class _SecurityState:
     market_value: float | None = None
     unrealized_pnl: float | None = None
     position_movement: bool = False
+    cost_basis_stale: bool = False
     incomplete: bool = False
     warnings: set[str] = field(default_factory=set)
+    lineage_key: str | None = None
+    ticker_symbols: tuple[str, ...] = ()
+    anchor_instrument_id: int | None = None
 
 
 @dataclass
@@ -264,9 +268,25 @@ def _fetch_transactions(
                 i.instrument_key, i.currency AS instrument_currency,
                 COALESCE(i.option_root, i.symbol) AS symbol,
                 i.symbol AS pricing_symbol, i.asset_type,
-                i.option_expiry, i.option_strike, i.option_type
+                i.option_expiry, i.option_strike, i.option_type,
+                tc.conversion_ratio AS ticker_change_ratio,
+                successor.instrument_id AS successor_instrument_id,
+                successor.instrument_key AS successor_instrument_key,
+                successor.currency AS successor_currency,
+                COALESCE(successor.option_root, successor.symbol) AS successor_symbol,
+                successor.symbol AS successor_pricing_symbol,
+                successor.asset_type AS successor_asset_type,
+                successor.option_expiry AS successor_option_expiry,
+                successor.option_strike AS successor_option_strike,
+                successor.option_type AS successor_option_type
           FROM transactions t
           LEFT JOIN instruments i ON i.instrument_id = t.instrument_id
+          LEFT JOIN instrument_ticker_change_sources source
+                 ON source.transaction_id = t.transaction_id
+          LEFT JOIN instrument_ticker_changes tc
+                 ON tc.ticker_change_id = source.ticker_change_id
+          LEFT JOIN instruments successor
+                 ON successor.instrument_id = tc.to_instrument_id
          WHERE (t.trade_date <= ? OR COALESCE(t.cash_effective_date, t.trade_date) <= ?)
            AND {canonical_sql}
            {account_sql}
@@ -275,6 +295,45 @@ def _fetch_transactions(
         (as_of, as_of, *account_params),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _fetch_ticker_lineages(
+    conn: sqlite3.Connection,
+) -> dict[int, tuple[str, tuple[str, ...]]]:
+    rows = conn.execute(
+        """
+        SELECT tc.from_instrument_id, tc.to_instrument_id, tc.effective_date,
+               old.instrument_key AS old_key, old.symbol AS old_symbol,
+               new.instrument_key AS new_key, new.symbol AS new_symbol
+          FROM instrument_ticker_changes tc
+          JOIN instruments old ON old.instrument_id = tc.from_instrument_id
+          JOIN instruments new ON new.instrument_id = tc.to_instrument_id
+         ORDER BY tc.effective_date, tc.ticker_change_id
+        """
+    ).fetchall()
+    predecessor = {int(row["to_instrument_id"]): int(row["from_instrument_id"]) for row in rows}
+    successor = {int(row["from_instrument_id"]): int(row["to_instrument_id"]) for row in rows}
+    details: dict[int, tuple[str, str]] = {}
+    for row in rows:
+        details[int(row["from_instrument_id"])] = (str(row["old_key"]), str(row["old_symbol"]))
+        details[int(row["to_instrument_id"])] = (str(row["new_key"]), str(row["new_symbol"]))
+    output: dict[int, tuple[str, tuple[str, ...]]] = {}
+    for instrument_id in details:
+        root = instrument_id
+        while root in predecessor:
+            root = predecessor[root]
+        chain: list[int] = []
+        current = root
+        while current in details and current not in chain:
+            chain.append(current)
+            if current not in successor:
+                break
+            current = successor[current]
+        root_key = details[root][0]
+        symbols = tuple(details[item][1] for item in chain)
+        for item in chain:
+            output[item] = (root_key, symbols)
+    return output
 
 
 def _fetch_reconciliation_results(
@@ -491,6 +550,7 @@ def _combine_security_states(states: list[_SecurityState]) -> _SecurityState:
     combined = copy.copy(primary)
     combined.quantity = sum(state.quantity for state in states)
     combined.position_movement = any(state.position_movement for state in states)
+    combined.cost_basis_stale = any(state.cost_basis_stale for state in states)
     combined.incomplete = True
     combined.warnings = {warning for state in states for warning in state.warnings}
     combined.warnings.add("duplicate_complete_position_scopes")
@@ -530,7 +590,10 @@ def _security_record(
     reconciliation_incomplete = False
     if state.anchor is not None:
         reconciliation_status, reconciliation_reason, reconciliation_incomplete = _result_quality(
-            reconciliation_results.get((state.anchor.snapshot_set_id, state.instrument_id)),
+            reconciliation_results.get((
+                state.anchor.snapshot_set_id,
+                state.anchor_instrument_id or state.instrument_id,
+            )),
             warnings,
         )
     else:
@@ -547,8 +610,11 @@ def _security_record(
         "institution_code": account["institution_code"],
         "institution_name": account["institution_name"],
         "instrument_key": state.instrument_key,
-        "holding_key": f"{state.account_id}|{state.instrument_key}|{state.currency}",
+        "holding_key": (
+            f"{state.account_id}|{state.lineage_key or state.instrument_key}|{state.currency}"
+        ),
         "symbol": state.symbol,
+        "ticker_symbols": list(state.ticker_symbols or (state.symbol,)),
         "_pricing_symbol": state.pricing_symbol,
         "asset_type": state.asset_type,
         "currency": state.currency,
@@ -567,8 +633,8 @@ def _security_record(
             if state.anchor is not None and state.source_snapshot_id is not None
             else None
         ),
-        "avg_cost": state.avg_cost if is_reported or not state.position_movement else None,
-        "book_value": state.book_value if is_reported or not state.position_movement else None,
+        "avg_cost": state.avg_cost if is_reported or not state.cost_basis_stale else None,
+        "book_value": state.book_value if is_reported or not state.cost_basis_stale else None,
         "market_price": state.market_price if is_reported else None,
         "market_value": state.market_value if is_reported else None,
         "unrealized_pnl": state.unrealized_pnl if is_reported else None,
@@ -795,6 +861,7 @@ def holdings_at(
             as_of=as_of,
             account_ids=allowed_accounts,
         )
+        ticker_lineages = _fetch_ticker_lineages(conn)
         position_results, cash_results = _fetch_reconciliation_results(
             conn,
             position_set_ids=[anchor.snapshot_set_id for anchor in position_anchors.values()],
@@ -836,6 +903,9 @@ def holdings_at(
             market_price=row["market_price"],
             market_value=row["market_value"],
             unrealized_pnl=row["unrealized_pnl"],
+            lineage_key=ticker_lineages.get(int(row["instrument_id"]), (None, ()))[0],
+            ticker_symbols=ticker_lineages.get(int(row["instrument_id"]), ("", ()))[1],
+            anchor_instrument_id=int(row["instrument_id"]),
         )
 
     for (account_id, currency, instrument_key), row in initial_positions.items():
@@ -860,6 +930,9 @@ def holdings_at(
                 initial_date=str(row["as_of_date"]),
                 anchor_quantity=float(row["quantity"]),
                 avg_cost=row["avg_cost"],
+                lineage_key=ticker_lineages.get(int(row["instrument_id"]), (None, ()))[0],
+                ticker_symbols=ticker_lineages.get(int(row["instrument_id"]), ("", ()))[1],
+                anchor_instrument_id=int(row["instrument_id"]),
             ),
         )
 
@@ -894,6 +967,68 @@ def holdings_at(
 
     for row in transactions:
         account_id = int(row["account_id"])
+        if row["successor_instrument_id"] is not None and row["trade_date"] <= as_of:
+            currency = str(row["instrument_currency"] or row["currency"])
+            instrument_key = str(row["instrument_key"])
+            scope_keys = _scope_candidates_for_security(
+                position_states,
+                position_anchors,
+                account_id=account_id,
+                currency=currency,
+                instrument_key=instrument_key,
+            )
+            for scope_key in scope_keys:
+                old_key = (account_id, currency, scope_key, instrument_key)
+                old_state = position_states.get(old_key)
+                if old_state is None:
+                    continue
+                floor = _state_floor(old_state)
+                if floor is not None and str(row["trade_date"]) <= floor:
+                    continue
+                moved = old_state.quantity
+                old_state.quantity = 0.0
+                old_state.position_movement = True
+                successor_key = str(row["successor_instrument_key"])
+                new_key = (account_id, currency, scope_key, successor_key)
+                new_state = position_states.get(new_key)
+                if new_state is None:
+                    successor_id = int(row["successor_instrument_id"])
+                    lineage = ticker_lineages.get(successor_id, (old_state.lineage_key, old_state.ticker_symbols))
+                    new_state = _SecurityState(
+                        account_id=account_id,
+                        currency=currency,
+                        scope_key=scope_key,
+                        instrument_id=successor_id,
+                        instrument_key=successor_key,
+                        symbol=str(row["successor_symbol"]),
+                        pricing_symbol=str(row["successor_pricing_symbol"]),
+                        asset_type=str(row["successor_asset_type"]),
+                        option_expiry=row["successor_option_expiry"],
+                        option_strike=row["successor_option_strike"],
+                        option_type=row["successor_option_type"],
+                        quantity=0.0,
+                        source_snapshot_id=old_state.source_snapshot_id,
+                        anchor=old_state.anchor,
+                        initial_date=old_state.initial_date,
+                        anchor_quantity=old_state.anchor_quantity,
+                        avg_cost=(
+                            old_state.avg_cost / float(row["ticker_change_ratio"])
+                            if old_state.avg_cost is not None
+                            else None
+                        ),
+                        book_value=old_state.book_value,
+                        lineage_key=lineage[0],
+                        ticker_symbols=lineage[1],
+                        anchor_instrument_id=(
+                            old_state.anchor_instrument_id or old_state.instrument_id
+                        ),
+                    )
+                    position_states[new_key] = new_state
+                new_state.quantity += moved * float(row["ticker_change_ratio"])
+                new_state.position_movement = True
+            # The source transaction is represented by the old -> new move;
+            # do not also treat generic name_change as a missing delta.
+            continue
         if row["instrument_id"] is not None and row["trade_date"] <= as_of:
             currency = str(row["instrument_currency"] or row["currency"])
             instrument_key = str(row["instrument_key"])
@@ -940,6 +1075,13 @@ def holdings_at(
                             initial_date=str(initial["as_of_date"]) if initial else None,
                             anchor_quantity=float(initial["quantity"]) if initial else 0.0,
                             avg_cost=initial["avg_cost"] if initial else None,
+                            lineage_key=ticker_lineages.get(
+                                int(row["instrument_id"]), (None, ())
+                            )[0],
+                            ticker_symbols=ticker_lineages.get(
+                                int(row["instrument_id"]), ("", ())
+                            )[1],
+                            anchor_instrument_id=int(row["instrument_id"]),
                         )
                         position_states[state_key] = state
                     floor = _state_floor(state)
@@ -952,6 +1094,7 @@ def holdings_at(
                     if abs(effect) > EPSILON:
                         state.quantity += effect
                         state.position_movement = True
+                        state.cost_basis_stale = True
 
         if row["instrument_id"] is None and row["txn_type"] in POSITION_AFFECTING_TYPES:
             transaction_currency = str(row["currency"])
@@ -1019,7 +1162,11 @@ def holdings_at(
     grouped_positions: dict[tuple[int, str, str], list[_SecurityState]] = defaultdict(list)
     for state in position_states.values():
         if abs(state.quantity) > EPSILON:
-            grouped_positions[(state.account_id, state.instrument_key, state.currency)].append(state)
+            grouped_positions[(
+                state.account_id,
+                state.lineage_key or state.instrument_key,
+                state.currency,
+            )].append(state)
     records = [
         _security_record(
             _combine_security_states(states),
