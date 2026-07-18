@@ -23,4 +23,5 @@ Activity in your account this period
 Beginning cash balance $500.00
 Oct 6 Sell BETA CORP (BBB) -2 30.00 60.00 560.00
 Oct 7 Buy CALL -100 BBB'26-US 20FE@35 1 2.00 -200.00 360.00
+Oct 20 Expiration PUT -100 BABA+$'25 JA@80 -10 0.00 360.00
 Ending cash balance $360.00

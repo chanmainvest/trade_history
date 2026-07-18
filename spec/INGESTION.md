@@ -34,9 +34,10 @@ discover path
   -> regenerate derived ingestion audit indexes
 ```
 
-The registered parsers are CIBC, HSBC, RBC, and TD, all currently reporting
-version `2.0.0`. The version bump intentionally invalidates active v1 cache
-entries, so a reviewed re-ingest can exercise the updated parser contract.
+The registered parsers are CIBC, HSBC, RBC, and TD. CIBC and RBC report
+`2.2.0`; HSBC and TD report `2.1.0`. Parser and resolver version changes
+intentionally invalidate older active cache entries so a reviewed re-ingest
+exercises the current extraction contract.
 
 ## Status and cache behavior
 
@@ -95,11 +96,15 @@ these deterministic steps:
 1. retain an explicit printed ticker or complete option contract;
 2. match an exact reviewed user alias or resolved reviewed fund lookup;
 3. match one unambiguous exact identity in the same statement's holdings; or
-4. retain an `unresolved_printed_identity` with zero confidence.
+4. mark the identity `unresolved_printed_identity` with zero confidence.
 
 It does not use the broad free-form name-to-ticker repair map. Transaction rows
 store the selected method/confidence and a resolution evidence link when a
-source span is available; instrument rows retain their identity provenance.
+source span is available. An unresolved transaction remains auditable with a
+null instrument; its printed-name token is never persisted as a ticker. An
+unresolved position is moved to quarantine and its complete scope is downgraded
+to `unknown`, because a checkpoint cannot safely identify that holding.
+Resolved instrument rows retain their identity provenance.
 `ledger ingest repair-symbols` remains a legacy/manual maintenance command for
 old derived data, but normal ingest no longer invokes it.
 
@@ -111,6 +116,12 @@ rebuilds generated position, cash, and statement-total results. The
 reconciliation rebuild replaces only its `recon:v1:*` derived rows; it never
 changes a source transaction, reported checkpoint, or balance. A limited scan
 still finishes this active-output maintenance rather than returning mid-command.
+
+If several PDFs describe the same account, period, and statement type, every
+source remains available in Verify. Derived initials, holdings, transaction
+lists, transfer pairing, and reconciliation use only the most recently
+persisted statement revision, so a duplicate/reissued PDF cannot double a
+movement.
 
 ## Logs
 

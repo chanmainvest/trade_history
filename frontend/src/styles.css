@@ -297,6 +297,7 @@ tbody tr:hover td { background: var(--row-hover); }
   table-layout: fixed;
   min-width: 1672px;
 }
+.transactions-table .txn-col-source { width: 42px; }
 .transactions-table .txn-col-date { width: 116px; }
 .transactions-table .txn-col-institution { width: 116px; }
 .transactions-table .txn-col-account { width: 158px; }
@@ -609,7 +610,6 @@ h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
   background: rgba(43,191,115,0.30);
   border-color: var(--accent-2);
 }
-.verify-box.related { border-color: var(--fg-dim); background: transparent; }
 .verify-box.selected {
   border-color: var(--warn);
   background: rgba(212,168,67,0.28);
@@ -774,6 +774,30 @@ h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
   height: 32px;
   padding: 0;
   border-radius: 4px;
+}
+.source-row-link {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  color: var(--accent-2);
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.source-row-link:hover,
+.source-row-link:focus-visible {
+  color: var(--fg);
+  border-color: var(--accent-2);
+  background: var(--bg-2);
+}
+.source-row-link svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .verify-date {
   font-variant-numeric: tabular-nums;

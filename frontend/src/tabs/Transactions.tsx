@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, TxnRow } from "../api";
 import { SmartSelect } from "../SmartSelect";
+import { SourceLink } from "../SourceLink";
 import { usePortfolio } from "../portfolio";
 import { useI18n } from "../i18n";
 
@@ -22,6 +23,7 @@ const MONEY_THRESHOLDS = [
 ];
 
 type TxnColumnKey =
+  | "source"
   | "date"
   | "institution"
   | "account"
@@ -43,6 +45,7 @@ type TxnColumnSpec = {
 };
 
 const TRANSACTION_COLUMN_SPECS: TxnColumnSpec[] = [
+  { key: "source", className: "txn-col-source", defaultWidth: 42, minWidth: 36, maxWidth: 56 },
   { key: "date", className: "txn-col-date", defaultWidth: 116, minWidth: 92, maxWidth: 180 },
   { key: "institution", className: "txn-col-institution", defaultWidth: 116, minWidth: 92, maxWidth: 220 },
   { key: "account", className: "txn-col-account", defaultWidth: 158, minWidth: 110, maxWidth: 260 },
@@ -68,7 +71,7 @@ function clampColumnWidth(key: TxnColumnKey, width: number) {
 }
 
 export default function Transactions() {
-  const { activeAccountIds, accounts } = usePortfolio();
+  const { activeAccountIds, accounts, config } = usePortfolio();
   const { t } = useI18n();
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
   const scrollSnapTimerRef = useRef<number | undefined>(undefined);
@@ -83,11 +86,16 @@ export default function Transactions() {
   const [columnWidths, setColumnWidths] = useState<Record<TxnColumnKey, number>>(
     () => ({ ...DEFAULT_TRANSACTION_COLUMN_WIDTHS }),
   );
+  const showSourceLinks = config?.show_source_links ?? true;
+  const visibleColumnSpecs = useMemo(
+    () => TRANSACTION_COLUMN_SPECS.filter((spec) => showSourceLinks || spec.key !== "source"),
+    [showSourceLinks],
+  );
 
-  const tableMinWidth = useMemo(() => TRANSACTION_COLUMN_SPECS.reduce(
+  const tableMinWidth = useMemo(() => visibleColumnSpecs.reduce(
     (totalWidth, columnSpec) => totalWidth + columnWidths[columnSpec.key],
     0,
-  ), [columnWidths]);
+  ), [columnWidths, visibleColumnSpecs]);
 
   const syncTransactionsHeaderHeight = () => {
     const node = tableWrapRef.current;
@@ -312,7 +320,7 @@ export default function Transactions() {
       <div className="card table-scroll transactions-table-wrap" ref={tableWrapRef} onScroll={scheduleTransactionsSnap}>
         <table className="transactions-table" style={{ minWidth: `${tableMinWidth}px` }}>
           <colgroup>
-            {TRANSACTION_COLUMN_SPECS.map((columnSpec) => (
+            {visibleColumnSpecs.map((columnSpec) => (
               <col
                 className={columnSpec.className}
                 key={columnSpec.key}
@@ -322,6 +330,7 @@ export default function Transactions() {
           </colgroup>
           <thead>
             <tr>
+              {showSourceLinks && <th aria-label={t("source.column")} />}
               {renderResizableHeader("date", t("th.date"))}
               {renderResizableHeader("institution", t("f.institution"))}
               {renderResizableHeader("account", t("th.account"))}
@@ -336,20 +345,34 @@ export default function Transactions() {
             </tr>
           </thead>
           <tbody>
-            {txnsQ.data?.rows.map((t: TxnRow) => (
-              <tr key={t.transaction_id}>
-                <td>{t.trade_date}</td>
-                <td>{t.institution_code}</td>
-                <td>{acctById[t.account_id] || t.account_number}</td>
-                <td>{t.txn_type}</td>
-                <td>{t.symbol ? <Link to={`/research/${t.symbol}`}>{t.symbol}</Link> : ""}</td>
-                <td>{t.option_type ? `${t.option_type} ${fmtNum(t.option_strike, 2)} ${t.option_expiry || ""}` : ""}</td>
-                <td className="num">{fmtNum(t.quantity, 0)}</td>
-                <td className="num">{fmtNum(t.price)}</td>
-                <td className={"num " + ((t.net_amount ?? 0) < 0 ? "neg" : "pos")}>{fmtNum(t.net_amount)}</td>
-                <td>{t.currency}</td>
+            {txnsQ.data?.rows.map((row: TxnRow) => (
+              <tr key={row.row_id}>
+                {showSourceLinks && (
+                  <td>
+                    {row.statement_id !== null && row.transaction_id !== null ? (
+                      <SourceLink
+                        source={{
+                          statement_id: row.statement_id,
+                          kind: "transaction",
+                          id: row.transaction_id,
+                        }}
+                        title={t("source.open_transaction")}
+                      />
+                    ) : null}
+                  </td>
+                )}
+                <td>{row.trade_date}</td>
+                <td>{row.institution_code}</td>
+                <td>{acctById[row.account_id] || row.account_number}</td>
+                <td>{row.txn_type === "initial_position" ? t("transaction.type.initial_position") : row.txn_type}</td>
+                <td>{row.symbol ? <Link to={`/research/${row.symbol}`}>{row.symbol}</Link> : ""}</td>
+                <td>{row.option_type ? `${row.option_type} ${fmtNum(row.option_strike, 2)} ${row.option_expiry || ""}` : ""}</td>
+                <td className="num">{fmtNum(row.quantity, 0)}</td>
+                <td className="num">{fmtNum(row.price)}</td>
+                <td className={"num " + ((row.net_amount ?? 0) < 0 ? "neg" : "pos")}>{fmtNum(row.net_amount)}</td>
+                <td>{row.currency}</td>
                 <td className="description-cell">
-                  {t.description}
+                  {row.description}
                 </td>
               </tr>
             ))}

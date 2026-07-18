@@ -1,6 +1,6 @@
 # Current state
 
-Implementation review: **2026-07-16**. The live-ledger counts below remain a
+Implementation review: **2026-07-17**. The live-ledger counts below remain a
 dated diagnostic snapshot from **2026-07-12**, not a release promise. Parser
 v2 and the reconciliation engine were validated in fixtures and read-only
 corpus audits on 2026-07-14. A new parser-v2 shadow ledger has been built and
@@ -17,9 +17,10 @@ over to it.
 - Ingestion stages one validated PDF source in a savepoint and activates it
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.
-- CIBC, HSBC, RBC, and TD parsers report version `2.0.0`. They retain source
-  page/line evidence, available word/box geometry, explicit snapshot scopes,
-  and quarantine rather than fabricate unsupported values.
+- CIBC and RBC report parser version `2.2.0`, HSBC reports `2.1.0`, and TD
+  reports `2.1.0`. They retain source page/line evidence, available word/box
+  geometry, explicit snapshot scopes, and quarantine rather than fabricate
+  unsupported values.
 - Monthly, Performance, and Visualisations now consume one read-only scoped
   holdings service. Monthly renders checkpoint/provenance, reported versus
   reconstructed/incomplete state, reconciliation, and stale/unpriced quality
@@ -28,6 +29,10 @@ over to it.
   position/cash/statement-total reconciliation results, and source-linked cash
   and summary-total rows. Its unresolved/incomplete/unreconciled filters are
   read-only. Legacy rows without v6 facts are shown as unavailable, not complete.
+- Transactions exposes initial-position anchors separately from broker events.
+  Transactions and Monthly can deep-link exact source rows into Verify; the
+  preference is controlled in Settings. Monthly no longer repeats a portfolio
+  column, and its tickers link to Research.
 - The CLI now has a guarded shadow build/compare/sign-off/cutover/rollback
   workflow. Building a shadow never changes the live ledger; cutover requires
   a signed local review report, a stopped backend acknowledgement, and an exact
@@ -66,6 +71,15 @@ over to it.
   canonical instruments, 3,382 transactions, 7,955 position snapshots, 625
   cash balances, and 9,789 reconciliation results. Its redacted comparison
   report is pending human source spot-check/sign-off; no cutover occurred.
+- On 2026-07-17, a disposable post-repair shadow parsed the same 338 PDFs with
+  CIBC/RBC `2.2.0`, HSBC `2.1.0`, and TD `2.1.0`. The PDF manifest was identical
+  before/after. It contains 548 statements, 657 instruments, 3,387
+  transactions, 6,665 position snapshots, 625 cash balances, 120 initial
+  positions, and 8,485 reconciliation results. Its referenced-symbol audit has
+  286 instrument/currency identities, zero reserved/invalid symbols, zero
+  `TO`/`FROM` instruments, zero negative reported non-option positions, and
+  zero reversed-sign equity buys/sells. This disposable build did not request
+  the two-build reproducibility check and was not signed off or cut over.
 
 ## Measured live ledger (2026-07-12)
 
@@ -108,6 +122,18 @@ over to it.
    incomplete sections remain `unknown`. Text-only extraction supplies stable
    page/line evidence, and `pdfplumber` extraction supplies available
    coordinates/words.
+5. **Unresolved printed names no longer become tickers.** CIBC account-transfer
+   direction tokens (`TO`/`FROM`) have no instrument, name-only identities must
+   resolve through reviewed/exact evidence before persistence, and unresolved
+   positions are quarantined with a non-clearing scope. HSBC column headers can
+   no longer become `CAD`/`USD` holdings.
+6. **Derived same-period statements are canonicalized.** Duplicate/reissued
+   PDFs remain verifiable, while initials, holdings, transaction lists, transfer
+   pairing, and reconciliation use the latest persisted revision once.
+7. **Holdings and performance have bounded state.** Complete checkpoint
+   omission cannot revive an obsolete initial position, and Performance stops
+   carrying an account after 90 days without a checkpoint. CAD/USD remain
+   separate native series.
 
 ## Confirmed remaining correctness work
 

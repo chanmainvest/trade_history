@@ -11,7 +11,10 @@ _MONEY_RE = re.compile(r"^\s*\$?\s*\(?-?[\d,]+(\.\d+)?\)?-?\s*$")
 def parse_money(s: str | None) -> float | None:
     if s is None:
         return None
-    raw = str(s).strip()
+    # Some PDF text layers use an en dash or the Unicode minus sign for a
+    # negative value.  Do not normalize an em dash: brokers also use it as an
+    # explicit blank-cell marker.
+    raw = str(s).strip().replace("\u2013", "-").replace("\u2212", "-")
     if not raw or raw in {"-", "--", "N/A", "n/a"}:
         return None
     if not _MONEY_RE.match(raw):

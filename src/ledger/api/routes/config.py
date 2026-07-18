@@ -11,7 +11,8 @@ Default shape::
       ],
       "active_portfolio": "all",
       "theme": "dark",
-      "hide_money": false
+      "hide_money": false,
+      "show_source_links": true
     }
 """
 from __future__ import annotations
@@ -32,6 +33,7 @@ _DEFAULT: dict = {
     "active_portfolio": "all",
     "theme": "dark",
     "hide_money": False,
+    "show_source_links": True,
     "language": "en",
 }
 
@@ -87,6 +89,12 @@ def put_config(payload: dict) -> dict:
                 raise HTTPException(status_code=400, detail=f"duplicate portfolio id {p['id']}")
             seen.add(p["id"])
             p.setdefault("account_ids", [])
+    if "show_source_links" in payload and not isinstance(
+        payload["show_source_links"], bool
+    ):
+        raise HTTPException(
+            status_code=400, detail="show_source_links must be a boolean"
+        )
     cur = _read()
     cur.update(payload)
     cur.pop("display_currency", None)

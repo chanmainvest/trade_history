@@ -8,12 +8,20 @@ Nov 1 Opening Cash Balance $1,000.00
 Nov 2 Bought ALPHA CORP (AAA/TSX) 10 20.00 -200.00
 Nov 3 Sold BETA CORP (BBB/TSX) -5 30.00 150.00
 Nov 4 Dividend ALPHA CORP (AAA/TSX) 10 5.00 50.00
+Nov 6 Transfer TO 9999999999 — — -50.00
+REFERENCE 123456 | FUND CLASS F | date activity description quantity price amount
+Nov 7 Transfer FROM 9999999999 — — 13.10
+Nov 8 Transfer ALPHA CORP (AAA/TSX) 25 — —
+Nov 9 Transfer PUT .XYZ DEC 15 2023 90 –3 — —
 Account Activity — Canadian Dollars (continued)
 Nov 30 Closing Cash Balance $1,000.00
 
 Account Activity — U.S. Dollars
 Nov 1 Opening Cash Balance $500.00
 Nov 5 Bought CALL .XYZ DEC 15 2023 100 2 1.500 -$300.00
+Nov 8 Bought GAMMA CORP (GAM/NYSE) 12,895.048 13.760 –$177,441.02
+Nov 9 Expired PUT .RIO DEC 17 2021 60 20 — —
+Nov 10 Expired CALL .ABC DEC 17 2021 20 — —
 Nov 30 Closing Cash Balance $200.00
 
 Portfolio Assets — Canadian Dollars

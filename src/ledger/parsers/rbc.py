@@ -86,7 +86,7 @@ RE_RBC_OPT_POS = re.compile(
 
 # Activity option line e.g. "PUT .NTR 09/20/24 75 8" (assignment)
 RE_RBC_OPT_TXN = re.compile(
-    r"\b(CALL|PUT)\s+\.?([A-Z]{1,6})\s+(\d{2}/\d{2}/\d{2})\s+(\d+(?:\.\d+)?)\s+(-?\d+)"
+    r"\b(CALL|PUT)\s+\.?([A-Z]{1,6})\s+(\d{2}/\d{2}/\d{2})\s+(\d+(?:\.\d+)?)\s+(-?\d[\d,]*-?)"
 )
 
 ACT_VERBS = {
@@ -561,6 +561,8 @@ def _parse_activity(body: str, currency: str, year: int,
                     instrument = ParsedInstrument(
                         asset_type="equity", symbol=sym,
                         currency=currency, name=cleaned[:120],
+                        resolution_method="unresolved_printed_identity",
+                        resolution_confidence=0.0,
                     )
 
         stmt.transactions.append(ParsedTxn(
@@ -588,7 +590,7 @@ def _parse_activity(body: str, currency: str, year: int,
 # ----------------------------------------------------------------- Parser
 class RBCParser:
     NAME = "rbc"
-    VERSION = "2.0.0"
+    VERSION = "2.2.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "RBC Invest Direct":

@@ -9,7 +9,7 @@ it updates preferences in JSON, not SQLite.
 | Prefix | Routes | Consumer/purpose |
 |---|---|---|
 | root | `GET /health` | liveness and app identity |
-| `/transactions` | list, accounts, symbols, transaction types, latest date | Transactions/filter controls |
+| `/transactions` | list (including read-only opening positions), accounts, referenced symbols, transaction types, latest date | Transactions/filter controls |
 | `/monthly` | `GET /snapshot`, `GET /diff` | canonical point-in-time holdings and comparison |
 | `/performance` | `GET /total`, `GET /cash` | canonical holdings value series and reported cash checkpoints |
 | `/research` | `GET /prices`, `/trades`, `/financials` | security research |
@@ -22,10 +22,12 @@ reconciliation-rebuild endpoints in the current route set.
 
 ## Tabs
 
-1. Transactions: filterable ledger events.
-2. Monthly: snapshot/date comparison and native/converted totals.
-3. Performance: value/cash history.
-4. Research: price, trade, and fundamental detail.
+1. Transactions: filterable ledger events and explicit opening positions.
+2. Monthly: snapshot/date comparison and native/converted totals; the active
+   portfolio comes from the top-bar selector.
+3. Performance: native-currency value/cash history with bounded forward fill.
+4. Research: price, trade, and fundamental detail; moving averages use full
+   fetched history before the visible period is clipped.
 5. Visualisations: holdings treemap, correlation, and RRG.
 6. Verify extraction: PDF.js rendering with `pdfplumber` text-line boxes,
    parsed transaction/position/cash/summary/quarantine lists, scope
@@ -50,6 +52,9 @@ cash, summary-total, and quarantine evidence text. Repeated text can match
 multiple boxes; legacy rows with no recorded source text remain visibly
 unlinked. A legacy database without v6 scope/reconciliation tables returns
 explicitly empty quality facts rather than treating those facts as complete.
+`/verify?statement=<id>&ref=<kind>:<id>` selects a persisted row and waits for
+its PDF page to render before scrolling. Only boxes containing that exact
+reference receive selected styling.
 
 ## Configuration shape
 
@@ -59,6 +64,7 @@ explicitly empty quality facts rather than treating those facts as complete.
   "active_portfolio": "all",
   "theme": "dark",
   "hide_money": false,
+  "show_source_links": true,
   "language": "en"
 }
 ```
@@ -74,7 +80,8 @@ checkpoints, applies normalized position/cash movements afterward, and never
 writes SQLite. Monthly rows include a stable `holding_key` made from account,
 canonical instrument key, and currency; diff rows use the same identity.
 
-Each holdings row also returns checkpoint statement/scope identifiers,
+Each holdings row also returns checkpoint statement/scope identifiers, an
+optional exact `source_ref` (or checkpoint reference for reconstructed rows),
 reported-versus-reconstructed state, reconciliation status/reason, price/date
 status, and quality warnings. Monthly renders checkpoint date, holding state,
 reconciliation state, and compact incomplete/reconciliation/pricing warnings.
@@ -87,4 +94,7 @@ and rate date.
 - Add translated strings in `frontend/src/i18n.tsx`.
 - Use CSS variables for theme colors and `plotlyTheme()` for charts.
 - Keep account filtering consistent with the active portfolio.
+- Source icons in Transactions and Monthly obey `show_source_links`; they deep
+  link to the persisted extraction row and are absent when no defensible source
+  reference exists.
 - A frontend change must pass `npm run build`.

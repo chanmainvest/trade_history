@@ -43,7 +43,7 @@ export const api = {
     getJSON<{ a: string; b: string; rows: DiffRow[] }>("/monthly/diff", p),
 
   perfTotal: (p: Record<string, any> = {}) =>
-    getJSON<{ rows: { as_of_date: string; market_value: number; currency: string }[] }>(
+    getJSON<{ rows: { as_of_date: string; market_value: number; currency: string }[]; forward_fill_max_days: number | null }>(
       "/performance/total", p),
   perfCash: (p: Record<string, any> = {}) =>
     getJSON<{ rows: { as_of_date: string; currency: string; closing_balance: number }[] }>(
@@ -76,7 +76,11 @@ export const api = {
 };
 
 export type TxnRow = {
-  transaction_id: number;
+  row_kind: "transaction" | "initial_position";
+  row_id: string;
+  transaction_id: number | null;
+  initial_id: number | null;
+  statement_id: number | null;
   trade_date: string;
   settle_date: string | null;
   txn_type: string;
@@ -126,6 +130,7 @@ export type HoldingRow = {
   option_strike: number | null;
   option_type: string | null;
   quantity: number;
+  source_ref: SourceRef | null;
   avg_cost: number | null;
   book_value: number | null;
   market_price: number | null;
@@ -186,6 +191,7 @@ export type UserConfig = {
   active_portfolio: string;
   theme: "dark" | "light";
   hide_money: boolean;
+  show_source_links: boolean;
   /** UI language: en, zh-HK (HK Trad.), zh-TW (TW Trad.), zh-CN (Simplified). */
   language?: "en" | "zh-HK" | "zh-TW" | "zh-CN";
 };
@@ -218,6 +224,13 @@ export type StatementRow = {
   unreconciled_count: number;
   incomplete_reconciliation_count: number;
   quality_flags: StatementQualityFlag[];
+};
+
+export type SourceRef = {
+  statement_id: number;
+  kind: "transaction" | "position" | "cash" | "summary" | "quarantine";
+  id: number;
+  checkpoint?: boolean;
 };
 
 export type StatementQualityFlag = "unresolved" | "incomplete" | "unreconciled";

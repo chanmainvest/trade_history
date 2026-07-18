@@ -1,7 +1,7 @@
 # HSBC parser
 
 Implementation: `src/ledger/parsers/hsbc.py`, parser name `hsbc`, current
-version `2.0.0`.
+version `2.1.0`.
 
 ## Recognition and account shape
 
@@ -20,6 +20,9 @@ a continued account page does not create a duplicate account-period statement.
 - The state machine tracks account, currency, holdings/activity section, and
   continuation rows. It preserves compact option contracts and printed/
   parenthesized holding symbols.
+- Repeated holdings column headers such as `Description Quantity ... (CAD)` are
+  skipped before row parsing, so `CAD`/`USD` header labels cannot become
+  position tickers.
 - Parentheses and trailing-negative money text flow through the shared money
   parser. A cash scope is complete only with a valid printed closing balance;
   invalid quantities, cash values, or unclaimed numeric rows are quarantined

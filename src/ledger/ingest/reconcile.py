@@ -15,6 +15,7 @@ from ..quantity import (
     normalized_position_delta,
     quantity_delta,
 )
+from ..statement_selection import canonical_statement_clause
 
 TRANSFER_TYPES = {"transfer_in", "transfer_out", "journal"}
 AUTO_TRANSFER_NOTE_RE = re.compile(r"auto: matched transfer transactions (\d+) <-> (\d+)")
@@ -139,7 +140,7 @@ def link_transfers(
     with sqlite_db.session(db_path) as conn:
         cleared = _clear_auto_transfer_links(conn)
         rows = conn.execute(
-            """
+            f"""
             SELECT t.transaction_id, t.account_id, t.trade_date, t.txn_type,
                    t.instrument_id, i.instrument_key, t.quantity, t.position_delta,
                    t.net_amount, t.cash_delta, t.currency, t.description
@@ -147,6 +148,7 @@ def link_transfers(
               LEFT JOIN instruments i ON i.instrument_id = t.instrument_id
              WHERE txn_type IN ('transfer_in', 'transfer_out', 'journal')
                AND counterpart_txn_id IS NULL
+               AND {canonical_statement_clause("t.statement_id")}
              ORDER BY trade_date, transaction_id
             """
         ).fetchall()
@@ -242,7 +244,7 @@ def rebuild_position_transaction_links(path: Path | str | None = None) -> dict:
     with sqlite_db.session(db_path) as conn:
         conn.execute("DELETE FROM position_transaction_links")
         snapshots = conn.execute(
-            """
+            f"""
             SELECT ps.snapshot_id, ps.account_id, ps.instrument_id, ps.as_of_date,
                    ps.statement_id, ps.currency, i.instrument_key
               FROM position_snapshots ps
@@ -250,6 +252,7 @@ def rebuild_position_transaction_links(path: Path | str | None = None) -> dict:
               JOIN snapshot_sets ss ON ss.snapshot_set_id = ps.snapshot_set_id
              WHERE ss.section_type = 'positions'
                AND ss.completeness = 'complete'
+               AND {canonical_statement_clause("ps.statement_id")}
              ORDER BY ps.account_id, i.instrument_key, ps.currency,
                       ps.as_of_date, ps.statement_id, ps.snapshot_id
             """
@@ -277,6 +280,7 @@ def rebuild_position_transaction_links(path: Path | str | None = None) -> dict:
                  WHERE t.account_id = ?
                    AND i.instrument_key = ?
                    AND t.trade_date <= ?
+                   AND {canonical_statement_clause("t.statement_id")}
                    {previous_clause}
                  ORDER BY trade_date, transaction_id
                 """,
@@ -420,7 +424,7 @@ def _position_components(
     current_checkpoint: str,
 ) -> tuple[list[tuple[int, float]], int]:
     rows = conn.execute(
-        """
+        f"""
         SELECT t.transaction_id, t.txn_type, t.quantity, t.position_delta
           FROM transactions t
           JOIN instruments i ON i.instrument_id = t.instrument_id
@@ -428,6 +432,7 @@ def _position_components(
            AND i.instrument_key = ?
            AND t.trade_date > ?
            AND t.trade_date <= ?
+           AND {canonical_statement_clause("t.statement_id")}
          ORDER BY t.trade_date, t.transaction_id
         """,
         (account_id, instrument_key, prior_checkpoint, current_checkpoint),
@@ -463,6 +468,7 @@ def _unresolved_position_effect_count(
            AND t.trade_date > ?
            AND t.trade_date <= ?
            AND t.txn_type IN ({placeholders})
+           AND {canonical_statement_clause("t.statement_id")}
         """,
         (
             account_id,
@@ -477,12 +483,13 @@ def _unresolved_position_effect_count(
 
 def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
     scopes = conn.execute(
-        """
+        f"""
         SELECT ss.snapshot_set_id, ss.statement_id, ss.account_id, ss.as_of_date,
                ss.currency, ss.scope_key, ss.completeness, s.ingestion_run_id
           FROM snapshot_sets ss
           JOIN statements s ON s.statement_id = ss.statement_id
          WHERE ss.section_type = 'positions'
+           AND {canonical_statement_clause("ss.statement_id")}
          ORDER BY ss.account_id, ss.currency, ss.scope_key, ss.as_of_date,
                   ss.statement_id, ss.snapshot_set_id
         """
@@ -685,14 +692,15 @@ def _cash_components(
     falls back to the trade date for legacy rows.
     """
     rows = conn.execute(
-        """
-        SELECT transaction_id, txn_type, cash_delta, net_amount
-          FROM transactions
-         WHERE account_id = ?
-           AND currency = ?
-           AND COALESCE(cash_effective_date, trade_date) >= ?
-           AND COALESCE(cash_effective_date, trade_date) <= ?
-         ORDER BY COALESCE(cash_effective_date, trade_date), transaction_id
+        f"""
+        SELECT t.transaction_id, t.txn_type, t.cash_delta, t.net_amount
+          FROM transactions t
+         WHERE t.account_id = ?
+           AND t.currency = ?
+           AND COALESCE(t.cash_effective_date, t.trade_date) >= ?
+           AND COALESCE(t.cash_effective_date, t.trade_date) <= ?
+           AND {canonical_statement_clause("t.statement_id")}
+         ORDER BY COALESCE(t.cash_effective_date, t.trade_date), t.transaction_id
         """,
         (account_id, currency, period_start, period_end),
     ).fetchall()
@@ -711,13 +719,14 @@ def _cash_components(
 
 def _reconcile_cash_scopes(conn: sqlite3.Connection) -> dict[str, int]:
     scopes = conn.execute(
-        """
+        f"""
         SELECT ss.snapshot_set_id, ss.statement_id, ss.account_id, ss.as_of_date,
                ss.currency, ss.scope_key, ss.completeness, s.period_start,
                s.period_end, s.ingestion_run_id
           FROM snapshot_sets ss
           JOIN statements s ON s.statement_id = ss.statement_id
          WHERE ss.section_type = 'cash'
+           AND {canonical_statement_clause("ss.statement_id")}
          ORDER BY ss.account_id, ss.currency, ss.scope_key, ss.as_of_date,
                   ss.statement_id, ss.snapshot_set_id
         """
@@ -850,13 +859,14 @@ def _reconcile_cash_scopes(conn: sqlite3.Connection) -> dict[str, int]:
 
 def _reconcile_statement_totals(conn: sqlite3.Connection) -> dict[str, int]:
     scopes = conn.execute(
-        """
+        f"""
         SELECT ss.snapshot_set_id, ss.statement_id, ss.account_id, ss.as_of_date,
                ss.currency, ss.section_type, ss.scope_key, ss.completeness,
                ss.reported_total, s.ingestion_run_id
           FROM snapshot_sets ss
           JOIN statements s ON s.statement_id = ss.statement_id
          WHERE ss.reported_total IS NOT NULL
+           AND {canonical_statement_clause("ss.statement_id")}
          ORDER BY ss.statement_id, ss.snapshot_set_id
         """
     ).fetchall()

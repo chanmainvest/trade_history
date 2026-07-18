@@ -36,6 +36,7 @@ def test_hsbc_two_account_split_holdings_activity_and_cash():
         ("positions", "complete"),
     }
     assert buy.source_span and buy.source_span.page_number == 1
+    assert all(row.instrument.symbol not in {"CAD", "USD"} for row in cad.positions)
     assert validate_parse_result(result).is_valid
 
 

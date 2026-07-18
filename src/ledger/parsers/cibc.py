@@ -80,6 +80,23 @@ RE_OPT_TXN = re.compile(
     r"(\d+(?:\.\d+)?)\s+(-?\d[\d,]*)\s+(\d+(?:\.\d+)?)\s+(-?\$?[\d,]+\.\d+)"
 )
 
+# Unpriced option events print the strike and, when present, the contract
+# quantity followed by two blank-cell em dashes:
+#   Expired PUT RIO DEC 17 2021 60 20 — —
+# A row with only one number before the dashes contains a strike but no printed
+# quantity; the optional group deliberately remains None in that case.
+RE_OPT_EVENT = re.compile(
+    r"\b(Expired|Exercised|Assigned|Expire|Exercise|Assign)\s+"
+    r"(CALL|PUT)\s+\.?([A-Z]{1,6})\s+([A-Z]{3})\s+(\d{1,2})\s+(\d{4})\s+"
+    r"(\d+(?:\.\d+)?)(?:\s+(-?\d[\d,]*))?(?:\s+—){1,2}\s*$"
+)
+
+# In-kind transfers have a printed quantity but blank price/amount cells.
+# Match the quantity immediately before those explicit blank markers.
+RE_UNPRICED_QUANTITY = re.compile(
+    r"(-?\d[\d,]*(?:\.\d+)?)(?:\s+—){1,2}\s*$"
+)
+
 # Stock txn (last three numbers on the activity line):
 #   Bought RBB FD INC                    3,600  48.009  -$172,838.55
 #   Sold NEWMONT CORPORATION            -2,000  37.484   $74,960.73
@@ -350,6 +367,8 @@ def _instr_from_desc(desc: str, currency: str) -> ParsedInstrument:
     atype = "mutual_fund" if "FUND" in desc.upper() else "equity"
     return ParsedInstrument(
         asset_type=atype, symbol=sym, currency=currency, name=desc.strip()[:120],
+        resolution_method="unresolved_printed_identity",
+        resolution_confidence=0.0,
     )
 
 
@@ -369,6 +388,10 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
         if not s:
             continue
 
+        # CIBC uses an en dash as a minus sign on some activity amounts.  Keep
+        # the original line for provenance, but match against normalized text.
+        match_s = s.replace("\u2013", "-").replace("\u2212", "-")
+
         # Stop at footer/section break markers.
         if s.startswith("account #") or s.startswith("Disclosures") or s.startswith("HRI-"):
             continue
@@ -378,7 +401,7 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
             continue
 
         # Detect a leading 'Mon DD' date.
-        dm = RE_DATE_PREFIX.match(s)
+        dm = RE_DATE_PREFIX.match(match_s)
         if dm:
             mon, day = dm.group(1), dm.group(2)
             try:
@@ -386,7 +409,7 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                 trade_date = date(year, _MONTH_NAMES[mon], int(day)).isoformat()
             except (KeyError, ValueError):
                 trade_date = None
-            rest = s[dm.end():].strip()
+            rest = match_s[dm.end():].strip()
 
             # Opening / Closing cash balance rows
             low = rest.lower()
@@ -454,6 +477,30 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                 ))
                 continue
 
+            event = RE_OPT_EVENT.search(rest)
+            if event:
+                verb, cp, root, mon3, dd, yr, strike_s, qty_s = event.groups()
+                expiry = _opt_expiry(mon3, dd, yr)
+                instr = _make_option_instrument(
+                    root=root, expiry=expiry or "", strike=float(strike_s),
+                    cp=cp, currency=currency,
+                )
+                qty = parse_money(qty_s)
+                if qty is None:
+                    stmt.quarantine.append(ParsedQuarantine(
+                        raw_line=ln,
+                        reason="option event has no printed contract quantity",
+                    ))
+                stmt.transactions.append(ParsedTxn(
+                    trade_date=trade_date or "", settle_date=None,
+                    txn_type=_classify_activity(verb, rest) or "option_expiration",
+                    instrument=instr, quantity=qty, price=None,
+                    gross_amount=None, commission=None, other_fees=None,
+                    net_amount=None, currency=currency,
+                    description=rest, raw_line=ln,
+                ))
+                continue
+
             # Stock / dividend / fee / interest line: extract trailing numbers.
             verb_match = re.match(
                 r"(Bought|Sold|Dividend|Distribution|Tax|Interest|Expired|Expire|"
@@ -473,8 +520,12 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                     amount = parse_money(tail.group(3)) if tail.group(3) not in {"—", "-"} else None
                     desc = desc_and_nums[:tail.start()].strip()
                 else:
+                    unpriced = RE_UNPRICED_QUANTITY.search(desc_and_nums)
+                    if unpriced:
+                        qty = parse_money(unpriced.group(1))
+                        desc = desc_and_nums[:unpriced.start()].strip()
                     # 2-number tail (qty + amount, no price; common for dividends)
-                    m2 = re.search(
+                    m2 = None if unpriced else re.search(
                         r"(-?\$?[\d,]+(?:\.\d+)?)\s+(-?\$?[\d,]+(?:\.\d+)?)\s*$",
                         desc_and_nums,
                     )
@@ -486,7 +537,7 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                         if q not in {"—", "-"}:
                             qty = parse_money(q)
                         desc = desc_and_nums[:m2.start()].strip()
-                    else:
+                    elif not unpriced:
                         m1 = re.search(r"(-?\$?[\d,]+(?:\.\d+)?)\s*$", desc_and_nums)
                         if m1:
                             amount = parse_money(m1.group(1))
@@ -510,6 +561,12 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                 if txn_type in {"interest_income", "interest_expense", "fee",
                                 "deposit", "withdrawal", "adjustment", "journal"}:
                     instr = None
+                # Account-to-account cash transfers print TO/FROM followed by
+                # an account number. Those direction words are not tickers.
+                if txn_type in {"transfer_in", "transfer_out"} and re.match(
+                    r"^(?:TO|FROM)\s+\d", desc, re.IGNORECASE
+                ):
+                    instr = None
 
                 stmt.transactions.append(ParsedTxn(
                     trade_date=trade_date or "", settle_date=None, txn_type=txn_type,
@@ -524,13 +581,10 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
             stmt.quarantine.append((ln, "unrecognized activity row"))
             continue
 
-        # Continuation line (no leading date) — append to last txn description.
-        if stmt.transactions:
-            last = stmt.transactions[-1]
-            extra = s
-            last.description = (last.description or "") + " | " + extra
-            last.raw_line = (last.raw_line or "") + "\n" + ln
-        elif re.search(r"\d", s):
+        # A no-date line cannot be assigned to the preceding transaction
+        # defensibly. Keep activity-like evidence in quarantine instead of
+        # contaminating that transaction's description and source geometry.
+        if re.search(r"\d", s):
             stmt.quarantine.append(ParsedQuarantine(
                 raw_line=ln,
                 reason="unclaimed activity-like row",
@@ -641,7 +695,7 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
 # ----------------------------------------------------------------- Parser
 class CIBCParser:
     NAME = "cibc"
-    VERSION = "2.0.0"
+    VERSION = "2.2.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name.startswith("CIBC "):

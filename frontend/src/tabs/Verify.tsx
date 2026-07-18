@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import * as pdfjsLib from "pdfjs-dist";
+import { useSearchParams } from "react-router-dom";
 // Bundle the worker through Vite so no external fetch is needed.
 import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
@@ -41,12 +42,31 @@ function boxIndexForRefs(pages: StatementBoxes["pages"]): Map<SelectedKey, { pag
 
 export default function Verify() {
   const { t } = useI18n();
+  const [searchParams] = useSearchParams();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedKey, setSelectedKey] = useState<SelectedKey | null>(null);
   const [dateFilter, setDateFilter] = useState("");
   const [bankFilter, setBankFilter] = useState("");
   const [acctFilter, setAcctFilter] = useState("");
   const [qualityFilters, setQualityFilters] = useState<StatementQualityFlag[]>([]);
+
+  useEffect(() => {
+    const statementId = Number(searchParams.get("statement"));
+    const ref = searchParams.get("ref");
+    if (
+      Number.isInteger(statementId)
+      && statementId > 0
+      && ref
+      && /^(transaction|position|cash|summary|quarantine):\d+$/.test(ref)
+    ) {
+      setDateFilter("");
+      setBankFilter("");
+      setAcctFilter("");
+      setQualityFilters([]);
+      setSelectedId(statementId);
+      setSelectedKey(ref);
+    }
+  }, [searchParams]);
 
   // Statement picker list + client-side filters.
   const listQ = useQuery({ queryKey: ["statements-all"], queryFn: () => api.statements(2000) });
@@ -243,6 +263,8 @@ function VerifyPane({
   // Refs to each page container so we can scrollIntoView on select.
   const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const pdfScrollRef = useRef<HTMLDivElement | null>(null);
+  const lastScrolledSelection = useRef("");
+  const [renderRevision, setRenderRevision] = useState(0);
 
   const data: StatementBoxes | undefined = boxesQ.data;
   const firstBoxByRef = useMemo(
@@ -253,10 +275,13 @@ function VerifyPane({
   // When the selected key changes, scroll the PDF to the first matching box.
   useEffect(() => {
     if (!selectedKey || !data) return;
+    const selection = `${statementId}:${selectedKey}`;
+    if (lastScrolledSelection.current === selection) return;
     const loc = firstBoxByRef.get(selectedKey);
     if (!loc) return;
     const el = pageRefs.current[loc.page];
     if (el) {
+      lastScrolledSelection.current = selection;
       const topPx = loc.top * RENDER_SCALE;
       el.scrollIntoView({ behavior: "smooth", block: "start" });
       // fine-tune so the box isn't flush against the top edge.
@@ -264,7 +289,7 @@ function VerifyPane({
         pdfScrollRef.current.scrollBy({ top: topPx - 24, behavior: "smooth" });
       }
     }
-  }, [selectedKey, firstBoxByRef, data]);
+  }, [selectedKey, firstBoxByRef, data, renderRevision, statementId]);
 
   if (boxesQ.isLoading) return <p className="muted">{t("viz.loading")}</p>;
   if (boxesQ.error) {
@@ -291,6 +316,7 @@ function VerifyPane({
             selectedKey={selectedKey}
             onSelect={onSelect}
             pageRefs={pageRefs}
+            onPageRendered={() => setRenderRevision((revision) => revision + 1)}
           />
         ) : <p className="muted">{t("verify.no_pdf")}</p>}
       </div>
@@ -378,6 +404,7 @@ function PdfView({
   selectedKey,
   onSelect,
   pageRefs,
+  onPageRendered,
 }: {
   url: string;
   pageCount: number;
@@ -386,6 +413,7 @@ function PdfView({
   selectedKey: SelectedKey | null;
   onSelect: (k: SelectedKey | null) => void;
   pageRefs: React.MutableRefObject<Record<number, HTMLDivElement | null>>;
+  onPageRendered: () => void;
 }) {
   const { t } = useI18n();
   const [doc, setDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
@@ -425,7 +453,10 @@ function PdfView({
           selectedKey={selectedKey}
           onSelect={onSelect}
           pageRef={(el) => { pageRefs.current[n] = el; }}
-          onRendered={() => setRenderedCount((c) => Math.max(c, n))}
+          onRendered={() => {
+            setRenderedCount((c) => Math.max(c, n));
+            onPageRendered();
+          }}
         />
       ))}
       {renderedCount < pageCount && (
@@ -522,12 +553,9 @@ function BoxDiv({
 }) {
   const [x0, top, x1, bottom] = line.bbox;
   const selected = line.refs.some((r) => selectedKey === refKey(r.kind, r.id));
-  const related = !selected && selectedKey !== null &&
-    line.refs.some((r) => selectedKey !== refKey(r.kind, r.id));
 
   const cls = ["verify-box"];
   if (selected) cls.push("selected");
-  else if (related) cls.push("related");
 
   function onClick(e: React.MouseEvent) {
     e.stopPropagation();

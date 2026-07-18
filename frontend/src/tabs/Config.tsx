@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { usePortfolio } from "../portfolio";
-import { api, Portfolio } from "../api";
+import { Portfolio } from "../api";
+import { useI18n } from "../i18n";
 
 function makeId(name: string, existing: string[]): string {
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "p";
@@ -11,7 +12,8 @@ function makeId(name: string, existing: string[]): string {
 }
 
 export default function Config() {
-  const { config, accounts, activePortfolio, savePortfolios } = usePortfolio();
+  const { config, accounts, savePortfolios, saveConfig } = usePortfolio();
+  const { t } = useI18n();
   const [newName, setNewName] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<Portfolio | null>(null);
@@ -57,6 +59,18 @@ export default function Config() {
   return (
     <>
       <h2>Portfolios</h2>
+
+      <div className="card">
+        <h3>{t("settings.extraction_links")}</h3>
+        <label>
+          <input
+            type="checkbox"
+            checked={config.show_source_links}
+            onChange={(event) => saveConfig({ show_source_links: event.target.checked })}
+          />&nbsp;{t("settings.show_source_links")}
+        </label>
+        <p className="muted">{t("settings.show_source_links_help")}</p>
+      </div>
 
       <div className="card">
         <p className="muted" style={{ marginTop: 0 }}>

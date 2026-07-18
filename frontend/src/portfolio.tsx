@@ -32,6 +32,7 @@ const DEFAULT_CFG: UserConfig = {
   active_portfolio: "all",
   theme: "dark",
   hide_money: false,
+  show_source_links: true,
   language: "en",
 };
 

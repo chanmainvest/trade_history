@@ -15,6 +15,12 @@ function isoDaysAgo(days: number) {
   return d.toISOString().slice(0, 10);
 }
 function todayISO() { return new Date().toISOString().slice(0, 10); }
+function interpolate(text: string, values: Record<string, string>): string {
+  return Object.entries(values).reduce(
+    (result, [key, value]) => result.replaceAll(`{${key}}`, value),
+    text,
+  );
+}
 function periodStart(p: Period): string {
   switch (p) {
     case "1d": return isoDaysAgo(1);
@@ -170,7 +176,7 @@ export default function Performance() {
       </div>
 
       <div className="card">
-        <h3>Total portfolio value{(normalize || hideMoney) ? " — % change" : ""}</h3>
+        <h3>{t("performance.native_value")}{(normalize || hideMoney) ? " — % change" : ""}</h3>
         <Plot
           data={Array.from(seriesByCcy.entries()).map(([ccy, s]) => ({
             type: "scatter", name: ccy,
@@ -195,9 +201,9 @@ export default function Performance() {
           useResizeHandler
         />
         <p className="muted" style={{ marginBottom: 0 }}>
-          Securities and cash are forward-filled from each account's latest
-          statement checkpoints to remove the saw-tooth that arose from
-          accounts publishing on different calendars.
+          {interpolate(t("performance.forward_fill_note"), {
+            days: String(totalQ.data?.forward_fill_max_days ?? 90),
+          })}
         </p>
       </div>
 

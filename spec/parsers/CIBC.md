@@ -1,7 +1,7 @@
 # CIBC parser
 
 Implementation: `src/ledger/parsers/cibc.py`, parser name `cibc`, current
-version `2.0.0`.
+version `2.2.0`.
 
 ## Recognition and account shape
 
@@ -18,11 +18,21 @@ separate positions and cash snapshot scopes.
 
 - English month ranges establish the period; Canadian/U.S. headings switch the
   current currency and portfolio/activity section.
-- Activity continuation lines extend the current transaction. Repeated headers
-  and known footers are ignored rather than treated as verbs.
+- A no-date activity line is never assigned blindly to the preceding
+  transaction. Numeric/activity-like lines are quarantined, which keeps page
+  headers and unrelated fund/corporate-action text out of transfer evidence.
+- Account-transfer direction words followed by an account number (`TO` and
+  `FROM`) are not instruments or tickers.
+- An en dash immediately before a money value is normalized as a negative
+  sign, while an em dash remains a blank-cell marker. In-kind transfer and
+  unpriced option-event quantities are read from the printed cell before those
+  markers. If an option event prints only a strike, its quantity remains null
+  and the row is quarantined for review.
 - Equity tickers can be parenthesized; options retain CIBC's printed
   `CALL/PUT .ROOT MON DD YYYY STRIKE` identity. Mutual funds can remain
-  printed-name instruments pending a reviewed fund-code lookup.
+  printed-name identities pending a reviewed fund-code lookup. The staged
+  resolver either proves the identity or removes the pseudo-token before
+  persistence.
 - A recognized portfolio section is declared `complete`; a cash scope is
   complete only after a valid printed closing balance. Invalid/missing numeric
   fields and unclaimed numeric rows are quarantined, never stored as zero.

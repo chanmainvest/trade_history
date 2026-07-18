@@ -1,7 +1,7 @@
 # TD WebBroker parser
 
 Implementation: `src/ledger/parsers/td.py`, parser name `td`, current version
-`2.0.0`.
+`2.1.0`.
 
 ## Recognition and account shape
 
@@ -23,6 +23,9 @@ scope.
 - Multi-line option holdings tolerate harmless page/header lines between their
   contract head and expiry/strike tail. The parser retains the printed option
   root, expiry, strike, type, and multiplier.
+- Adjusted activity identities printed as `ROOT+$'YY MON@STRIKE` retain the
+  printed root and option fields; a following signed contract quantity is
+  parsed for expiration/exercise/assignment movements.
 - Stock splits map to the canonical `stock_split` type. Buy/sell, option
   buy/sell, known fees/taxes, and known income events receive canonical cash
   directions when TD prints an unsigned debit/credit amount.

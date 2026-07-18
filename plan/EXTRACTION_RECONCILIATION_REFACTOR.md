@@ -823,6 +823,33 @@ After every phase, update the focused owner spec from Phase 0. At completion:
   scope/price warnings, and native-first totals with dated FX rates. New UI
   strings are translated for all supported locales.
 
+### Post-Phase 8 correctness repair record (2026-07-17)
+
+- Duplicate same-period statement revisions are still visible in Verify, but
+  holdings, initial positions, and reconciliation select one canonical latest
+  revision. A later complete checkpoint is a hard floor: an omitted security
+  cannot revive an obsolete opening position. This removes the false RBC NTR
+  short caused by applying a duplicated buy twice and reviving the initial.
+- Identity resolution no longer persists direction/header words such as
+  `TO`, `FROM`, `CAD`, or `USD` as instruments. CIBC continuation text is
+  quarantined instead of being appended to the preceding transfer. A fresh
+  referenced-symbol audit is required to contain no reserved or synthetic
+  garbage identities before this repair is accepted.
+- CIBC en-dash debits, in-kind transfers, and printed option-event quantities;
+  RBC trailing-negative option quantities; and TD adjusted-option expirations
+  have committed fixtures. Strike-only option events remain quantity-null and
+  quarantined rather than guessed.
+- Performance stops forward-filling an account after 90 days without a new
+  checkpoint and never prices an option from its root equity quote. Native CAD
+  and USD series remain separate.
+- Transactions includes source-linked opening positions. Transactions and
+  Monthly can deep-link exact rows to Verify, controlled by the shared
+  `show_source_links` preference. Monthly removes the redundant Portfolio
+  column and links tickers to Research. Research computes MA200 from full
+  fetched history, and Verify scroll/highlight waits for the target page render.
+- Phase 7 manual PDF review, explicit sign-off, and cutover remain open. This
+  repair does not mutate the live ledger and does not waive those gates.
+
 ## 5. Final acceptance criteria
 
 The refactor is complete only when all of the following are true:

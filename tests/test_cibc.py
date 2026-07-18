@@ -46,6 +46,53 @@ def test_cibc_dual_currency_activity_holdings_and_cash():
     assert all(row.source_span and row.source_span.page_number == 1 for row in statement.transactions)
     assert all(row.source_span and row.source_span.page_number == 1 for row in statement.positions)
     assert all(row.source_span and row.source_span.page_number == 1 for row in statement.cash_balances)
+    transfers = [row for row in statement.transactions if row.txn_type.startswith("transfer_")]
+    account_transfers = [row for row in transfers if row.instrument is None]
+    assert [(row.txn_type, row.instrument) for row in account_transfers] == [
+        ("transfer_out", None),
+        ("transfer_in", None),
+    ]
+    assert all("REFERENCE" not in (row.description or "") for row in transfers)
+    aaa_transfer = next(
+        row for row in transfers
+        if row.instrument and row.instrument.symbol == "AAA"
+    )
+    assert aaa_transfer.quantity == 25
+    xyz_transfer = next(
+        row for row in transfers
+        if row.instrument and row.instrument.asset_type == "option"
+    )
+    assert xyz_transfer.txn_type == "transfer_out"
+    assert xyz_transfer.quantity == -3
+    assert any(
+        item.reason == "unclaimed activity-like row" and "REFERENCE" in item.raw_line
+        for item in statement.quarantine
+    )
+    gamma = next(
+        row for row in statement.transactions
+        if row.instrument and row.instrument.symbol == "GAM"
+    )
+    assert gamma.quantity == 12_895.048
+    assert gamma.net_amount == -177_441.02
+    rio_expiry = next(
+        row for row in statement.transactions
+        if row.txn_type == "option_expiration"
+        and row.instrument
+        and row.instrument.symbol == "RIO"
+    )
+    assert rio_expiry.quantity == 20
+    abc_expiry = next(
+        row for row in statement.transactions
+        if row.txn_type == "option_expiration"
+        and row.instrument
+        and row.instrument.symbol == "ABC"
+    )
+    assert abc_expiry.quantity is None
+    assert any(
+        item.reason == "option event has no printed contract quantity"
+        and "CALL .ABC" in item.raw_line
+        for item in statement.quarantine
+    )
     assert validate_parse_result(result).is_valid
 
 

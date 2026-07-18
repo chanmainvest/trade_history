@@ -52,6 +52,12 @@ def test_rbc_holdings_dividend_option_and_cash():
     assert option.option_expiry == "2026-02-20"
     assert option.option_strike == 35.0
     assert option.option_type == "CALL"
+    exercise = next(
+        row for row in option_transactions if row.txn_type == "option_exercise"
+    )
+    assert exercise.instrument is not None
+    assert exercise.instrument.symbol == "TRP"
+    assert exercise.quantity == -20
     assert all(row.source_span for row in statement.transactions)
 
 

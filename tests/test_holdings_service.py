@@ -1,6 +1,8 @@
 """Regression coverage for the canonical read-only holdings service."""
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import duckdb
 
 from ledger import holdings as holdings_service
@@ -10,7 +12,13 @@ from ledger.api.routes.viz import _held_symbols_at
 from ledger.db import sqlite as sqlite_db
 from ledger.holdings import holdings_at
 
-from .db_fixtures import seed_cash, seed_position, seed_source, seed_statement
+from .db_fixtures import (
+    seed_cash,
+    seed_position,
+    seed_snapshot_set,
+    seed_source,
+    seed_statement,
+)
 
 
 def _account(conn, number: str = "A-1") -> int:
@@ -148,6 +156,12 @@ def test_holdings_reprices_post_checkpoint_movement_without_recomputing_cost(tmp
     assert security["price_status"] == "market"
     assert security["checkpoint_date"] == "2024-01-28"
     assert security["checkpoint_statement_id"] == jan
+    assert security["source_ref"] == {
+        "statement_id": jan,
+        "kind": "position",
+        "id": security["source_ref"]["id"],
+        "checkpoint": True,
+    }
     assert security["is_reported"] is False
     assert security["is_reconstructed"] is True
     assert security["holding_state"] == "reconstructed"
@@ -201,6 +215,113 @@ def test_incomplete_scope_keeps_prior_anchor_but_marks_the_holding(tmp_path):
     assert [(row["symbol"], row["quantity"]) for row in rows] == [("ABC", 10.0)]
     assert rows[0]["holding_state"] == "incomplete"
     assert "incomplete_position_scope_after_checkpoint" in rows[0]["quality_warnings"]
+
+
+def test_complete_checkpoint_omission_does_not_revive_obsolete_initial_position(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id = _account(conn)
+        january = _statement(conn, account_id, "2024-01")
+        february = _statement(conn, account_id, "2024-02")
+        instrument_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="equity",
+            symbol="ABC",
+            currency="CAD",
+        )
+        conn.execute(
+            """
+            INSERT INTO initial_positions(
+                account_id, as_of_date, instrument_id, quantity, currency, notes
+            ) VALUES (?, '2023-12-31', ?, -10, 'CAD', 'inferred: synthetic regression')
+            """,
+            (account_id, instrument_id),
+        )
+        _transaction(
+            conn,
+            account_id=account_id,
+            statement_id=january,
+            trade_date="2024-01-10",
+            txn_type="buy",
+            instrument_id=instrument_id,
+            quantity=10,
+            position_delta=10,
+            cash_delta=-100,
+            cash_effective_date="2024-01-10",
+            currency="CAD",
+        )
+        seed_snapshot_set(
+            conn,
+            statement_id=february,
+            currency="CAD",
+            section_type="positions",
+            completeness="complete",
+        )
+
+    rows = holdings_at("2024-03-15", path=db_path)
+
+    assert all(row["symbol"] != "ABC" for row in rows)
+
+
+def test_performance_stops_forward_filling_stale_accounts(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    fresh_date = (date.today() - timedelta(days=30)).isoformat()
+    stale_date = (date.today() - timedelta(days=200)).isoformat()
+    with sqlite_db.session(db_path) as conn:
+        fresh_account = _account(conn, "FRESH")
+        stale_account = _account(conn, "STALE")
+        instrument_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="equity",
+            symbol="ABC",
+            currency="CAD",
+        )
+        fresh_statement = seed_statement(
+            conn,
+            account_id=fresh_account,
+            source_file_id=seed_source(conn, "Statements/Test/fresh.pdf"),
+            period_start=fresh_date,
+            period_end=fresh_date,
+        )
+        stale_statement = seed_statement(
+            conn,
+            account_id=stale_account,
+            source_file_id=seed_source(conn, "Statements/Test/stale.pdf"),
+            period_start=stale_date,
+            period_end=stale_date,
+        )
+        seed_position(
+            conn,
+            statement_id=fresh_statement,
+            instrument_id=instrument_id,
+            quantity=10,
+            market_value=100,
+            currency="CAD",
+        )
+        seed_position(
+            conn,
+            statement_id=stale_statement,
+            instrument_id=instrument_id,
+            quantity=20,
+            market_value=200,
+            currency="CAD",
+        )
+
+    current = [
+        row
+        for row in _total_rows(path=db_path)
+        if row["as_of_date"] == date.today().isoformat() and row["currency"] == "CAD"
+    ]
+
+    assert current == [
+        {
+            "as_of_date": date.today().isoformat(),
+            "currency": "CAD",
+            "market_value": 100.0,
+        }
+    ]
 
 
 def test_unscoped_movements_are_not_fanned_out_across_complete_scopes(tmp_path):
@@ -358,6 +479,74 @@ def test_option_does_not_use_its_underlying_quote_as_a_contract_price(tmp_path):
     assert option["market_value"] == 10.0
     assert option["price_status"] == "stale_checkpoint"
     assert "stale_checkpoint_price" in option["quality_warnings"]
+
+
+def test_option_does_not_share_equity_quote_when_both_have_same_root(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    market_path = tmp_path / "market.duckdb"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id = _account(conn)
+        january = _statement(conn, account_id, "2024-01")
+        equity_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="equity",
+            symbol="ABC",
+            currency="CAD",
+        )
+        option_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="option",
+            symbol="ABC",
+            currency="CAD",
+            option_root="ABC",
+            option_expiry="2024-06-21",
+            option_strike=100,
+            option_type="CALL",
+        )
+        seed_position(
+            conn,
+            statement_id=january,
+            instrument_id=equity_id,
+            quantity=10,
+            market_value=100,
+            currency="CAD",
+        )
+        seed_position(
+            conn,
+            statement_id=january,
+            instrument_id=option_id,
+            quantity=1,
+            market_value=5,
+            currency="CAD",
+        )
+        conn.execute(
+            "UPDATE position_snapshots SET market_price = 10 WHERE instrument_id = ?",
+            (equity_id,),
+        )
+        conn.execute(
+            "UPDATE position_snapshots SET market_price = 5 WHERE instrument_id = ?",
+            (option_id,),
+        )
+    con = duckdb.connect(str(market_path))
+    try:
+        con.execute(
+            "CREATE TABLE daily_prices(symbol VARCHAR, close DOUBLE, "
+            "adj_close DOUBLE, trade_date DATE)"
+        )
+        con.execute("INSERT INTO daily_prices VALUES ('ABC', 12, 12, '2024-02-10')")
+    finally:
+        con.close()
+
+    rows = holdings_at("2024-02-15", path=db_path, market_path=market_path)
+    equity = next(row for row in rows if row["asset_type"] == "equity")
+    option = next(row for row in rows if row["asset_type"] == "option")
+
+    assert equity["market_price"] == 12.0
+    assert equity["market_value"] == 120.0
+    assert option["market_price"] == 5.0
+    assert option["market_value"] == 5.0
+    assert option["price_status"] == "stale_checkpoint"
 
 
 def test_monthly_diff_preserves_cad_usd_identity_and_consumers_share_holdings(tmp_path, monkeypatch):

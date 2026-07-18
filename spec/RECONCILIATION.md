@@ -154,6 +154,12 @@ prior anchor; it is returned as an `incomplete_position_scope_after_checkpoint`
 quality warning. Before a complete checkpoint the service uses the latest
 `initial_positions` row plus later movements.
 
+A complete checkpoint also establishes a hard floor for omitted instruments.
+An older transaction cannot recreate an initial holding that the later complete
+checkpoint omitted; a newly observed post-checkpoint instrument starts at zero.
+Same-period duplicate/reissued statements use the latest persisted revision in
+initial inference, holdings, movement attribution, and reconciliation.
+
 Transactions do not have a snapshot-scope field. If several complete scopes
 for one account/currency are candidates, the service does not fan one movement
 out across them; it leaves the quantities unchanged and marks the affected
@@ -178,7 +184,9 @@ movement leaves cost basis and unrealized P/L unavailable rather than
 recomputing them from an old average cost.
 
 Performance evaluates the same service on each complete checkpoint date and
-optionally today, so its carried-forward state follows the same scoped rules.
+optionally today. Forward fill is limited to 90 days after an account's latest
+checkpoint; older account state is omitted rather than carried indefinitely.
+CAD and USD remain separate native-currency series and are never added together.
 Visualisation sector, correlation, and RRG symbol selection call the same
 service. Monthly displays checkpoint/provenance, holding state, reconciliation,
 and compact scope/price warnings, while Verify exposes the underlying
@@ -201,3 +209,6 @@ rows are replaceable; user-curated rows are intended to survive. Because
 extraction and signs still require source review, inference must be rerun only
 after the canonical ledger rebuild and must never be used to mask a
 reconciliation residual.
+The Transactions API exposes these anchors as read-only `initial_position`
+rows. They are not inserted into `transactions` and do not claim source-PDF
+evidence that does not exist.

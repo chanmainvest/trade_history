@@ -256,7 +256,12 @@ balancing entry.</p>
 <li><strong>Min |amount|</strong> — 100 / 1k / 10k / 100k / 1M presets.</li>
 <li><strong>Date range</strong>.</li>
 </ul>
-<p>Click a symbol cell to jump to the Research tab.</p>
+<p>Click a symbol cell to jump to the Research tab.
+Opening holdings inferred or reviewed before the first complete statement are
+shown as <strong>Initial position</strong> rows; they are read-only anchors, not fabricated
+transactions. When source icons are enabled, a transaction icon opens Verify
+extraction on that exact row. Initial positions have no icon because they do
+not claim a source row that was never extracted.</p>
 <h3 id="42-monthly-snapshot">4.2 Monthly snapshot</h3>
 <p>Default view: holdings as of the most recent statement date in the
 database, across all accounts in the active portfolio.</p>
@@ -276,8 +281,12 @@ database, across all accounts in the active portfolio.</p>
   show native currency buckets plus combined CAD and USD totals using the
   latest FX rate on or before the snapshot date. The displayed FX chips state
   both the rate and its date; native-currency buckets remain the primary total.</li>
-<li>Columns sortable; institution / account / profile are visible, and the
-  filters can narrow the table to specific institutions or accounts.</li>
+<li>Columns are sortable; institution and account are visible, while the active
+  portfolio is controlled by the top-bar dropdown instead of a repeated table
+  column. Ticker symbols link to Research.</li>
+<li>When source icons are enabled, each sourced row opens Verify extraction on
+  the exact position/cash row. Reconstructed rows link to their checkpoint and
+  say so in the tooltip.</li>
 <li>Every current holding shows its checkpoint date and whether it is
   <strong>reported</strong>, <strong>reconstructed</strong>, or <strong>incomplete</strong>. The quality cell also
   shows its reconciliation result and warns about incomplete scopes,
@@ -295,9 +304,11 @@ database, across all accounts in the active portfolio.</p>
 <li>The separate cash chart remains available as a cash-only breakdown and
   toggles off automatically when "Hide $ values" is on.</li>
 </ul>
-<p>The chart evaluates the same complete-scoped holdings rules as Monthly and
-Visualisations, so accounts with different statement dates carry their most
-recent trusted state forward consistently. Parser v2 can emit complete scopes
+<p>The chart keeps CAD and USD as separate native-currency series; it does not add
+them together. It evaluates the same complete-scoped holdings rules as Monthly
+and Visualisations. An account carries its most recent trusted state forward
+for at most 90 days; older state is omitted as stale instead of remaining in
+the current portfolio forever. Parser v2 can emit complete scopes
 for recognized sections; existing active/live v1 rows remain conservatively
 <code>unknown</code>, so they may carry an old holding forward until a reviewed re-ingest
 or shadow rebuild. The Monthly quality cell and Verify-extraction tab expose
@@ -311,7 +322,10 @@ the same read-only scope/reconciliation state. See
   ticker, asset type, or currency. The list scrolls at a max 2/3 viewport
   height so it stays usable on smaller screens.</li>
 <li><strong>Period</strong> buttons + daily/weekly/monthly resample.</li>
-<li>Candlestick with <strong>MA50 / MA200</strong> toggles, volume sub-chart.</li>
+<li>Candlestick with <strong>MA50 / MA200</strong> toggles, volume sub-chart. Moving averages
+  are calculated from the full fetched history before the selected display
+  period is clipped, so MA200 remains visible on shorter views when enough
+  prior observations exist.</li>
 <li>Your buy/sell marks overlay the chart. <strong>Solid triangles</strong> =
   equity / ETF trades, <strong>hollow triangles</strong> = option trades, so you
   can tell them apart at a glance.</li>
@@ -345,8 +359,7 @@ The screen has two sides:</p>
 <ul>
 <li><strong>Left</strong> renders the actual PDF (via PDF.js), with a box drawn over every
   text line that a parsed item came from. Boxes are colored by state: green
-  = a matched line, amber = the currently selected item, gray = a related
-  line belonging to another item on the same selection.</li>
+  = a matched line and amber = the currently selected exact item.</li>
 <li><strong>Right</strong> begins with a quality summary: active parser/run versions and
   status, completeness of every currency/section scope, and the position,
   cash, and statement-total reconciliation outcomes. It then lists parsed
@@ -375,7 +388,9 @@ not a zero or a fabricated source location.</p>
 <li><em>Household</em> → all accounts (the default <code>all</code> portfolio).</li>
 </ul>
 <p>Add, edit, or delete portfolios here; the dropdown in the top bar activates
-one across <strong>every</strong> tab.</p>
+one across <strong>every</strong> tab.
+The <strong>Show source icons</strong> preference controls the Verify links in Transactions
+and Monthly.</p>
 <p>Theme, language, and hide-$ live in the <strong>top bar</strong>, not on this tab:</p>
 <ul>
 <li><strong>Theme</strong> — light / dark (sun/moon toggle).</li>
@@ -602,7 +617,7 @@ the owner rather than copy it.</p>
 <div class="doc-section" id="current-state">
   <div class="section-banner">Current State</div>
   <h1 id="current-state">Current state</h1>
-<p>Implementation review: <strong>2026-07-16</strong>. The live-ledger counts below remain a
+<p>Implementation review: <strong>2026-07-17</strong>. The live-ledger counts below remain a
 dated diagnostic snapshot from <strong>2026-07-12</strong>, not a release promise. Parser
 v2 and the reconciliation engine were validated in fixtures and read-only
 corpus audits on 2026-07-14. A new parser-v2 shadow ledger has been built and
@@ -618,9 +633,10 @@ over to it.</p>
 <li>Ingestion stages one validated PDF source in a savepoint and activates it
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.</li>
-<li>CIBC, HSBC, RBC, and TD parsers report version <code>2.0.0</code>. They retain source
-  page/line evidence, available word/box geometry, explicit snapshot scopes,
-  and quarantine rather than fabricate unsupported values.</li>
+<li>CIBC and RBC report parser version <code>2.2.0</code>, HSBC reports <code>2.1.0</code>, and TD
+  reports <code>2.1.0</code>. They retain source page/line evidence, available word/box
+  geometry, explicit snapshot scopes, and quarantine rather than fabricate
+  unsupported values.</li>
 <li>Monthly, Performance, and Visualisations now consume one read-only scoped
   holdings service. Monthly renders checkpoint/provenance, reported versus
   reconstructed/incomplete state, reconciliation, and stale/unpriced quality
@@ -629,6 +645,10 @@ over to it.</p>
   position/cash/statement-total reconciliation results, and source-linked cash
   and summary-total rows. Its unresolved/incomplete/unreconciled filters are
   read-only. Legacy rows without v6 facts are shown as unavailable, not complete.</li>
+<li>Transactions exposes initial-position anchors separately from broker events.
+  Transactions and Monthly can deep-link exact source rows into Verify; the
+  preference is controlled in Settings. Monthly no longer repeats a portfolio
+  column, and its tickers link to Research.</li>
 <li>The CLI now has a guarded shadow build/compare/sign-off/cutover/rollback
   workflow. Building a shadow never changes the live ledger; cutover requires
   a signed local review report, a stopped backend acknowledgement, and an exact
@@ -667,6 +687,15 @@ over to it.</p>
   canonical instruments, 3,382 transactions, 7,955 position snapshots, 625
   cash balances, and 9,789 reconciliation results. Its redacted comparison
   report is pending human source spot-check/sign-off; no cutover occurred.</li>
+<li>On 2026-07-17, a disposable post-repair shadow parsed the same 338 PDFs with
+  CIBC/RBC <code>2.2.0</code>, HSBC <code>2.1.0</code>, and TD <code>2.1.0</code>. The PDF manifest was identical
+  before/after. It contains 548 statements, 657 instruments, 3,387
+  transactions, 6,665 position snapshots, 625 cash balances, 120 initial
+  positions, and 8,485 reconciliation results. Its referenced-symbol audit has
+  286 instrument/currency identities, zero reserved/invalid symbols, zero
+  <code>TO</code>/<code>FROM</code> instruments, zero negative reported non-option positions, and
+  zero reversed-sign equity buys/sells. This disposable build did not request
+  the two-build reproducibility check and was not signed off or cut over.</li>
 </ul>
 <h2 id="measured-live-ledger-2026-07-12">Measured live ledger (2026-07-12)</h2>
 <table>
@@ -754,6 +783,18 @@ over to it.</p>
    incomplete sections remain <code>unknown</code>. Text-only extraction supplies stable
    page/line evidence, and <code>pdfplumber</code> extraction supplies available
    coordinates/words.</li>
+<li><strong>Unresolved printed names no longer become tickers.</strong> CIBC account-transfer
+   direction tokens (<code>TO</code>/<code>FROM</code>) have no instrument, name-only identities must
+   resolve through reviewed/exact evidence before persistence, and unresolved
+   positions are quarantined with a non-clearing scope. HSBC column headers can
+   no longer become <code>CAD</code>/<code>USD</code> holdings.</li>
+<li><strong>Derived same-period statements are canonicalized.</strong> Duplicate/reissued
+   PDFs remain verifiable, while initials, holdings, transaction lists, transfer
+   pairing, and reconciliation use the latest persisted revision once.</li>
+<li><strong>Holdings and performance have bounded state.</strong> Complete checkpoint
+   omission cannot revive an obsolete initial position, and Performance stops
+   carrying an account after 90 days without a checkpoint. CAD/USD remain
+   separate native series.</li>
 </ol>
 <h2 id="confirmed-remaining-correctness-work">Confirmed remaining correctness work</h2>
 <ol>
@@ -1154,9 +1195,10 @@ are derived artifacts.</p>
   -&gt; pair transfers, rebuild movement links, and persist checkpoint equations
   -&gt; regenerate derived ingestion audit indexes
 </code></pre></div>
-<p>The registered parsers are CIBC, HSBC, RBC, and TD, all currently reporting
-version <code>2.0.0</code>. The version bump intentionally invalidates active v1 cache
-entries, so a reviewed re-ingest can exercise the updated parser contract.</p>
+<p>The registered parsers are CIBC, HSBC, RBC, and TD. CIBC and RBC report
+<code>2.2.0</code>; HSBC and TD report <code>2.1.0</code>. Parser and resolver version changes
+intentionally invalidate older active cache entries so a reviewed re-ingest
+exercises the current extraction contract.</p>
 <h2 id="status-and-cache-behavior">Status and cache behavior</h2>
 <p><code>source_files.parse_status</code> is a compatibility summary of the active
 extraction. It is <code>pending</code>, <code>ok</code>, <code>partial</code>, <code>failed</code>, or <code>skipped</code>. A parser
@@ -1206,11 +1248,15 @@ these deterministic steps:</p>
 <li>retain an explicit printed ticker or complete option contract;</li>
 <li>match an exact reviewed user alias or resolved reviewed fund lookup;</li>
 <li>match one unambiguous exact identity in the same statement's holdings; or</li>
-<li>retain an <code>unresolved_printed_identity</code> with zero confidence.</li>
+<li>mark the identity <code>unresolved_printed_identity</code> with zero confidence.</li>
 </ol>
 <p>It does not use the broad free-form name-to-ticker repair map. Transaction rows
 store the selected method/confidence and a resolution evidence link when a
-source span is available; instrument rows retain their identity provenance.
+source span is available. An unresolved transaction remains auditable with a
+null instrument; its printed-name token is never persisted as a ticker. An
+unresolved position is moved to quarantine and its complete scope is downgraded
+to <code>unknown</code>, because a checkpoint cannot safely identify that holding.
+Resolved instrument rows retain their identity provenance.
 <code>ledger ingest repair-symbols</code> remains a legacy/manual maintenance command for
 old derived data, but normal ingest no longer invokes it.</p>
 <h2 id="post-processing">Post-processing</h2>
@@ -1220,6 +1266,11 @@ rebuilds generated position, cash, and statement-total results. The
 reconciliation rebuild replaces only its <code>recon:v1:*</code> derived rows; it never
 changes a source transaction, reported checkpoint, or balance. A limited scan
 still finishes this active-output maintenance rather than returning mid-command.</p>
+<p>If several PDFs describe the same account, period, and statement type, every
+source remains available in Verify. Derived initials, holdings, transaction
+lists, transfer pairing, and reconciliation use only the most recently
+persisted statement revision, so a duplicate/reissued PDF cannot double a
+movement.</p>
 <h2 id="logs">Logs</h2>
 <ul>
 <li>standard logs are configured under <code>logs/</code>;</li>
@@ -1507,6 +1558,11 @@ scope clears only that scope. A partial/unknown later scope does not clear the
 prior anchor; it is returned as an <code>incomplete_position_scope_after_checkpoint</code>
 quality warning. Before a complete checkpoint the service uses the latest
 <code>initial_positions</code> row plus later movements.</p>
+<p>A complete checkpoint also establishes a hard floor for omitted instruments.
+An older transaction cannot recreate an initial holding that the later complete
+checkpoint omitted; a newly observed post-checkpoint instrument starts at zero.
+Same-period duplicate/reissued statements use the latest persisted revision in
+initial inference, holdings, movement attribution, and reconciliation.</p>
 <p>Transactions do not have a snapshot-scope field. If several complete scopes
 for one account/currency are candidates, the service does not fan one movement
 out across them; it leaves the quantities unchanged and marks the affected
@@ -1528,7 +1584,9 @@ price/value; otherwise the holding is unpriced. A post-checkpoint position
 movement leaves cost basis and unrealized P/L unavailable rather than
 recomputing them from an old average cost.</p>
 <p>Performance evaluates the same service on each complete checkpoint date and
-optionally today, so its carried-forward state follows the same scoped rules.
+optionally today. Forward fill is limited to 90 days after an account's latest
+checkpoint; older account state is omitted rather than carried indefinitely.
+CAD and USD remain separate native-currency series and are never added together.
 Visualisation sector, correlation, and RRG symbol selection call the same
 service. Monthly displays checkpoint/provenance, holding state, reconciliation,
 and compact scope/price warnings, while Verify exposes the underlying
@@ -1548,7 +1606,10 @@ earliest <strong>complete</strong> snapshot minus prior parsed movements. Tagged
 rows are replaceable; user-curated rows are intended to survive. Because
 extraction and signs still require source review, inference must be rerun only
 after the canonical ledger rebuild and must never be used to mask a
-reconciliation residual.</p>
+reconciliation residual.
+The Transactions API exposes these anchors as read-only <code>initial_position</code>
+rows. They are not inserted into <code>transactions</code> and do not claim source-PDF
+evidence that does not exist.</p>
 </div>
 
 <div class="doc-section" id="api-ui">
@@ -1574,7 +1635,7 @@ it updates preferences in JSON, not SQLite.</p>
 </tr>
 <tr>
 <td><code>/transactions</code></td>
-<td>list, accounts, symbols, transaction types, latest date</td>
+<td>list (including read-only opening positions), accounts, referenced symbols, transaction types, latest date</td>
 <td>Transactions/filter controls</td>
 </tr>
 <tr>
@@ -1613,10 +1674,12 @@ it updates preferences in JSON, not SQLite.</p>
 reconciliation-rebuild endpoints in the current route set.</p>
 <h2 id="tabs">Tabs</h2>
 <ol>
-<li>Transactions: filterable ledger events.</li>
-<li>Monthly: snapshot/date comparison and native/converted totals.</li>
-<li>Performance: value/cash history.</li>
-<li>Research: price, trade, and fundamental detail.</li>
+<li>Transactions: filterable ledger events and explicit opening positions.</li>
+<li>Monthly: snapshot/date comparison and native/converted totals; the active
+   portfolio comes from the top-bar selector.</li>
+<li>Performance: native-currency value/cash history with bounded forward fill.</li>
+<li>Research: price, trade, and fundamental detail; moving averages use full
+   fetched history before the visible period is clipped.</li>
 <li>Visualisations: holdings treemap, correlation, and RRG.</li>
 <li>Verify extraction: PDF.js rendering with <code>pdfplumber</code> text-line boxes,
    parsed transaction/position/cash/summary/quarantine lists, scope
@@ -1637,13 +1700,17 @@ normalizes whitespace/case, and fuzzy-matches stored transaction, position,
 cash, summary-total, and quarantine evidence text. Repeated text can match
 multiple boxes; legacy rows with no recorded source text remain visibly
 unlinked. A legacy database without v6 scope/reconciliation tables returns
-explicitly empty quality facts rather than treating those facts as complete.</p>
+explicitly empty quality facts rather than treating those facts as complete.
+<code>/verify?statement=&lt;id&gt;&amp;ref=&lt;kind&gt;:&lt;id&gt;</code> selects a persisted row and waits for
+its PDF page to render before scrolling. Only boxes containing that exact
+reference receive selected styling.</p>
 <h2 id="configuration-shape">Configuration shape</h2>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
 <span class="w">  </span><span class="nt">&quot;portfolios&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;all&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;All accounts&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;account_ids&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[]}],</span>
 <span class="w">  </span><span class="nt">&quot;active_portfolio&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;all&quot;</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">&quot;theme&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;dark&quot;</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">&quot;hide_money&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;show_source_links&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">&quot;language&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;en&quot;</span>
 <span class="p">}</span>
 </code></pre></div>
@@ -1655,7 +1722,8 @@ explicitly empty quality facts rather than treating those facts as complete.</p>
 checkpoints, applies normalized position/cash movements afterward, and never
 writes SQLite. Monthly rows include a stable <code>holding_key</code> made from account,
 canonical instrument key, and currency; diff rows use the same identity.</p>
-<p>Each holdings row also returns checkpoint statement/scope identifiers,
+<p>Each holdings row also returns checkpoint statement/scope identifiers, an
+optional exact <code>source_ref</code> (or checkpoint reference for reconstructed rows),
 reported-versus-reconstructed state, reconciliation status/reason, price/date
 status, and quality warnings. Monthly renders checkpoint date, holding state,
 reconciliation state, and compact incomplete/reconciliation/pricing warnings.
@@ -1667,6 +1735,9 @@ and rate date.</p>
 <li>Add translated strings in <code>frontend/src/i18n.tsx</code>.</li>
 <li>Use CSS variables for theme colors and <code>plotlyTheme()</code> for charts.</li>
 <li>Keep account filtering consistent with the active portfolio.</li>
+<li>Source icons in Transactions and Monthly obey <code>show_source_links</code>; they deep
+  link to the persisted extraction row and are absent when no defensible source
+  reference exists.</li>
 <li>A frontend change must pass <code>npm run build</code>.</li>
 </ul>
 </div>
@@ -1874,7 +1945,7 @@ workflow is not a substitute for checking docs in a normal pull request.</p>
   <div class="section-banner">Parser: CIBC</div>
   <h1 id="cibc-parser">CIBC parser</h1>
 <p>Implementation: <code>src/ledger/parsers/cibc.py</code>, parser name <code>cibc</code>, current
-version <code>2.0.0</code>.</p>
+version <code>2.2.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>The parser handles the configured CIBC Imperial Service, Investor's Edge, and
 TFSA folders/text. It extracts <code>###-#####</code> account numbers from text or a
@@ -1887,11 +1958,21 @@ separate positions and cash snapshot scopes.</p>
 <ul>
 <li>English month ranges establish the period; Canadian/U.S. headings switch the
   current currency and portfolio/activity section.</li>
-<li>Activity continuation lines extend the current transaction. Repeated headers
-  and known footers are ignored rather than treated as verbs.</li>
+<li>A no-date activity line is never assigned blindly to the preceding
+  transaction. Numeric/activity-like lines are quarantined, which keeps page
+  headers and unrelated fund/corporate-action text out of transfer evidence.</li>
+<li>Account-transfer direction words followed by an account number (<code>TO</code> and
+  <code>FROM</code>) are not instruments or tickers.</li>
+<li>An en dash immediately before a money value is normalized as a negative
+  sign, while an em dash remains a blank-cell marker. In-kind transfer and
+  unpriced option-event quantities are read from the printed cell before those
+  markers. If an option event prints only a strike, its quantity remains null
+  and the row is quarantined for review.</li>
 <li>Equity tickers can be parenthesized; options retain CIBC's printed
   <code>CALL/PUT .ROOT MON DD YYYY STRIKE</code> identity. Mutual funds can remain
-  printed-name instruments pending a reviewed fund-code lookup.</li>
+  printed-name identities pending a reviewed fund-code lookup. The staged
+  resolver either proves the identity or removes the pseudo-token before
+  persistence.</li>
 <li>A recognized portfolio section is declared <code>complete</code>; a cash scope is
   complete only after a valid printed closing balance. Invalid/missing numeric
   fields and unclaimed numeric rows are quarantined, never stored as zero.</li>
@@ -1916,7 +1997,7 @@ shared output rules.</p>
   <div class="section-banner">Parser: HSBC</div>
   <h1 id="hsbc-parser">HSBC parser</h1>
 <p>Implementation: <code>src/ledger/parsers/hsbc.py</code>, parser name <code>hsbc</code>, current
-version <code>2.0.0</code>.</p>
+version <code>2.1.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>HSBC PDFs can contain several account sections. The parser emits one statement
 per printed account and infers currency from the account type or the observed
@@ -1931,6 +2012,9 @@ a continued account page does not create a duplicate account-period statement.</
 <li>The state machine tracks account, currency, holdings/activity section, and
   continuation rows. It preserves compact option contracts and printed/
   parenthesized holding symbols.</li>
+<li>Repeated holdings column headers such as <code>Description Quantity ... (CAD)</code> are
+  skipped before row parsing, so <code>CAD</code>/<code>USD</code> header labels cannot become
+  position tickers.</li>
 <li>Parentheses and trailing-negative money text flow through the shared money
   parser. A cash scope is complete only with a valid printed closing balance;
   invalid quantities, cash values, or unclaimed numeric rows are quarantined
@@ -1959,7 +2043,7 @@ continued account pages, cash, and source evidence. See
   <div class="section-banner">Parser: RBC</div>
   <h1 id="rbc-parser">RBC parser</h1>
 <p>Implementation: <code>src/ledger/parsers/rbc.py</code>, parser name <code>rbc</code>, current
-version <code>2.0.0</code>.</p>
+version <code>2.2.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>The parser handles monthly Direct Investing statements and annual investment
 performance reports. Monthly text is split at <code>CDN $</code> / <code>U.S. $</code> blocks; annual
@@ -1977,8 +2061,12 @@ overwrite the first currency while writing the second.</p>
 <li>Printed call/put, root, expiry, strike, multiplier, and quantity form the
   option identity. Unknown numeric holding/activity rows are quarantined.</li>
 <li>Debit/credit direction uses RBC event semantics plus printed signs, including
-  trailing negatives. Invalid quantity or closing-cash text is quarantined;
-  no numeric parse failure becomes zero.</li>
+  trailing negatives such as an option-event quantity printed as <code>20-</code>.
+  Invalid quantity or closing-cash text is quarantined; no numeric parse
+  failure becomes zero.</li>
+<li>Name-only fallback identities are explicitly unresolved. They may match one
+  exact same-statement holding during staged resolution but cannot persist as
+  invented ticker symbols.</li>
 <li>A recognized Asset Review currency block declares a complete positions scope;
   a cash scope is complete only with a valid printed closing balance.</li>
 <li>Parsed transactions, positions, cash, and quarantines receive source spans,
@@ -2002,7 +2090,7 @@ transactions, cash, and annual-performance parsing. See
   <div class="section-banner">Parser: TD</div>
   <h1 id="td-webbroker-parser">TD WebBroker parser</h1>
 <p>Implementation: <code>src/ledger/parsers/td.py</code>, parser name <code>td</code>, current version
-<code>2.0.0</code>.</p>
+<code>2.1.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>TD PDFs commonly contain separate <code>Direct Trading - CDN</code> and <code>Direct Trading
 - US</code> subaccounts. They remain distinct accounts/currencies. Annual
@@ -2020,6 +2108,9 @@ scope.</p>
 <li>Multi-line option holdings tolerate harmless page/header lines between their
   contract head and expiry/strike tail. The parser retains the printed option
   root, expiry, strike, type, and multiplier.</li>
+<li>Adjusted activity identities printed as <code>ROOT+$'YY MON@STRIKE</code> retain the
+  printed root and option fields; a following signed contract quantity is
+  parsed for expiration/exercise/assignment movements.</li>
 <li>Stock splits map to the canonical <code>stock_split</code> type. Buy/sell, option
   buy/sell, known fees/taxes, and known income events receive canonical cash
   directions when TD prints an unsigned debit/credit amount.</li>

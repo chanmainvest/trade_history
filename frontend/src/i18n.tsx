@@ -91,6 +91,16 @@ const qualityEn: Dict = {
   "monthly.fx_usd_cad": "FX: 1 USD = {rate} CAD",
   "monthly.fx_cad_usd": "FX: 1 CAD = {rate} USD",
   "monthly.fx_date": "rate date {date}",
+  "source.column": "Source extraction",
+  "source.open_transaction": "Open transaction in Verify extraction",
+  "source.open_position": "Open position in Verify extraction",
+  "source.open_checkpoint": "Open source checkpoint in Verify extraction",
+  "transaction.type.initial_position": "Initial position",
+  "settings.extraction_links": "Extraction links",
+  "settings.show_source_links": "Show source icons in transaction and monthly tables",
+  "settings.show_source_links_help": "Source icons open Verify extraction and select the exact extracted row. Reconstructed holdings link to their checkpoint when available.",
+  "performance.native_value": "Portfolio value by native currency",
+  "performance.forward_fill_note": "CAD and USD are separate series and are not added together. Each account is carried forward from its latest checkpoint for at most {days} days; older accounts are omitted as stale.",
 };
 
 const qualityZhHK: Dict = {
@@ -153,6 +163,16 @@ const qualityZhHK: Dict = {
   "monthly.fx_usd_cad": "匯率：1 USD = {rate} CAD",
   "monthly.fx_cad_usd": "匯率：1 CAD = {rate} USD",
   "monthly.fx_date": "匯率日期 {date}",
+  "source.column": "來源擷取",
+  "source.open_transaction": "在核對擷取中開啟交易",
+  "source.open_position": "在核對擷取中開啟持倉",
+  "source.open_checkpoint": "在核對擷取中開啟來源檢查點",
+  "transaction.type.initial_position": "期初持倉",
+  "settings.extraction_links": "擷取連結",
+  "settings.show_source_links": "在交易及每月持倉表顯示來源圖示",
+  "settings.show_source_links_help": "來源圖示會開啟核對擷取並選取相應資料列；重建持倉會連到可用的檢查點。",
+  "performance.native_value": "按原幣顯示投資組合價值",
+  "performance.forward_fill_note": "加元及美元分開顯示，不會相加。每個戶口由最近檢查點最多延續 {days} 日；更舊戶口會視為過期並省略。",
 };
 
 const qualityZhTW: Dict = {
@@ -215,6 +235,16 @@ const qualityZhTW: Dict = {
   "monthly.fx_usd_cad": "匯率：1 USD = {rate} CAD",
   "monthly.fx_cad_usd": "匯率：1 CAD = {rate} USD",
   "monthly.fx_date": "匯率日期 {date}",
+  "source.column": "來源擷取",
+  "source.open_transaction": "在驗證擷取中開啟交易",
+  "source.open_position": "在驗證擷取中開啟持股",
+  "source.open_checkpoint": "在驗證擷取中開啟來源檢查點",
+  "transaction.type.initial_position": "期初持股",
+  "settings.extraction_links": "擷取連結",
+  "settings.show_source_links": "在交易與每月持股表顯示來源圖示",
+  "settings.show_source_links_help": "來源圖示會開啟驗證擷取並選取對應資料列；重建持股會連到可用的檢查點。",
+  "performance.native_value": "依原幣別顯示投資組合價值",
+  "performance.forward_fill_note": "加幣與美元分開顯示，不會相加。每個帳戶從最近檢查點最多延續 {days} 天；較舊帳戶會視為過期並省略。",
 };
 
 const qualityZhCN: Dict = {
@@ -277,6 +307,16 @@ const qualityZhCN: Dict = {
   "monthly.fx_usd_cad": "汇率：1 USD = {rate} CAD",
   "monthly.fx_cad_usd": "汇率：1 CAD = {rate} USD",
   "monthly.fx_date": "汇率日期 {date}",
+  "source.column": "来源提取",
+  "source.open_transaction": "在验证提取中打开交易",
+  "source.open_position": "在验证提取中打开持仓",
+  "source.open_checkpoint": "在验证提取中打开来源检查点",
+  "transaction.type.initial_position": "期初持仓",
+  "settings.extraction_links": "提取链接",
+  "settings.show_source_links": "在交易和月度持仓表显示来源图标",
+  "settings.show_source_links_help": "来源图标会打开验证提取并选中对应数据行；重建持仓会链接到可用的检查点。",
+  "performance.native_value": "按原币种显示投资组合价值",
+  "performance.forward_fill_note": "加元和美元分别显示，不会相加。每个账户从最近检查点最多延续 {days} 天；更旧账户会被视为过期并省略。",
 };
 
 const en: Dict = {

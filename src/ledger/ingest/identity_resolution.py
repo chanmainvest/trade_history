@@ -14,12 +14,18 @@ import re
 import sqlite3
 from collections import Counter
 
-from ..parsers.types import ParsedInstrument, ParsedStatement, ParsedTxn, ParseResult
+from ..parsers.types import (
+    ParsedInstrument,
+    ParsedQuarantine,
+    ParsedStatement,
+    ParsedTxn,
+    ParseResult,
+)
 from .fund_lookup import lookup_fund_code
 
 # Bump this when the deterministic resolver's meaning changes.  The cache also
 # includes a fingerprint of reviewed aliases and reviewed fund lookups.
-RESOLVER_VERSION = "identity-resolver-v1"
+RESOLVER_VERSION = "identity-resolver-v2"
 
 _EXPLICIT_SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,19}$")
 _UNRESOLVED_SYMBOLS = {"", "UNKNOWN", "N/A", "NONE"}
@@ -46,6 +52,8 @@ def _identity_terms(
 
 def _looks_explicit(instrument: ParsedInstrument) -> bool:
     """Return true only for an identity safe to retain without a lookup."""
+    if instrument.resolution_method == "unresolved_printed_identity":
+        return False
     if instrument.asset_type == "option":
         return bool(
             instrument.option_root
@@ -255,12 +263,35 @@ def resolve_parse_result(
     """
     methods: Counter[str] = Counter()
     for statement in result.statements:
+        resolved_positions = []
         for position in statement.positions:
-            methods[_resolve_instrument(
+            method = _resolve_instrument(
                 conn,
                 institution_code=institution_code,
                 instrument=position.instrument,
-            )] += 1
+            )
+            if method == "unresolved_printed_identity":
+                statement.quarantine.append(
+                    ParsedQuarantine(
+                        raw_line=position.raw_line or "",
+                        reason="position identity unresolved; row not persisted",
+                        source_span=position.source_span,
+                    )
+                )
+                for scope in statement.snapshot_sets:
+                    if (
+                        scope.currency == position.currency
+                        and scope.section_type == "positions"
+                        and scope.scope_key == position.scope_key
+                        and scope.completeness == "complete"
+                    ):
+                        scope.completeness = "unknown"
+                        scope.validation_status = "warning"
+                methods["quarantined_unresolved_position"] += 1
+                continue
+            resolved_positions.append(position)
+            methods[method] += 1
+        statement.positions = resolved_positions
 
         for transaction in statement.transactions:
             if transaction.instrument is None:
@@ -281,5 +312,9 @@ def resolve_parse_result(
             transaction.resolution_confidence = transaction.instrument.resolution_confidence
             if transaction.resolution_evidence is None:
                 transaction.resolution_evidence = transaction.instrument.resolution_evidence or transaction.source_span
+            if method == "unresolved_printed_identity":
+                # Preserve the transaction and printed description, but never
+                # persist a made-up name token as though it were a ticker.
+                transaction.instrument = None
             methods[method] += 1
     return dict(sorted(methods.items()))

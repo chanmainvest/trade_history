@@ -80,7 +80,7 @@ RE_LEGACY_END_BAL = re.compile(r"Cash-closing balance\s+\$?\(?(-?[\d,]+(?:\.\d+)
 # Option token in activity (single line). Captures: cp, mult sign, root,
 # yy, [dd]mm, strike. Examples: "PUT -100 SLV'26 FB@100", "CALL-100 SLV'26 13FB@115"
 RE_OPT_TOKEN = re.compile(
-    r"(CALL|PUT)\s*[- ]\s*(?:-)?100\s+([A-Z][A-Z0-9.]{0,5})'(\d{2})(?:-US)?\s+"
+    r"(CALL|PUT)\s*[- ]\s*(?:-)?100\s+([A-Z][A-Z0-9.]{0,5})(?:\+\$)?'(\d{2})(?:-US)?\s+"
     r"(\d{0,2})([A-Z]{2})@(\d+(?:\.\d+)?)"
 )
 # Expiry-only token used for stitching position rows: "[dd]mm@strike"
@@ -825,7 +825,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
 # ---------------------------------------------------------------- Parser
 class TDParser:
     NAME = "td"
-    VERSION = "2.0.0"
+    VERSION = "2.1.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "TD Webbroker":

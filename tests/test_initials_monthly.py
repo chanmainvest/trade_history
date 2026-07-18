@@ -170,6 +170,48 @@ def test_infer_initials_preserves_curated_rows_and_tags_cash(tmp_path):
     assert infer_initials(db_path) == {"positions": 1, "cash": 1}
 
 
+def test_infer_initials_counts_only_latest_same_period_statement(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id, first_statement_id = _seed_account(conn)
+        duplicate_source_id = seed_source(conn, "Statements/Test/reissued.pdf")
+        latest_statement_id = seed_statement(
+            conn,
+            account_id=account_id,
+            source_file_id=duplicate_source_id,
+            period_start="2024-01-01",
+            period_end="2024-01-31",
+        )
+        instrument_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="equity",
+            symbol="ABC",
+            currency="CAD",
+        )
+        for statement_id in (first_statement_id, latest_statement_id):
+            conn.execute(
+                """
+                INSERT INTO transactions(
+                    account_id, statement_id, trade_date, txn_type,
+                    instrument_id, quantity, position_delta, currency
+                ) VALUES (?, ?, '2024-01-15', 'buy', ?, 10, 10, 'CAD')
+                """,
+                (account_id, statement_id, instrument_id),
+            )
+            seed_position(
+                conn,
+                statement_id=statement_id,
+                instrument_id=instrument_id,
+                quantity=10,
+                currency="CAD",
+            )
+
+    assert infer_initials(db_path) == {"positions": 0, "cash": 0}
+    with sqlite_db.session(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM initial_positions").fetchone()[0] == 0
+
+
 def test_holdings_reconstruct_before_first_snapshot_and_after_empty_statement(tmp_path):
     db_path = tmp_path / "ledger.sqlite"
     sqlite_db.init_db(db_path)

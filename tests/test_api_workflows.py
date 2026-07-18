@@ -6,6 +6,7 @@ import duckdb
 
 from ledger.api.routes import config as config_route
 from ledger.api.routes import monthly as monthly_route
+from ledger.api.routes import transactions as transactions_route
 from ledger.api.routes.monthly import _holdings_at
 from ledger.api.routes.performance import _total_rows
 from ledger.db import sqlite as sqlite_db
@@ -15,6 +16,59 @@ from ledger.parsers.types import ParsedAccount, ParsedStatement
 from ledger.pdf_text import PdfText
 
 from .db_fixtures import seed_cash, seed_position, seed_source, seed_statement
+
+
+def test_transactions_include_opening_positions_without_fake_source_links(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id, source_id = _seed_account(conn)
+        statement_id = _seed_statement(conn, account_id, source_id, "2024-01-31")
+        instrument_id = sqlite_db.upsert_instrument(
+            conn, asset_type="equity", symbol="ABC", currency="CAD"
+        )
+        conn.execute(
+            """
+            INSERT INTO initial_positions(
+                account_id, as_of_date, instrument_id, quantity, currency, notes
+            ) VALUES (?, '2023-12-31', ?, 5, 'CAD', 'inferred: synthetic')
+            """,
+            (account_id, instrument_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO transactions(
+                account_id, statement_id, trade_date, txn_type,
+                instrument_id, quantity, currency
+            ) VALUES (?, ?, '2024-01-10', 'buy', ?, 2, 'CAD')
+            """,
+            (account_id, statement_id, instrument_id),
+        )
+    monkeypatch.setattr(transactions_route.sqlite_db, "SQLITE_PATH", db_path)
+
+    response = transactions_route.list_transactions(
+        start=None,
+        end=None,
+        institution=None,
+        account_id=None,
+        symbol=None,
+        txn_type=None,
+        min_abs_amount=None,
+        limit=100,
+    )
+
+    assert [row["row_kind"] for row in response["rows"]] == [
+        "transaction",
+        "initial_position",
+    ]
+    transaction, initial = response["rows"]
+    assert transaction["statement_id"] == statement_id
+    assert transaction["transaction_id"] is not None
+    assert initial["txn_type"] == "initial_position"
+    assert initial["statement_id"] is None
+    assert initial["transaction_id"] is None
 
 
 def _seed_account(conn, *, source_relpath: str = "Statements/Test/sample.pdf"):

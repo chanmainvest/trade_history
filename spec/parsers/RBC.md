@@ -1,7 +1,7 @@
 # RBC parser
 
 Implementation: `src/ledger/parsers/rbc.py`, parser name `rbc`, current
-version `2.0.0`.
+version `2.2.0`.
 
 ## Recognition and account shape
 
@@ -23,8 +23,12 @@ overwrite the first currency while writing the second.
 - Printed call/put, root, expiry, strike, multiplier, and quantity form the
   option identity. Unknown numeric holding/activity rows are quarantined.
 - Debit/credit direction uses RBC event semantics plus printed signs, including
-  trailing negatives. Invalid quantity or closing-cash text is quarantined;
-  no numeric parse failure becomes zero.
+  trailing negatives such as an option-event quantity printed as `20-`.
+  Invalid quantity or closing-cash text is quarantined; no numeric parse
+  failure becomes zero.
+- Name-only fallback identities are explicitly unresolved. They may match one
+  exact same-statement holding during staged resolution but cannot persist as
+  invented ticker symbols.
 - A recognized Asset Review currency block declares a complete positions scope;
   a cash scope is complete only with a valid printed closing balance.
 - Parsed transactions, positions, cash, and quarantines receive source spans,

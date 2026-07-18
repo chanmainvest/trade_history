@@ -220,6 +220,12 @@ def _parse_holdings(text: str, currency: str, stmt: ParsedStatement) -> bool:
             continue
         # Section labels HSBC uses
         lower = s.lower()
+        if (
+            lower.startswith("description ")
+            and "quantity" in lower
+            and "bookcost" in lower
+        ):
+            continue
         if lower.startswith("equities"):
             section = "Equities"
             continue
@@ -482,7 +488,7 @@ def _parse_activity(text: str, currency: str, year_default: int,
 # ----------------------------------------------------------------- Parser
 class HSBCParser:
     NAME = "hsbc"
-    VERSION = "2.0.0"
+    VERSION = "2.1.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "HSBC direct invest":

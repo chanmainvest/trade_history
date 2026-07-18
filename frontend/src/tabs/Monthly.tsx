@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, HoldingRow } from "../api";
+import { SourceLink } from "../SourceLink";
 import { usePortfolio } from "../portfolio";
 import { SmartSelect } from "../SmartSelect";
 import { useI18n } from "../i18n";
@@ -71,12 +73,13 @@ function HoldingQuality({ row }: { row: HoldingRow }) {
 }
 
 type Col =
-  | "institution_code" | "account_number" | "profile" | "symbol" | "asset_type"
+  | "institution_code" | "account_number" | "symbol" | "asset_type"
   | "quantity" | "market_price" | "market_value" | "unrealized_pnl" | "currency";
 
 export default function Monthly() {
-  const { activeAccountIds, activePortfolio } = usePortfolio();
+  const { activeAccountIds, config } = usePortfolio();
   const { t } = useI18n();
+  const showSourceLinks = config?.show_source_links ?? true;
 
   const latestQ = useQuery({ queryKey: ["latest-date"], queryFn: api.latestDate });
   const latest = latestQ.data?.latest || "";
@@ -135,8 +138,8 @@ export default function Monthly() {
     }
     if (hideZero) rows = rows.filter((r) => Math.abs(r.quantity) > 1e-9);
     rows.sort((x, y) => {
-      const xv = sortCol === "profile" ? activePortfolio?.name : (x as any)[sortCol];
-      const yv = sortCol === "profile" ? activePortfolio?.name : (y as any)[sortCol];
+      const xv = (x as any)[sortCol];
+      const yv = (y as any)[sortCol];
       if (xv == null && yv == null) return 0;
       if (xv == null) return 1;
       if (yv == null) return -1;
@@ -148,7 +151,7 @@ export default function Monthly() {
         : String(yv).localeCompare(String(xv));
     });
     return rows;
-  }, [allRows, instFilter, acctFilter, hideZero, sortCol, sortDir, activePortfolio?.name]);
+  }, [allRows, instFilter, acctFilter, hideZero, sortCol, sortDir]);
 
   const totalsByCurrency: Record<string, number> = {};
   for (const r of filtered) {
@@ -200,7 +203,6 @@ export default function Monthly() {
         <SmartSelect label={t("f.account")} options={acctOpts} value={acctFilter} onChange={setAcctFilter} />
         <label><input type="checkbox" checked={hideZero}
                       onChange={(e) => setHideZero(e.target.checked)} />&nbsp;{t("monthly.hide_zero")}</label>
-        <span className="tag">{activePortfolio?.name}</span>
         <span className="muted">{filtered.length} {t("monthly.rows")}</span>
       </div>
 
@@ -238,9 +240,9 @@ export default function Monthly() {
         <table>
           <thead>
             <tr>
+              {showSourceLinks && <th aria-label={t("source.column")} />}
               <th onClick={() => toggleSort("institution_code")}>{t("f.institution")}{arrow("institution_code")}</th>
               <th onClick={() => toggleSort("account_number")}>{t("th.account")}{arrow("account_number")}</th>
-              <th onClick={() => toggleSort("profile")}>{t("nav.portfolio")}{arrow("profile")}</th>
               <th onClick={() => toggleSort("symbol")}>{t("th.symbol")}{arrow("symbol")}</th>
               <th onClick={() => toggleSort("asset_type")}>{t("th.type")}{arrow("asset_type")}</th>
               <th>{t("quality.checkpoint")}</th>
@@ -263,10 +265,21 @@ export default function Monthly() {
                 : "";
               return (
                 <tr key={r.holding_key} className={rowClass}>
+                  {showSourceLinks && (
+                    <td>
+                      {r.source_ref ? (
+                        <SourceLink
+                          source={r.source_ref}
+                          title={r.source_ref.checkpoint
+                            ? t("source.open_checkpoint")
+                            : t("source.open_position")}
+                        />
+                      ) : null}
+                    </td>
+                  )}
                   <td>{r.institution_code}</td>
                   <td>{r.account_number}</td>
-                  <td>{activePortfolio?.name || t("monthly.all_accounts")}</td>
-                  <td>{r.symbol}</td>
+                  <td>{r.asset_type === "cash" ? r.symbol : <Link to={`/research/${r.symbol}`}>{r.symbol}</Link>}</td>
                   <td>{r.asset_type}{r.option_type ? ` ${r.option_type} ${fmtNum(r.option_strike, 2)} ${r.option_expiry || ""}` : ""}</td>
                   <td>{r.checkpoint_date || t("quality.unavailable")}</td>
                   <td><HoldingQuality row={r} /></td>
@@ -285,10 +298,10 @@ export default function Monthly() {
             {effectiveA !== effectiveB && (diffQ.data?.rows ?? []).filter((d) =>
               d.qty_b === 0 && d.qty_a !== 0).map((d) => (
               <tr key={`gone-${d.holding_key}`} className="diff-del">
+                {showSourceLinks && <td />}
                 <td>{d.institution_code}</td>
                 <td>{d.account_number}</td>
-                <td>{activePortfolio?.name || t("monthly.all_accounts")}</td>
-                <td>{d.symbol}</td>
+                <td>{d.asset_type === "cash" ? d.symbol : <Link to={`/research/${d.symbol}`}>{d.symbol}</Link>}</td>
                 <td>{d.asset_type}</td>
                 <td></td>
                 <td></td>

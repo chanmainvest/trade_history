@@ -10,6 +10,7 @@ from ...db import sqlite as sqlite_db
 from ...holdings import holding_dates, holdings_at
 
 router = APIRouter(prefix="/performance", tags=["performance"])
+FORWARD_FILL_MAX_DAYS = 90
 
 
 def _csv_list(value: str | None) -> list[str]:
@@ -59,14 +60,23 @@ def _matching_account_ids(
 def _filter_rows(
     rows: list[dict],
     *,
+    as_of: str,
     symbols: set[str],
     asset_type: str | None,
     include_cash: bool,
     exact_checkpoint_only: bool,
+    max_checkpoint_age_days: int | None,
 ) -> list[dict]:
     cash_allowed = include_cash and not symbols and not asset_type
     out: list[dict] = []
     for row in rows:
+        if max_checkpoint_age_days is not None:
+            checkpoint = row.get("checkpoint_date")
+            if checkpoint is None:
+                continue
+            age = (date.fromisoformat(as_of) - date.fromisoformat(str(checkpoint))).days
+            if age > max_checkpoint_age_days:
+                continue
         if row["asset_type"] == "cash":
             if not cash_allowed:
                 continue
@@ -100,7 +110,8 @@ def total(
             asset_type=asset_type,
             forward_fill=forward_fill,
             include_cash=include_cash,
-        )
+        ),
+        "forward_fill_max_days": FORWARD_FILL_MAX_DAYS if forward_fill else None,
     }
 
 
@@ -134,10 +145,14 @@ def _total_rows(
     for as_of in dates:
         rows = _filter_rows(
             holdings_at(as_of, account_ids, path=path),
+            as_of=as_of,
             symbols=symbols,
             asset_type=asset_type,
             include_cash=include_cash,
             exact_checkpoint_only=not forward_fill,
+            max_checkpoint_age_days=(
+                FORWARD_FILL_MAX_DAYS if forward_fill else None
+            ),
         )
         for row in rows:
             currency = str(row["currency"])

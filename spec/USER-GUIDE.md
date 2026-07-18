@@ -207,6 +207,11 @@ Every event the parser produced, filterable by:
 - **Date range**.
 
 Click a symbol cell to jump to the Research tab.
+Opening holdings inferred or reviewed before the first complete statement are
+shown as **Initial position** rows; they are read-only anchors, not fabricated
+transactions. When source icons are enabled, a transaction icon opens Verify
+extraction on that exact row. Initial positions have no icon because they do
+not claim a source row that was never extracted.
 
 ### 4.2 Monthly snapshot
 
@@ -228,8 +233,12 @@ database, across all accounts in the active portfolio.
   show native currency buckets plus combined CAD and USD totals using the
   latest FX rate on or before the snapshot date. The displayed FX chips state
   both the rate and its date; native-currency buckets remain the primary total.
-- Columns sortable; institution / account / profile are visible, and the
-  filters can narrow the table to specific institutions or accounts.
+- Columns are sortable; institution and account are visible, while the active
+  portfolio is controlled by the top-bar dropdown instead of a repeated table
+  column. Ticker symbols link to Research.
+- When source icons are enabled, each sourced row opens Verify extraction on
+  the exact position/cash row. Reconstructed rows link to their checkpoint and
+  say so in the tooltip.
 - Every current holding shows its checkpoint date and whether it is
   **reported**, **reconstructed**, or **incomplete**. The quality cell also
   shows its reconciliation result and warns about incomplete scopes,
@@ -248,9 +257,11 @@ Total portfolio value over time, including cash.
 - The separate cash chart remains available as a cash-only breakdown and
   toggles off automatically when "Hide $ values" is on.
 
-The chart evaluates the same complete-scoped holdings rules as Monthly and
-Visualisations, so accounts with different statement dates carry their most
-recent trusted state forward consistently. Parser v2 can emit complete scopes
+The chart keeps CAD and USD as separate native-currency series; it does not add
+them together. It evaluates the same complete-scoped holdings rules as Monthly
+and Visualisations. An account carries its most recent trusted state forward
+for at most 90 days; older state is omitted as stale instead of remaining in
+the current portfolio forever. Parser v2 can emit complete scopes
 for recognized sections; existing active/live v1 rows remain conservatively
 `unknown`, so they may carry an old holding forward until a reviewed re-ingest
 or shadow rebuild. The Monthly quality cell and Verify-extraction tab expose
@@ -266,7 +277,10 @@ Per-symbol deep dive.
   ticker, asset type, or currency. The list scrolls at a max 2/3 viewport
   height so it stays usable on smaller screens.
 - **Period** buttons + daily/weekly/monthly resample.
-- Candlestick with **MA50 / MA200** toggles, volume sub-chart.
+- Candlestick with **MA50 / MA200** toggles, volume sub-chart. Moving averages
+  are calculated from the full fetched history before the selected display
+  period is clipped, so MA200 remains visible on shorter views when enough
+  prior observations exist.
 - Your buy/sell marks overlay the chart. **Solid triangles** =
   equity / ETF trades, **hollow triangles** = option trades, so you
   can tell them apart at a glance.
@@ -302,8 +316,7 @@ The screen has two sides:
 
 - **Left** renders the actual PDF (via PDF.js), with a box drawn over every
   text line that a parsed item came from. Boxes are colored by state: green
-  = a matched line, amber = the currently selected item, gray = a related
-  line belonging to another item on the same selection.
+  = a matched line and amber = the currently selected exact item.
 - **Right** begins with a quality summary: active parser/run versions and
   status, completeness of every currency/section scope, and the position,
   cash, and statement-total reconciliation outcomes. It then lists parsed
@@ -337,6 +350,8 @@ The Settings tab manages **portfolios** — named groups of accounts. Example:
 
 Add, edit, or delete portfolios here; the dropdown in the top bar activates
 one across **every** tab.
+The **Show source icons** preference controls the Verify links in Transactions
+and Monthly.
 
 Theme, language, and hide-$ live in the **top bar**, not on this tab:
 

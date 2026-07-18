@@ -43,6 +43,15 @@ def test_td_modern_dual_account_holdings_activity_and_cash():
         and transaction.instrument.asset_type == "option"
         for transaction in usd.transactions
     )
+    adjusted_expiry = next(
+        transaction
+        for transaction in usd.transactions
+        if transaction.txn_type == "option_expiration"
+    )
+    assert adjusted_expiry.instrument is not None
+    assert adjusted_expiry.instrument.symbol == "BABA"
+    assert adjusted_expiry.instrument.option_expiry == "2025-01-17"
+    assert adjusted_expiry.quantity == -10
     assert validate_parse_result(result).is_valid
 
 

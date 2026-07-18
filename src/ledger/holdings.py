@@ -22,6 +22,7 @@ from .quantity import (
     POSITION_AFFECTING_TYPES,
     normalized_position_delta,
 )
+from .statement_selection import canonical_statement_clause
 
 EPSILON = 1e-9
 
@@ -50,6 +51,7 @@ class _SecurityState:
     option_strike: float | None
     option_type: str | None
     quantity: float
+    source_snapshot_id: int | None = None
     anchor: _ScopeAnchor | None = None
     initial_date: str | None = None
     anchor_quantity: float | None = None
@@ -69,6 +71,7 @@ class _CashState:
     currency: str
     scope_key: str
     balance: float
+    source_cash_balance_id: int | None = None
     anchor: _ScopeAnchor | None = None
     initial_date: str | None = None
     cash_movement: bool = False
@@ -121,6 +124,7 @@ def _fetch_scope_rows(
     account_ids: list[int],
 ) -> list[dict]:
     account_sql, account_params = _account_clause("ss.account_id", account_ids)
+    canonical_sql = canonical_statement_clause("ss.statement_id")
     rows = conn.execute(
         f"""
         SELECT ss.snapshot_set_id, ss.statement_id, ss.account_id, ss.as_of_date,
@@ -128,6 +132,7 @@ def _fetch_scope_rows(
           FROM snapshot_sets ss
          WHERE ss.section_type = ?
            AND ss.as_of_date <= ?
+           AND {canonical_sql}
            {account_sql}
         """,
         (section_type, as_of, *account_params),
@@ -156,7 +161,8 @@ def _fetch_position_rows(conn: sqlite3.Connection, snapshot_set_ids: list[int]) 
     placeholders = ",".join("?" * len(snapshot_set_ids))
     rows = conn.execute(
         f"""
-        SELECT ps.snapshot_set_id, ps.account_id, ps.instrument_id, ps.quantity,
+        SELECT ps.snapshot_id, ps.snapshot_set_id, ps.account_id,
+               ps.instrument_id, ps.quantity,
                ps.avg_cost, ps.book_value, ps.market_price, ps.market_value,
                ps.unrealized_pnl, ps.currency,
                i.instrument_key, COALESCE(i.option_root, i.symbol) AS symbol,
@@ -177,7 +183,8 @@ def _fetch_cash_rows(conn: sqlite3.Connection, snapshot_set_ids: list[int]) -> l
     placeholders = ",".join("?" * len(snapshot_set_ids))
     rows = conn.execute(
         f"""
-        SELECT snapshot_set_id, account_id, currency, opening_balance, closing_balance
+        SELECT cash_balance_id, snapshot_set_id, account_id, currency,
+               opening_balance, closing_balance
           FROM cash_balances
          WHERE snapshot_set_id IN ({placeholders})
         """,
@@ -248,6 +255,7 @@ def _fetch_transactions(
     account_ids: list[int],
 ) -> list[dict]:
     account_sql, account_params = _account_clause("t.account_id", account_ids)
+    canonical_sql = canonical_statement_clause("t.statement_id")
     rows = conn.execute(
         f"""
         SELECT t.transaction_id, t.account_id, t.trade_date, t.settle_date,
@@ -260,6 +268,7 @@ def _fetch_transactions(
           FROM transactions t
           LEFT JOIN instruments i ON i.instrument_id = t.instrument_id
          WHERE (t.trade_date <= ? OR COALESCE(t.cash_effective_date, t.trade_date) <= ?)
+           AND {canonical_sql}
            {account_sql}
          ORDER BY t.trade_date, t.transaction_id
         """,
@@ -548,6 +557,16 @@ def _security_record(
         "option_strike": state.option_strike,
         "option_type": state.option_type,
         "quantity": state.quantity,
+        "source_ref": (
+            {
+                "statement_id": state.anchor.statement_id,
+                "kind": "position",
+                "id": state.source_snapshot_id,
+                "checkpoint": not is_reported,
+            }
+            if state.anchor is not None and state.source_snapshot_id is not None
+            else None
+        ),
         "avg_cost": state.avg_cost if is_reported or not state.position_movement else None,
         "book_value": state.book_value if is_reported or not state.position_movement else None,
         "market_price": state.market_price if is_reported else None,
@@ -610,6 +629,16 @@ def _cash_record(
         "option_strike": None,
         "option_type": None,
         "quantity": state.balance,
+        "source_ref": (
+            {
+                "statement_id": state.anchor.statement_id,
+                "kind": "cash",
+                "id": state.source_cash_balance_id,
+                "checkpoint": not is_reported,
+            }
+            if state.anchor is not None and state.source_cash_balance_id is not None
+            else None
+        ),
         "avg_cost": None,
         "book_value": state.balance,
         "market_price": 1.0,
@@ -646,7 +675,11 @@ def _apply_security_prices(
         if record["asset_type"] == "cash" or record["is_reported"]:
             continue
         warnings: set[str] = record["quality_warnings"]
-        price = prices.get(str(record["_pricing_symbol"]))
+        price = (
+            None
+            if record["asset_type"] == "option"
+            else prices.get(str(record["_pricing_symbol"]))
+        )
         if price is not None:
             market_price, price_date = price
             record["market_price"] = market_price
@@ -795,6 +828,7 @@ def holdings_at(
             option_strike=row["option_strike"],
             option_type=row["option_type"],
             quantity=float(row["quantity"]),
+            source_snapshot_id=int(row["snapshot_id"]),
             anchor=anchor,
             anchor_quantity=float(row["quantity"]),
             avg_cost=row["avg_cost"],
@@ -840,6 +874,7 @@ def holdings_at(
             currency=anchor.currency,
             scope_key=anchor.scope_key,
             balance=float(row["closing_balance"]),
+            source_cash_balance_id=int(row["cash_balance_id"]),
             anchor=anchor,
         )
     for (account_id, currency), row in initial_cash.items():
@@ -880,8 +915,14 @@ def holdings_at(
                     state_key = (account_id, currency, scope_key, instrument_key)
                     state = position_states.get(state_key)
                     if state is None:
-                        initial = initial_positions.get((account_id, currency, instrument_key))
                         anchor = position_anchors.get((account_id, currency, scope_key))
+                        if anchor is not None and str(row["trade_date"]) <= anchor.as_of_date:
+                            continue
+                        initial = (
+                            None
+                            if anchor is not None
+                            else initial_positions.get((account_id, currency, instrument_key))
+                        )
                         state = _SecurityState(
                             account_id=account_id,
                             currency=currency,
@@ -945,8 +986,10 @@ def holdings_at(
             state_key = (account_id, currency, scope_key)
             state = cash_states.get(state_key)
             if state is None:
-                initial = initial_cash.get((account_id, currency))
                 anchor = cash_anchors.get(state_key)
+                if anchor is not None and effective_date <= anchor.as_of_date:
+                    continue
+                initial = None if anchor is not None else initial_cash.get((account_id, currency))
                 state = _CashState(
                     account_id=account_id,
                     currency=currency,
@@ -1018,12 +1061,14 @@ def holding_dates(
         params: list = [*account_params]
         if as_of:
             params.append(as_of)
+        canonical_sql = canonical_statement_clause("ss.statement_id")
         rows = conn.execute(
             f"""
             SELECT DISTINCT ss.as_of_date
               FROM snapshot_sets ss
              WHERE ss.section_type IN ('positions', 'cash')
                AND ss.can_clear_omitted = 1
+               AND {canonical_sql}
                {account_sql}
                {date_sql}
              ORDER BY ss.as_of_date

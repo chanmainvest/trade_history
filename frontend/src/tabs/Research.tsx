@@ -82,12 +82,25 @@ export default function Research() {
     return allRows.filter((r: any) => r.trade_date >= cutoff);
   }, [allRows, cutoff]);
 
-  const ma = (n: number) => rows.map((_: any, i: number) => {
-    if (i < n - 1) return null;
-    let s = 0;
-    for (let j = i - n + 1; j <= i; j++) s += rows[j].close;
-    return s / n;
-  });
+  const movingAverages = useMemo(() => {
+    const build = (windowSize: number) => {
+      const values = new Map<string, number>();
+      let sum = 0;
+      for (let i = 0; i < allRows.length; i++) {
+        sum += Number(allRows[i].close);
+        if (i >= windowSize) sum -= Number(allRows[i - windowSize].close);
+        if (i >= windowSize - 1) {
+          values.set(allRows[i].trade_date, sum / windowSize);
+        }
+      }
+      return values;
+    };
+    return { 50: build(50), 200: build(200) };
+  }, [allRows]);
+
+  const ma = (n: 50 | 200) => rows.map(
+    (row: any) => movingAverages[n].get(row.trade_date) ?? null,
+  );
 
   const allTrades = tradesQ.data?.rows ?? [];
   const trades = useMemo(() => {
