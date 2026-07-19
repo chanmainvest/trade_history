@@ -62,6 +62,14 @@ the equation when both scopes are complete. A first checkpoint is
 instrument or a usable quantity/delta also make the interval incomplete rather
 than silently contributing zero.
 
+If the prior statement period does not end on the calendar day immediately
+before the current period starts, the checkpoint interval is also
+`incomplete_input`: transactions from the unobserved period cannot be assumed
+absent. For option expiration/assignment/exercise, brokers may print an
+absolute contract count. When that magnitude can close all or part of the
+position immediately before the event, replay directs it toward zero; otherwise
+the stored parser delta remains and normal incomplete/residual rules apply.
+
 An explicit ticker change is replayed across the whole interval: immediately
 before the effective date, the engine debits the complete old-symbol balance
 and credits the new-symbol balance multiplied by the stored ratio. The same
@@ -97,7 +105,8 @@ A second, independent cash result compares the prior scoped closing balance to
 the current printed opening balance. Its expected close is the prior reported
 close and its summed delta is zero. That continuity check is
 `missing_prior_checkpoint` for the first scope and `incomplete_input` whenever
-one of the adjacent scopes or balances is unavailable.
+one of the adjacent scopes or balances is unavailable. It is also incomplete
+when the two statement periods are not consecutive calendar intervals.
 
 ### Statement totals
 
@@ -153,8 +162,12 @@ standalone command is useful after manual database maintenance.
 Transfer pairing remains separate from checkpoint reconciliation. Candidates
 must have opposite direction, different accounts, equal absolute cash amount or
 the same canonical instrument/quantity/currency, and dates within seven days.
-Equally near candidates are skipped as ambiguous. A journal such as DLR/DLR.U
-requires a reviewed relation; reconciliation never treats different canonical
+An additional security transfer may match across different instruments and
+currencies only when `instrument_journal_pairs` contains an active catalog or
+reviewed pair and the quantities satisfy its conversion ratio. Effective dates
+are enforced. Equally near candidates are skipped as ambiguous. Thus a
+DLR/DLR.U journal can pair at 1:1, while two listings that merely share an
+issuer/company name cannot. Reconciliation never treats different canonical
 keys as identical just to make an equation balance.
 
 ## Quantity movement rules
@@ -181,7 +194,9 @@ position-affecting effect as incomplete.
 Performance, and all Visualisation holdings/symbol selection. It returns one
 row per `(account_id, security lineage, currency)` with a stable `holding_key`.
 `/monthly/diff` and the React table use that key, so a CAD and USD position with
-the same display symbol cannot overwrite one another.
+the same display symbol cannot overwrite one another. Listings can share a
+`security_id` for issuer/security lineage and journal validation without being
+merged into one native-currency holding.
 
 For a dated ticker change after the selected checkpoint, holdings moves the
 entire old-symbol quantity to the new listing and preserves book value. The
@@ -242,8 +257,10 @@ Remaining limits:
 - parser v2 can declare recognized complete scopes, but existing active/live
   rows predate that work and remain `unknown` until a reviewed re-ingest or
   shadow rebuild gives the live ledger trusted checkpoints; and
-- DuckDB price identity is still symbol/date only, so exchange/currency-specific
-  market-price disambiguation remains a data-model limitation.
+- DuckDB price identity is provider-symbol/date. Schema-v9 listing mappings
+  supply distinct keys such as `BCE.TO` and `BCE`, preventing CAD/USD listings
+  from overwriting each other. Listings without a verified/candidate provider
+  mapping remain visibly unpriced rather than receiving a guessed suffix.
 
 ## Initial rows
 

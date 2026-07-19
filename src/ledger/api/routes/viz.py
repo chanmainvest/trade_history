@@ -59,7 +59,7 @@ def _held_symbols_at(
 ) -> list[str]:
     rows = holdings_at(as_of, account_ids, path=path)
     symbols = {
-        r["symbol"]
+        r.get("market_symbol") or r["symbol"]
         for r in rows
         if r["symbol"] and r["asset_type"] in {"equity", "etf"} and abs(r["quantity"] or 0.0) > 1e-9
     }
@@ -150,17 +150,18 @@ def holdings_by_sector(
             "institution_code": row["institution_code"],
             "institution_name": row["institution_name"],
             "symbol": row["symbol"],
+            "market_symbol": row.get("market_symbol") or row["symbol"],
             "asset_type": row["asset_type"],
             "currency": row["currency"],
             "market_value": market_value,
         })
-    profiles = _symbol_profiles([r["symbol"] for r in rows])
-    performance = _symbol_performance([r["symbol"] for r in rows], as_of, period)
+    profiles = _symbol_profiles([r["market_symbol"] for r in rows])
+    performance = _symbol_performance([r["market_symbol"] for r in rows], as_of, period)
     for r in rows:
-        profile = profiles.get(r["symbol"], {})
+        profile = profiles.get(r["market_symbol"], {})
         r["sector"] = profile.get("sector")
         r["industry"] = profile.get("industry")
-        r["performance_pct"] = performance.get(r["symbol"])
+        r["performance_pct"] = performance.get(r["market_symbol"])
     rows.sort(key=lambda r: (r["institution_code"], r["account_number"], r["symbol"], r["currency"]))
     return {"as_of_date": as_of, "period": period, "rows": rows}
 

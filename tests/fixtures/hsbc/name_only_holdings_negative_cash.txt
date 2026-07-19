@@ -1,0 +1,11 @@
+Statementperiod October1,2023toOctober31,2023
+Your Canadian Margin Account
+Account#6Y-6HF9-E
+Details of holdings in your account
+Equities
+Description Quantity MarketPrice BookCost MarketValue Percent
+HORZNHIGHINTSVGSETF-A 2,000 50.000 100,070.45 100,000.00 10.0
+HRI - - 4 - 2 - 22 - 24 - HSBCH70000_1230920_010 0044841 01965
+Account activity since your last statement
+OpeningBalance $8,949.29
+Oct31 ClosingBalance $(96,022.38)

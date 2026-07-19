@@ -36,7 +36,7 @@ uv sync --all-extras --dev
 uv run ledger db init
 
 # backend
-uv run ledger serve --host 127.0.0.1 --port 8000
+uv run ledger serve --host 0.0.0.0 --port 8000
 ```
 
 For an existing real ledger, use the guarded shadow workflow rather than
@@ -55,12 +55,13 @@ In another terminal:
 ```powershell
 cd frontend
 npm install
-npm run dev -- --host 127.0.0.1 --port 5175 --strictPort
+npm run dev -- --host 0.0.0.0 --port 5173 --strictPort
 ```
 
-Open `http://127.0.0.1:5175`. On shared machines, verify the backend title at
-`http://127.0.0.1:8000/openapi.json` before assuming a port belongs to this
-project.
+Open `http://127.0.0.1:5173` on this computer or
+`http://<computer-LAN-IP>:5173` on another trusted LAN device. On shared
+machines, verify the backend title at `http://127.0.0.1:8000/openapi.json`
+before assuming a port belongs to this project.
 
 To use the synthetic workspace instead of private data, set the profile before
 starting Python:
@@ -111,11 +112,22 @@ relationships, not undated aliases. Reconciliation and holdings move the
 position across that relationship, while Research joins the valid price,
 trade, and financial history for either ticker.
 
-## Docker
+Broker names, exchange listings, underlying securities/share classes, and
+Yahoo symbols are stored separately. Run
+`uv run ledger ingest resolve-instruments --verify-yahoo` to resolve queued
+public security names and verify non-empty Yahoo history. Ambiguous names stay
+unresolved for review. Cross-currency journals such as DLR/DLR.U match only through an
+explicit fungible-security pair.
+
+## Docker deployment
 
 ```powershell
 docker compose up --build
 ```
+
+Docker is for deployment/testing the deployment image, not the normal local
+development loop. Run the FastAPI and Vite development servers directly on the
+host as shown above.
 
 The backend is exposed on 8000 and the production frontend on 5173. Compose
 mounts local `data/`, `logs/`, and read-only-input `Statements/` paths into the

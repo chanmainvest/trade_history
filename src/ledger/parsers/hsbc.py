@@ -54,11 +54,16 @@ RE_ACCOUNT_HDR = re.compile(
 )
 # Activity row: e.g. "Sep5 Dividend SPROTTINC-NEW 1,300 438.62"
 RE_ACT_ROW = re.compile(
-    r"^([A-Z][a-z]{2})(\d{1,2})\s+([A-Za-z\-./]+?)\s+(.*)$"
+    r"^([A-Z][a-z]{2})(\d{1,2})\s+([A-Za-z$\-./]+?)\s+(.*)$"
 )
-RE_OPENING = re.compile(r"^OpeningBalance\s+\$?\s*\(?(-?[\d,]+(?:\.\d+)?)\)?", re.IGNORECASE)
+_SIGNED_MONEY_TOKEN = r"(\(?-?[\d,]+(?:\.\d+)?\)?-?)"
+RE_OPENING = re.compile(
+    rf"^OpeningBalance\s+\$?\s*{_SIGNED_MONEY_TOKEN}",
+    re.IGNORECASE,
+)
 RE_CLOSING = re.compile(
-    r"^(?:[A-Z][a-z]{2}\d{1,2}\s+)?ClosingBalance(?:afterSettlement)?\s+\$?\s*\(?(-?[\d,]+(?:\.\d+)?)\)?",
+    rf"^(?:[A-Z][a-z]{{2}}\d{{1,2}}\s+)?ClosingBalance"
+    rf"(?:afterSettlement)?\s+\$?\s*{_SIGNED_MONEY_TOKEN}",
     re.IGNORECASE,
 )
 
@@ -139,6 +144,8 @@ def _classify_activity(verb: str) -> str | None:
         "eps": "transfer_out", "eft": "deposit",
         "fee": "fee",
         "deposit": "deposit",
+        "convert$": "fx_conversion", "convert": "fx_conversion",
+        "refund": "adjustment",
         "withdrawal": "withdrawal", "withdraw": "withdrawal",
         "journal": "journal",
         "split": "stock_split",
@@ -221,8 +228,15 @@ def _parse_holdings(text: str, currency: str, stmt: ParsedStatement) -> bool:
         s = ln.strip()
         if not s:
             continue
-        # Section labels HSBC uses
         lower = s.lower()
+        if (
+            re.match(r"^HRI\s+-\s+-", s, re.IGNORECASE)
+            or re.match(r"^HSBCH\d+_", s, re.IGNORECASE)
+            or re.match(r"^[A-Z][a-z]{2}\d{1,2}\s+(?:Bought|Sold)\b", s)
+            or lower.startswith("inyouraccountbefore")
+        ):
+            continue
+        # Section labels HSBC uses
         if (
             lower.startswith("description ")
             and "quantity" in lower
@@ -285,7 +299,8 @@ def _parse_holdings(text: str, currency: str, stmt: ParsedStatement) -> bool:
 
         # Equity / MF holding line, ends with: <qty> <S?> <price> <bookcost> <mktvalue> <%>
         # pdfplumber output is space-collapsed; numbers separated by spaces.
-        nums = re.findall(r"-?\(?[\d,]+(?:\.\d+)?\)?-?", s)
+        number_matches = list(re.finditer(r"-?\(?[\d,]+(?:\.\d+)?\)?-?", s))
+        nums = [match.group(0) for match in number_matches]
         if len(nums) < 4:
             if re.search(r"\d", s):
                 stmt.quarantine.append(ParsedQuarantine(
@@ -296,15 +311,12 @@ def _parse_holdings(text: str, currency: str, stmt: ParsedStatement) -> bool:
         # Symbol: parens at end of description on same/next line
         tk = RE_PARENS_TICKER.search(s)
         sym = tk.group(1) if tk else None
-        # Strip numbers + symbol parens to get description
-        desc = re.sub(RE_PARENS_TICKER, "", s)
-        desc = re.sub(r"-?\(?[\d,]+(?:\.\d+)?\)?-?\s*$", "", desc).strip()
-        if not sym:
-            stmt.quarantine.append(ParsedQuarantine(
-                raw_line=ln,
-                reason="holding: no printed ticker",
-            ))
-            continue
+        # The financial columns are the final five numeric values (or all four
+        # values in older rows). Preserve digits embedded in the security name,
+        # such as ``0-3 MONTH`` or ``3-12M``, by slicing at that numeric tail.
+        tail_index = -5 if len(number_matches) >= 5 else 0
+        desc = s[: number_matches[tail_index].start()].strip()
+        desc = re.sub(RE_PARENS_TICKER, "", desc).strip()
         # Heuristic asset type
         atype = "etf" if "ETF" in desc.upper() else (
             "mutual_fund" if section == "MutualFunds" else "equity"
@@ -314,7 +326,12 @@ def _parse_holdings(text: str, currency: str, stmt: ParsedStatement) -> bool:
         book = parse_money(nums[-3])
         mv = parse_money(nums[-2])
         instr = ParsedInstrument(
-            asset_type=atype, symbol=sym, currency=currency, name=desc[:120],
+            asset_type=atype,
+            symbol=sym or desc[:12],
+            currency=currency,
+            name=desc[:120],
+            resolution_method=(None if sym else "unresolved_printed_identity"),
+            resolution_confidence=(None if sym else 0.0),
         )
         if qty is None:
             stmt.quarantine.append(ParsedQuarantine(
@@ -457,13 +474,16 @@ def _parse_activity(text: str, currency: str, year_default: int,
         # Build instrument for non-option transactions: try to pull symbol from rest
         if instrument is None and txn_type not in {"interest_income", "fee", "journal",
                                                     "deposit", "withdrawal", "transfer_in",
-                                                    "transfer_out"}:
+                                                    "transfer_out", "fx_conversion",
+                                                    "adjustment"}:
             # Description string is everything before the first number block
             desc_only = re.split(r"\s+\(?-?[\d,]+(?:\.\d+)?", rest, maxsplit=1)[0].strip()
             if desc_only:
                 instrument = ParsedInstrument(
                     asset_type="equity", symbol=desc_only.split()[0][:12],
                     currency=currency, name=desc_only,
+                    resolution_method="unresolved_printed_identity",
+                    resolution_confidence=0.0,
                 )
 
         stmt.transactions.append(ParsedTxn(
@@ -491,7 +511,7 @@ def _parse_activity(text: str, currency: str, year_default: int,
 # ----------------------------------------------------------------- Parser
 class HSBCParser:
     NAME = "hsbc"
-    VERSION = "2.2.0"
+    VERSION = "2.4.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "HSBC direct invest":

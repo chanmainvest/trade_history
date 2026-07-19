@@ -120,3 +120,52 @@ def test_cibc_tax_documents_are_explicitly_skipped_not_invalid():
     assert result.skip_reason == "tax document; no brokerage statement extraction"
     assert result.errors == []
     assert result.statements == []
+
+
+def test_cibc_eft_contribution_and_unlabelled_cash_adjustment():
+    pdf = load_fixture("cibc/monthly_dual_currency.txt")
+    pdf.pages = [
+        page.replace(
+            "Nov 30 Closing Cash Balance $1,000.00",
+            """Nov 20 EFT DEBIT BANK ACCOUNT — — $500,000.00
+Nov 21 Contrib TRANSFER TO 9999999999 — — -$14,000.00
+Nov 22 GRANITE REAL ESTATE — — -$0.62
+Nov 30 Closing Cash Balance $1,000.00""",
+        )
+        for page in pdf.pages
+    ]
+
+    result = CIBCParser().parse(pdf)
+    statement = result.statements[0]
+    rows = {row.trade_date: row for row in statement.transactions}
+
+    assert rows["2023-11-20"].txn_type == "deposit"
+    assert rows["2023-11-20"].net_amount == 500_000.0
+    assert rows["2023-11-21"].txn_type == "transfer_out"
+    assert rows["2023-11-21"].instrument is None
+    assert rows["2023-11-21"].net_amount == -14_000.0
+    assert rows["2023-11-22"].txn_type == "adjustment"
+    assert rows["2023-11-22"].net_amount == -0.62
+    assert validate_parse_result(result).is_valid
+
+
+def test_cibc_unknown_dated_numeric_activity_marks_cash_scope_incomplete():
+    pdf = load_fixture("cibc/monthly_dual_currency.txt")
+    pdf.pages = [
+        page.replace(
+            "Nov 30 Closing Cash Balance $1,000.00",
+            "Nov 22 Mystery Event $10.00\nNov 30 Closing Cash Balance $1,000.00",
+        )
+        for page in pdf.pages
+    ]
+
+    result = CIBCParser().parse(pdf)
+    statement = result.statements[0]
+    cad_cash_scope = next(
+        scope
+        for scope in statement.snapshot_sets
+        if scope.currency == "CAD" and scope.section_type == "cash"
+    )
+
+    assert cad_cash_scope.completeness == "unknown"
+    assert any("Mystery Event" in row.raw_line for row in statement.quarantine)

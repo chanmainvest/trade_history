@@ -12,10 +12,13 @@ the focused specifications under `spec/`.
    Do not treat a partial extraction as a complete snapshot.
 5. A ticker change is a dated relationship, not an alias. Preserve both printed
    symbols and require explicit source evidence; never join by name or residual.
-6. Preserve user changes in a dirty worktree. Do not revert unrelated edits.
-7. Keep parsed data traceable to its source. Parser changes require a defensible
+6. Keep broker symbol, exchange listing, underlying security/share class, issuer,
+   and market-provider symbol distinct. Cross-currency journals require an
+   explicit instrument pair; a shared company name is insufficient.
+7. Preserve user changes in a dirty worktree. Do not revert unrelated edits.
+8. Keep parsed data traceable to its source. Parser changes require a defensible
    source fixture or a spot-check against the cited PDF.
-8. Documentation is part of the change. Update the owning spec with the code.
+9. Documentation is part of the change. Update the owning spec with the code.
 
 ## Load context on demand
 
@@ -32,6 +35,7 @@ Start at [spec/INDEX.md](spec/INDEX.md), then load only the files needed:
 | CIBC, HSBC, RBC, or TD | `spec/parsers/<INSTITUTION>.md` |
 | Reconciliation or holdings-at-date | `spec/RECONCILIATION.md` |
 | Ticker changes/corporate-action identity | `spec/DATA-MODEL.md` + `spec/PARSER-CONTRACT.md` + `spec/RECONCILIATION.md` |
+| Broker aliases, listings, Yahoo symbols, journals | `spec/DATA-MODEL.md` + `spec/INGESTION.md` + `spec/RECONCILIATION.md` |
 | FastAPI or React | `spec/API-UI.md` |
 | Profiles, CLI, Docker, servers, release | `spec/OPERATIONS.md` |
 | Human-facing behavior | `spec/USER-GUIDE.md` |
@@ -47,6 +51,9 @@ not implemented behavior.
 - React 18, Vite, TypeScript, Plotly, React Query, React Router.
 - Use `uv run ...` for every Python command; never use bare `python` or `pip`.
 - Use `npm` in `frontend/`.
+- Run development servers directly on the host; Docker is deployment-only.
+  Bind an explicitly shared review server to `0.0.0.0`, never assume a Docker
+  port belongs to this app, and verify the API title before use.
 - Prefer `rg`/`rg --files` for repository searches.
 - Edit files with patch-based changes and preserve unrelated local modifications.
 - Put every disposable script, scratch database, generated diagnostic, and

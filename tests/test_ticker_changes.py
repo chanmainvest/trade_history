@@ -1,6 +1,8 @@
 """Regression coverage for dated ticker changes across ledger consumers."""
 from __future__ import annotations
 
+import calendar
+
 from ledger.db import sqlite as sqlite_db
 from ledger.holdings import holdings_at
 from ledger.ingest.reconcile import rebuild_reconciliation_results
@@ -30,12 +32,14 @@ def _account(conn) -> int:
 
 def _statement(conn, account_id: int, month: str) -> int:
     source_id = seed_source(conn, f"Statements/Test/{month}.pdf")
+    year, month_number = (int(part) for part in month.split("-"))
+    last_day = calendar.monthrange(year, month_number)[1]
     return seed_statement(
         conn,
         account_id=account_id,
         source_file_id=source_id,
         period_start=f"{month}-01",
-        period_end=f"{month}-28",
+        period_end=f"{month}-{last_day:02d}",
     )
 
 

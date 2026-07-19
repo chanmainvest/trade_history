@@ -41,25 +41,28 @@ Two terminals.
 **Terminal 1 — backend** (default profile uses your real statements):
 
 ```powershell
-uv run ledger serve --host 127.0.0.1 --port 8000
+uv run ledger serve --host 0.0.0.0 --port 8000
 ```
 
-The API binds to `http://127.0.0.1:8000`. Auto-reloads on file change.
+The API binds on all local interfaces and auto-reloads on file change.
 
 **Terminal 2 — frontend**:
 
 ```powershell
 cd frontend
-npm run dev -- --host 127.0.0.1 --port 5175 --strictPort
+npm run dev -- --host 0.0.0.0 --port 5173 --strictPort
 ```
 
-Open <http://127.0.0.1:5175>. The Vite dev server proxies `/api` to port 8000.
-Do not trust a default port on a shared machine; confirm `/openapi.json` reports
-`Trade History API`.
+Open <http://127.0.0.1:5173> on the development computer. From another trusted
+device on the same LAN, open `http://<development-computer-IP>:5173`. The Vite
+dev server proxies `/api` to port 8000. Do not expose this private financial
+application to an untrusted/public network. Do not trust a default port on a
+shared machine; confirm `/openapi.json` reports `Trade History API`.
 
-### 2.1 Docker start
+### 2.1 Docker deployment
 
-If you have Docker Desktop installed, one command starts both containers:
+Docker validates/runs the deployment image; it is not the local development
+workflow. To run the deployed containers:
 
 ```powershell
 docker compose up --build
@@ -385,6 +388,9 @@ uv run ledger ingest run
 # derive replaceable PDF line boxes for Verify after semantic ingest
 uv run ledger ingest enrich-layout
 
+# resolve known broker names; optionally verify public names/symbols with Yahoo
+uv run ledger ingest resolve-instruments --verify-yahoo
+
 # infer opening holdings before the first statement
 uv run ledger ingest infer-initials
 
@@ -407,6 +413,12 @@ needed after manual DB edits.
 `enrich-layout` verifies each source hash and writes only derived page/line
 geometry. It does not change semantic extraction or financial values. Re-run it
 after activating new parser output or changing the geometry extractor.
+
+`resolve-instruments` distinguishes the broker's printed symbol from the
+exchange listing and Yahoo provider symbol. Unknown or ambiguous names stay
+pending and unpriced. After new candidates resolve, rerun `ingest run` so the
+resolver-cache change rebuilds affected statement output. CAD/USD journal pairs
+are linked only when the database contains an explicit fungible-security pair.
 
 `shadow build` does not replace the active database. Review its local report
 and source PDFs first; only a human may record `shadow sign-off` and later run

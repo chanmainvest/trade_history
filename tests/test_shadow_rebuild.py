@@ -46,6 +46,12 @@ def _seed_curated_source(path: Path) -> tuple[int, int, int]:
             symbol="XYZ",
             currency="CAD",
         )
+        usd_instrument_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="equity",
+            symbol="ABC.U",
+            currency="USD",
+        )
         conn.execute(
             """
             INSERT INTO instrument_ticker_changes(
@@ -60,6 +66,36 @@ def _seed_curated_source(path: Path) -> tuple[int, int, int]:
         conn.execute(
             "INSERT INTO instrument_aliases(instrument_id, alias, institution_id) VALUES (?, 'ABC LTD', ?)",
             (instrument_id, institution_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO instrument_resolution_candidates(
+                institution_id, normalized_text, display_text, asset_type,
+                currency, status, resolved_instrument_id, resolution_method,
+                resolution_confidence
+            ) VALUES (?, 'ABCLIMITED', 'ABC LIMITED', 'equity', 'CAD',
+                      'resolved', ?, 'reviewed_name', 1)
+            """,
+            (institution_id, instrument_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO instrument_market_symbols(
+                instrument_id, provider, provider_symbol, status,
+                last_checked_at, verified_at
+            ) VALUES (?, 'yahoo', 'ABC.TO', 'verified',
+                      '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')
+            """,
+            (instrument_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO instrument_journal_pairs(
+                from_instrument_id, to_instrument_id, conversion_ratio,
+                status, notes
+            ) VALUES (?, ?, 1, 'reviewed', 'manual: fungible listing')
+            """,
+            (instrument_id, usd_instrument_id),
         )
         conn.execute(
             """
@@ -145,8 +181,11 @@ def test_export_curated_state_is_read_only_and_excludes_inferred_cash(tmp_path):
     assert source.read_bytes() == before
     assert state.counts() == {
         "accounts": 1,
-            "aliases": 1,
-            "ticker_changes": 1,
+        "aliases": 1,
+        "resolution_candidates": 1,
+        "market_symbols": 1,
+        "journal_pairs": 1,
+        "ticker_changes": 1,
         "identifier_lookups": 1,
         "initial_positions": 1,
         "initial_cash": 1,
@@ -226,6 +265,15 @@ def test_shadow_build_preserves_curated_state_and_requires_signed_cutover(tmp_pa
         assert conn.execute("SELECT opened_on FROM accounts WHERE account_number = 'A-1'").fetchone()[0] == "2010-01-01"
         assert conn.execute("SELECT notes FROM accounts WHERE account_number = 'A-1'").fetchone()[0] == "manual: account note"
         assert conn.execute("SELECT COUNT(*) FROM instrument_aliases WHERE alias = 'ABC LTD'").fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM instrument_resolution_candidates WHERE status = 'resolved'"
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM instrument_market_symbols WHERE provider_symbol = 'ABC.TO' AND status = 'verified'"
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM instrument_journal_pairs WHERE status = 'reviewed'"
+        ).fetchone()[0] == 1
         assert conn.execute(
             "SELECT COUNT(*) FROM instrument_ticker_changes WHERE status = 'reviewed'"
         ).fetchone()[0] == 1

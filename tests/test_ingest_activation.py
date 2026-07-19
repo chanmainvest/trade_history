@@ -260,6 +260,44 @@ def test_stage_write_failure_rolls_back_to_the_previous_active_extraction(tmp_pa
     assert tuple(source_after) == tuple(old_source)
 
 
+def test_activation_aggregates_distinct_holding_lots_without_doubling_repeats(
+    tmp_path,
+):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    statement = _statement(symbol="LOT")
+    first = statement.positions[0]
+    first.raw_line = "LOT 2 10.00 20.00 22.00"
+    repeated = deepcopy(first)
+    second = deepcopy(first)
+    second.quantity = 3
+    second.book_value = 30
+    second.market_value = 33
+    second.unrealized_pnl = 3
+    second.raw_line = "LOT 3 S 10.00 30.00 33.00"
+    statement.positions = [first, repeated, second]
+
+    with sqlite_db.session(db_path) as conn:
+        _activate(conn, _result(statement))
+        row = conn.execute(
+            """
+            SELECT quantity, avg_cost, book_value, market_price,
+                   market_value, unrealized_pnl, raw_line
+              FROM position_snapshots
+            """
+        ).fetchone()
+
+    assert row["quantity"] == 5.0
+    assert row["avg_cost"] is None
+    assert row["book_value"] == 50.0
+    assert row["market_price"] == 11.0
+    assert row["market_value"] == 55.0
+    assert row["unrealized_pnl"] == 5.0
+    assert row["raw_line"] == (
+        "LOT 2 10.00 20.00 22.00\nLOT 3 S 10.00 30.00 33.00"
+    )
+
+
 def test_forced_reingest_keeps_active_hash_counts_and_instruments_stable(tmp_path):
     db_path = tmp_path / "ledger.sqlite"
     sqlite_db.init_db(db_path)

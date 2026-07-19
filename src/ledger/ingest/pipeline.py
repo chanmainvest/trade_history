@@ -420,6 +420,12 @@ def _write_statement(
                     if t.resolution_confidence is not None
                     else i.resolution_confidence
                 ),
+                issuer_key=i.issuer_key,
+                issuer_name=i.issuer_name,
+                security_key=i.security_key,
+                security_name=i.security_name,
+                journalable=i.journalable,
+                market_symbol=i.market_symbol,
             )
         related_instr_id = None
         if t.related_instrument is not None:
@@ -438,6 +444,12 @@ def _write_statement(
                 option_multiplier=related.option_multiplier,
                 resolution_method=related.resolution_method,
                 resolution_confidence=related.resolution_confidence,
+                issuer_key=related.issuer_key,
+                issuer_name=related.issuer_name,
+                security_key=related.security_key,
+                security_name=related.security_name,
+                journalable=related.journalable,
+                market_symbol=related.market_symbol,
             )
         position_effect = (
             t.position_delta
@@ -504,6 +516,12 @@ def _write_statement(
             option_multiplier=i.option_multiplier,
             resolution_method=i.resolution_method,
             resolution_confidence=i.resolution_confidence,
+            issuer_key=i.issuer_key,
+            issuer_name=i.issuer_name,
+            security_key=i.security_key,
+            security_name=i.security_name,
+            journalable=i.journalable,
+            market_symbol=i.market_symbol,
         )
         conn.execute(
             """INSERT INTO position_snapshots
@@ -512,14 +530,61 @@ def _write_statement(
              market_value, unrealized_pnl, currency, raw_line)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(snapshot_set_id, instrument_id) DO UPDATE SET
-                evidence_id   = excluded.evidence_id,
-                quantity      = excluded.quantity,
-                avg_cost      = excluded.avg_cost,
-                book_value    = excluded.book_value,
-                market_price  = excluded.market_price,
-                market_value  = excluded.market_value,
-                unrealized_pnl= excluded.unrealized_pnl,
-                raw_line      = excluded.raw_line""",
+                quantity = CASE
+                    WHEN COALESCE(position_snapshots.raw_line, '') =
+                         COALESCE(excluded.raw_line, '')
+                    THEN position_snapshots.quantity
+                    ELSE position_snapshots.quantity + excluded.quantity
+                END,
+                avg_cost = CASE
+                    WHEN COALESCE(position_snapshots.raw_line, '') =
+                         COALESCE(excluded.raw_line, '')
+                    THEN position_snapshots.avg_cost
+                    ELSE NULL
+                END,
+                book_value = CASE
+                    WHEN COALESCE(position_snapshots.raw_line, '') =
+                         COALESCE(excluded.raw_line, '')
+                    THEN position_snapshots.book_value
+                    WHEN position_snapshots.book_value IS NOT NULL
+                     AND excluded.book_value IS NOT NULL
+                    THEN position_snapshots.book_value + excluded.book_value
+                    ELSE NULL
+                END,
+                market_price = CASE
+                    WHEN position_snapshots.market_price IS NULL
+                    THEN excluded.market_price
+                    WHEN excluded.market_price IS NULL
+                    THEN position_snapshots.market_price
+                    WHEN ABS(position_snapshots.market_price - excluded.market_price) <= 1e-9
+                    THEN position_snapshots.market_price
+                    ELSE NULL
+                END,
+                market_value = CASE
+                    WHEN COALESCE(position_snapshots.raw_line, '') =
+                         COALESCE(excluded.raw_line, '')
+                    THEN position_snapshots.market_value
+                    WHEN position_snapshots.market_value IS NOT NULL
+                     AND excluded.market_value IS NOT NULL
+                    THEN position_snapshots.market_value + excluded.market_value
+                    ELSE NULL
+                END,
+                unrealized_pnl = CASE
+                    WHEN COALESCE(position_snapshots.raw_line, '') =
+                         COALESCE(excluded.raw_line, '')
+                    THEN position_snapshots.unrealized_pnl
+                    WHEN position_snapshots.unrealized_pnl IS NOT NULL
+                     AND excluded.unrealized_pnl IS NOT NULL
+                    THEN position_snapshots.unrealized_pnl + excluded.unrealized_pnl
+                    ELSE NULL
+                END,
+                raw_line = CASE
+                    WHEN COALESCE(position_snapshots.raw_line, '') =
+                         COALESCE(excluded.raw_line, '')
+                    THEN position_snapshots.raw_line
+                    ELSE COALESCE(position_snapshots.raw_line || char(10), '') ||
+                         COALESCE(excluded.raw_line, '')
+                END""",
             (
                 statement_id,
                 snapshot_sets[(p.currency, "positions", p.scope_key)],
@@ -965,7 +1030,11 @@ def run_ingest(
 
             active_log.info("Reading %s/%s", folder.name, path.name)
             try:
-                pdf = extract_pdf(path, repo_root=source_root)
+                pdf = extract_pdf(
+                    path,
+                    repo_root=source_root,
+                    include_layout=folder.name == "RBC Invest Direct",
+                )
             except Exception as exc:
                 # Hashing succeeded above, so this is a true extraction attempt
                 # rather than an unknown input.  Keep the last good run active.

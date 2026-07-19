@@ -39,6 +39,12 @@ def test_td_modern_dual_account_holdings_activity_and_cash():
         if position.instrument.asset_type == "option"
     ]
     assert option_positions
+    short_position = next(
+        position for position in usd.positions if position.instrument.symbol == "SHRT"
+    )
+    assert short_position.quantity == -2000.0
+    assert short_position.market_price == 30.48
+    assert short_position.market_value == -60960.0
     assert option_positions[0].instrument.option_expiry == "2026-02-20"
     assert any(
         transaction.instrument
@@ -184,6 +190,159 @@ def test_td_option_holding_skips_harmless_intervening_header_lines():
     )
     assert option.option_expiry == "2026-02-20"
     assert validate_parse_result(result).is_valid
+
+
+def test_td_signed_close_month_code_and_pending_activity_boundary():
+    pdf = load_fixture("td/modern_monthly.txt")
+    pdf.pages = [
+        page.replace(
+            "Ending cash balance $360.00",
+            """Oct 22 Withholding tax BETA CORP 5 -10.00 350.00
+Oct 23 Assign PUT -100 BBB'25 24FB@30 1 0.00 350.00
+Ending cash balance -$350.00
+Pending activity in your account this period
+Nov 1 Buy BETA CORP (BBB) 1 100.00 -100.00 250.00
+Ending cash balance $250.00""",
+        )
+        for page in pdf.pages
+    ]
+
+    result = TDParser().parse(pdf)
+    usd = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "USD"
+    )
+    tax = next(row for row in usd.transactions if row.txn_type == "tax_withholding")
+    assignment = next(
+        row for row in usd.transactions if row.txn_type == "option_assignment"
+    )
+
+    assert tax.net_amount == -10.0
+    assert assignment.instrument is not None
+    assert assignment.instrument.option_expiry == "2025-02-24"
+    assert usd.cash_balances[0].closing_balance == -350.0
+    assert not any(row.trade_date == "2025-11-01" for row in usd.transactions)
+    assert validate_parse_result(result).is_valid
+
+
+def test_td_disposition_cash_events_and_in_kind_transfer():
+    pdf = load_fixture("td/modern_monthly.txt")
+    pdf.pages = [
+        page.replace(
+            "Ending cash balance $360.00",
+            """Oct 22 Disposition BETA CORP (BBB) -5 150.00 510.00
+Oct 23 Web Banking AB123 TSF FR 9999999 1,000.00 1,510.00
+Oct 24 Admin FeeCharged PAPER STATEMENT FEE 2.00 1,508.00
+Oct 25 CIL BETA CORP 5.00 1,513.00
+Oct 26 Transfer In BETA CORP (BBB) 10 0.00 1,513.00
+Ending cash balance $1,513.00""",
+        )
+        for page in pdf.pages
+    ]
+
+    result = TDParser().parse(pdf)
+    usd = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "USD"
+    )
+    disposition = next(
+        row for row in usd.transactions if row.description.startswith("BETA CORP")
+        and row.txn_type == "sell"
+        and row.trade_date == "2025-10-22"
+    )
+    transfer = next(
+        row for row in usd.transactions if row.trade_date == "2025-10-26"
+    )
+
+    assert (disposition.quantity, disposition.price, disposition.net_amount) == (
+        -5.0,
+        None,
+        150.0,
+    )
+    assert next(row for row in usd.transactions if row.trade_date == "2025-10-23").net_amount == 1000.0
+    assert next(row for row in usd.transactions if row.trade_date == "2025-10-24").net_amount == -2.0
+    assert next(row for row in usd.transactions if row.trade_date == "2025-10-25").net_amount == 5.0
+    assert transfer.txn_type == "transfer_in"
+    assert transfer.quantity == 10.0
+    assert transfer.net_amount == 0.0
+    assert transfer.instrument is not None
+    assert transfer.instrument.symbol == "BBB"
+    assert validate_parse_result(result).is_valid
+
+
+def test_td_unknown_numeric_activity_marks_cash_scope_incomplete():
+    pdf = load_fixture("td/modern_monthly.txt")
+    pdf.pages = [
+        page.replace(
+            "Ending cash balance $360.00",
+            "Oct 22 Mystery Event 10.00 370.00\nEnding cash balance $370.00",
+        )
+        for page in pdf.pages
+    ]
+
+    result = TDParser().parse(pdf)
+    usd = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "USD"
+    )
+
+    assert any("unknown verb" in row.reason for row in usd.quarantine)
+    assert next(
+        scope for scope in usd.snapshot_sets if scope.section_type == "cash"
+    ).completeness == "unknown"
+
+
+def test_td_unrecognized_numeric_holding_marks_position_scope_incomplete():
+    pdf = load_fixture("td/modern_monthly.txt")
+    pdf.pages = [
+        page.replace(
+            "(SHRT)\nOptions",
+            "(SHRT)\n...2..0..0....CORRUPTED...ROW...5..0..0...\nOptions",
+        )
+        for page in pdf.pages
+    ]
+
+    result = TDParser().parse(pdf)
+    usd = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "USD"
+    )
+
+    assert any("unrecognized holding row" in row.reason for row in usd.quarantine)
+    assert next(
+        scope for scope in usd.snapshot_sets if scope.section_type == "positions"
+    ).completeness == "unknown"
+
+
+def test_td_legacy_trade_reads_leading_quantity_before_name():
+    pdf = load_fixture("td/modern_monthly.txt")
+    pdf.pages = [
+        page.replace(
+            "Ending cash balance $360.00",
+            """Oct 22 Sell -132.957 TD JPN INDEX-I SER/NL'FRAC 9.660 1,284.36 1,644.36
+Ending cash balance $1,644.36""",
+        )
+        for page in pdf.pages
+    ]
+
+    result = TDParser().parse(pdf)
+    usd = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "USD"
+    )
+    row = next(transaction for transaction in usd.transactions if transaction.trade_date == "2025-10-22")
+
+    assert row.txn_type == "sell"
+    assert row.quantity == -132.957
+    assert row.price == 9.66
+    assert row.net_amount == 1284.36
+    assert row.instrument is not None
+    assert row.instrument.name == "TD JPN INDEX-I SER/NL'FRAC"
 
 
 def test_td_summary_filename_emits_annual_statement():

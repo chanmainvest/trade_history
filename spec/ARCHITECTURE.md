@@ -32,6 +32,7 @@ src/ledger/
   pdf_text.py               raw PDF text, optional word/line geometry, fingerprinting
   quantity.py               transaction-type quantity movement rules
   ticker_changes.py         explicit ticker-pair parsing, persistence, lineage queries
+  instrument_catalog.py     reviewed broker-name/listing/provider identities
   holdings.py               canonical read-only scoped holdings reconstruction
   shadow.py                 read-only source export, staged rebuild, compare, guarded cutover
   db/
@@ -43,6 +44,8 @@ src/ledger/
     pipeline.py             discovery, validate, staged source activation, audit export
     layout_enrichment.py    replaceable PDF geometry extraction and evidence linking
     identity_resolution.py  conservative in-stage printed/alias/holding resolution
+    instrument_resolution.py catalog repair and candidate status
+    yahoo_resolution.py     opt-in public-name/provider verification
     repair_symbols.py       legacy/manual post-parse identity repair
     fund_lookup.py          reviewed fund-code lookup workflow
     initials.py             inferred pre-history anchors
@@ -82,6 +85,9 @@ See [DATA-MODEL.md](DATA-MODEL.md) for persisted contracts.
 - Preserve uncertainty instead of manufacturing values.
 - Keep every derived row traceable to its source statement.
 - Preserve old/new ticker listings as dated identities rather than aliases.
+- Keep issuer, security/share class, broker listing, and provider symbol as
+  separate identities; permit cross-currency journals only through an explicit
+  pair.
 
 The current implementation violates parts of the last three invariants. Those
 violations are enumerated in [CURRENT-STATE.md](CURRENT-STATE.md), not hidden

@@ -20,6 +20,7 @@ from .quantity import (
     LEGACY_UNDERIVABLE_POSITION_TYPES,
     NON_CASH_TXN_TYPES,
     POSITION_AFFECTING_TYPES,
+    contextual_position_delta,
     normalized_position_delta,
 )
 from .statement_selection import canonical_statement_clause
@@ -170,10 +171,14 @@ def _fetch_position_rows(conn: sqlite3.Connection, snapshot_set_ids: list[int]) 
                ps.avg_cost, ps.book_value, ps.market_price, ps.market_value,
                ps.unrealized_pnl, ps.currency,
                i.instrument_key, COALESCE(i.option_root, i.symbol) AS symbol,
-               i.symbol AS pricing_symbol,
+               COALESCE(market.provider_symbol, i.symbol) AS pricing_symbol,
                i.asset_type, i.option_expiry, i.option_strike, i.option_type
           FROM position_snapshots ps
           JOIN instruments i ON i.instrument_id = ps.instrument_id
+          LEFT JOIN instrument_market_symbols market
+            ON market.instrument_id = i.instrument_id
+           AND market.provider = 'yahoo'
+           AND market.status IN ('candidate','verified','failed')
          WHERE ps.snapshot_set_id IN ({placeholders})
         """,
         snapshot_set_ids,
@@ -209,10 +214,14 @@ def _fetch_initial_positions(
         SELECT ip.account_id, ip.as_of_date, ip.instrument_id, ip.quantity,
                ip.avg_cost, ip.currency, i.instrument_key,
                COALESCE(i.option_root, i.symbol) AS symbol,
-               i.symbol AS pricing_symbol, i.asset_type,
+               COALESCE(market.provider_symbol, i.symbol) AS pricing_symbol, i.asset_type,
                i.option_expiry, i.option_strike, i.option_type
           FROM initial_positions ip
           JOIN instruments i ON i.instrument_id = ip.instrument_id
+          LEFT JOIN instrument_market_symbols market
+            ON market.instrument_id = i.instrument_id
+           AND market.provider = 'yahoo'
+           AND market.status IN ('candidate','verified','failed')
          WHERE ip.as_of_date <= ? {account_sql}
         """,
         (as_of, *account_params),
@@ -267,26 +276,35 @@ def _fetch_transactions(
                t.net_amount, t.cash_delta, t.cash_effective_date, t.currency,
                 i.instrument_key, i.currency AS instrument_currency,
                 COALESCE(i.option_root, i.symbol) AS symbol,
-                i.symbol AS pricing_symbol, i.asset_type,
+                COALESCE(market.provider_symbol, i.symbol) AS pricing_symbol, i.asset_type,
                 i.option_expiry, i.option_strike, i.option_type,
                 tc.conversion_ratio AS ticker_change_ratio,
                 successor.instrument_id AS successor_instrument_id,
                 successor.instrument_key AS successor_instrument_key,
                 successor.currency AS successor_currency,
                 COALESCE(successor.option_root, successor.symbol) AS successor_symbol,
-                successor.symbol AS successor_pricing_symbol,
+                COALESCE(successor_market.provider_symbol, successor.symbol)
+                    AS successor_pricing_symbol,
                 successor.asset_type AS successor_asset_type,
                 successor.option_expiry AS successor_option_expiry,
                 successor.option_strike AS successor_option_strike,
                 successor.option_type AS successor_option_type
           FROM transactions t
           LEFT JOIN instruments i ON i.instrument_id = t.instrument_id
+          LEFT JOIN instrument_market_symbols market
+            ON market.instrument_id = i.instrument_id
+           AND market.provider = 'yahoo'
+           AND market.status IN ('candidate','verified','failed')
           LEFT JOIN instrument_ticker_change_sources source
                  ON source.transaction_id = t.transaction_id
           LEFT JOIN instrument_ticker_changes tc
                  ON tc.ticker_change_id = source.ticker_change_id
           LEFT JOIN instruments successor
                  ON successor.instrument_id = tc.to_instrument_id
+          LEFT JOIN instrument_market_symbols successor_market
+            ON successor_market.instrument_id = successor.instrument_id
+           AND successor_market.provider = 'yahoo'
+           AND successor_market.status IN ('candidate','verified','failed')
          WHERE (t.trade_date <= ? OR COALESCE(t.cash_effective_date, t.trade_date) <= ?)
            AND {canonical_sql}
            {account_sql}
@@ -615,6 +633,7 @@ def _security_record(
         ),
         "symbol": state.symbol,
         "ticker_symbols": list(state.ticker_symbols or (state.symbol,)),
+        "market_symbol": state.pricing_symbol,
         "_pricing_symbol": state.pricing_symbol,
         "asset_type": state.asset_type,
         "currency": state.currency,
@@ -688,6 +707,7 @@ def _cash_record(
         "instrument_key": instrument_key,
         "holding_key": f"{state.account_id}|{instrument_key}|{state.currency}",
         "symbol": f"{state.currency} Cash",
+        "market_symbol": None,
         "asset_type": "cash",
         "currency": state.currency,
         "scope_key": state.scope_key,
@@ -1045,7 +1065,6 @@ def holdings_at(
                         state.warnings.add("ambiguous_position_scope_transaction")
                         state.incomplete = True
             else:
-                effect = _stored_position_effect(row)
                 for scope_key in scope_keys:
                     state_key = (account_id, currency, scope_key, instrument_key)
                     state = position_states.get(state_key)
@@ -1087,6 +1106,12 @@ def holdings_at(
                     floor = _state_floor(state)
                     if floor is not None and str(row["trade_date"]) <= floor:
                         continue
+                    effect = contextual_position_delta(
+                        str(row["txn_type"]),
+                        row["quantity"],
+                        state.quantity,
+                        _stored_position_effect(row),
+                    )
                     if effect is None:
                         state.warnings.add("missing_position_delta")
                         state.incomplete = True

@@ -491,6 +491,31 @@ def ingest_repair_symbols() -> None:
         click.echo(f"  txn {ex['transaction_id']}: {ex['old_type']} -> {ex['new_type']}")
 
 
+@ingest.command("resolve-instruments")
+@click.option(
+    "--verify-yahoo",
+    is_flag=True,
+    help="Send public security names/symbols to Yahoo and require price history.",
+)
+def ingest_resolve_instruments(verify_yahoo: bool) -> None:
+    """Resolve catalog listing names and report Yahoo mapping status."""
+    from .ingest.instrument_resolution import sync_catalog_identities
+
+    out = sync_catalog_identities()
+    click.echo(
+        "Instrument resolution: "
+        + ", ".join(f"{key}={value}" for key, value in sorted(out.items()))
+    )
+    if verify_yahoo:
+        from .ingest.yahoo_resolution import verify_yahoo_identities
+
+        verified = verify_yahoo_identities()
+        click.echo(
+            "Yahoo verification: "
+            + ", ".join(f"{key}={value}" for key, value in sorted(verified.items()))
+        )
+
+
 @ingest.command("reconcile")
 def ingest_reconcile() -> None:
     """Rebuild transfer links, movement attribution, and reconciliation results."""

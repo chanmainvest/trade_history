@@ -40,6 +40,25 @@ def _metadata(requested: str, segments: list[TickerSegment]) -> dict:
     }
 
 
+def _market_symbols(segments: list[TickerSegment]) -> dict[int, str]:
+    ids = [segment.instrument_id for segment in segments if segment.instrument_id]
+    if not ids:
+        return {}
+    placeholders = ",".join("?" * len(ids))
+    with sqlite_db.session() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT instrument_id, provider_symbol
+              FROM instrument_market_symbols
+             WHERE provider = 'yahoo'
+               AND status IN ('candidate','verified','failed')
+               AND instrument_id IN ({placeholders})
+            """,
+            ids,
+        ).fetchall()
+    return {int(row["instrument_id"]): str(row["provider_symbol"]) for row in rows}
+
+
 @router.get("/prices")
 def prices(symbol: str = Query(...), start: date | None = None,
            end: date | None = None, freq: str = Query("D", pattern="^[DWM]$")) -> dict:
@@ -47,11 +66,12 @@ def prices(symbol: str = Query(...), start: date | None = None,
     segments = _segments(sym)
     if not segments:
         segments = [TickerSegment(0, "", sym, None, None)]
+    market_symbols = _market_symbols(segments)
     alternatives: list[str] = []
     params: list = []
     for segment in segments:
         conditions = ["symbol = ?"]
-        values: list = [segment.symbol]
+        values: list = [market_symbols.get(segment.instrument_id, segment.symbol)]
         if segment.valid_from:
             conditions.append("trade_date >= ?")
             values.append(segment.valid_from)
@@ -127,7 +147,13 @@ def financials(symbol: str = Query(...), period: str = Query("quarterly",
                pattern="^(quarterly|annual)$")) -> dict:
     table = "financials_quarterly" if period == "quarterly" else "financials_annual"
     segments = _segments(symbol.upper())
-    symbols = list(dict.fromkeys(segment.symbol for segment in segments)) or [symbol.upper()]
+    market_symbols = _market_symbols(segments)
+    symbols = list(
+        dict.fromkeys(
+            market_symbols.get(segment.instrument_id, segment.symbol)
+            for segment in segments
+        )
+    ) or [symbol.upper()]
     placeholders = ",".join("?" * len(symbols))
     con = _duck()
     try:

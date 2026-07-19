@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-PARSER_CONTRACT_VERSION = "4"
+PARSER_CONTRACT_VERSION = "5"
 
 # Canonical transaction-type vocabulary. See schema.sql for definitions.
 TxnType = Literal[
@@ -61,6 +61,14 @@ class ParsedInstrument:
     resolution_method: str | None = None
     resolution_confidence: float | None = None
     resolution_evidence: SourceSpan | None = None
+    # Listing metadata is assigned only by the staged identity resolver. The
+    # parser itself remains text-only and provider-independent.
+    issuer_key: str | None = None
+    issuer_name: str | None = None
+    security_key: str | None = None
+    security_name: str | None = None
+    journalable: bool = False
+    market_symbol: str | None = None
 
 
 @dataclass

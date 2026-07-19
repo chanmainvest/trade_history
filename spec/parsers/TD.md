@@ -1,7 +1,7 @@
 # TD WebBroker parser
 
 Implementation: `src/ledger/parsers/td.py`, parser name `td`, current version
-`2.4.0`.
+`2.5.1`.
 
 ## Recognition and account shape
 
@@ -23,6 +23,9 @@ scope.
 - Multi-line option holdings tolerate harmless page/header lines between their
   contract head and expiry/strike tail. The parser retains the printed option
   root, expiry, strike, type, and multiplier.
+- Equity holdings accept a signed printed quantity. A short row such as
+  `-2,000 30.480 ...` retains quantity `-2,000` and market price `30.480`;
+  the sign is not swallowed into the name or shifted into the price column.
 - Adjusted activity identities printed as `ROOT+$'YY MON@STRIKE` retain the
   printed root and option fields; a following signed contract quantity is
   parsed for expiration/exercise/assignment movements.
@@ -38,12 +41,24 @@ scope.
   instrument contract when the row prints both symbols.
 - Buy/sell numeric tails are parsed as quantity, price, amount, and optional
   running balance. Digits embedded in a security name such as `VELO3D` or
-  `12M` are never treated as the quantity.
+  `12M` are never treated as the quantity. Legacy rows that print quantity
+  before the fund name use their separate leading-quantity grammar.
+- Signed balances accept `-$...`; February options accept both TD's `FE` and
+  `FB` codes; activity verbs are case-insensitive. The current-period state
+  machine stops at the printed pending-activity boundary.
+- In-kind transfers retain their security quantity/instrument with zero cash.
+  `Disposition`, Web Banking transfers, paper-statement fees, cheques,
+  interest rebates, cash-in-lieu, and capital-gain distributions retain their
+  printed cash effects.
 - Stock splits map to the canonical `stock_split` type. Buy/sell, option
   buy/sell, known fees/taxes, and known income events receive canonical cash
   directions when TD prints an unsigned debit/credit amount.
 - Missing/invalid quantities or closing cash values, and unrecognized numeric
-  candidate rows, are quarantined rather than converted to zero.
+  candidate rows, are quarantined rather than converted to zero. A cash scope
+  containing an unsupported dated numeric event is `unknown`, not complete.
+  Likewise, one unrecognized numeric holding row makes the entire positions
+  scope `unknown`; readable holdings remain available, but reconciliation may
+  not treat a partial table as a complete checkpoint.
 - Recognized holdings/cash sections declare explicit scope completeness; cash
   requires a valid printed closing balance. Parsed rows and quarantines receive
   page/line source spans, with coordinates/words when available.

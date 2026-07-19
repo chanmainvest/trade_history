@@ -5,7 +5,7 @@ import re
 import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from ..db import sqlite as sqlite_db
@@ -13,6 +13,7 @@ from ..quantity import (
     LEGACY_UNDERIVABLE_POSITION_TYPES,
     NON_CASH_TXN_TYPES,
     POSITION_AFFECTING_TYPES,
+    contextual_position_delta,
     normalized_position_delta,
     quantity_delta,
 )
@@ -33,6 +34,19 @@ _TRADE_NUMERIC_TAIL_RE = re.compile(
     r"\$?[+-]?\d[\d,]*(?:\.\d+)?\s+"
     r"\$?[+-]?\d[\d,]*(?:\.\d+)?"
 )
+
+
+def _statement_periods_are_adjacent(
+    prior: sqlite3.Row,
+    current: sqlite3.Row,
+) -> bool:
+    """Return whether two statement scopes cover consecutive calendar days."""
+    try:
+        prior_end = date.fromisoformat(str(prior["period_end"]))
+        current_start = date.fromisoformat(str(current["period_start"]))
+    except (KeyError, TypeError, ValueError):
+        return False
+    return current_start == prior_end + timedelta(days=1)
 _BROKER_REFERENCE_RE = re.compile(r"\b[A-Z]{2}-\d{6}\b")
 _NAME_TOKEN_RE = re.compile(r"[A-Z0-9]+")
 _NAME_STOP_WORDS = {
@@ -437,6 +451,53 @@ def _transfer_delta(row: sqlite3.Row) -> float:
     return _cash_delta(row)
 
 
+def _journal_pair_ratios(
+    conn: sqlite3.Connection,
+) -> dict[tuple[int, int], tuple[float, str | None, str | None]]:
+    return {
+        (int(row["from_instrument_id"]), int(row["to_instrument_id"])): (
+            float(row["conversion_ratio"]),
+            row["effective_from"],
+            row["effective_to"],
+        )
+        for row in conn.execute(
+            """
+            SELECT from_instrument_id, to_instrument_id, conversion_ratio,
+                   effective_from, effective_to
+              FROM instrument_journal_pairs
+             WHERE status IN ('catalog','reviewed')
+            """
+        ).fetchall()
+    }
+
+
+def _journal_compatible(
+    outgoing: sqlite3.Row,
+    incoming: sqlite3.Row,
+    pairs: dict[tuple[int, int], tuple[float, str | None, str | None]],
+) -> bool:
+    out_id, in_id = outgoing["instrument_id"], incoming["instrument_id"]
+    if out_id is None or in_id is None or int(out_id) == int(in_id):
+        return False
+    pair = pairs.get((int(out_id), int(in_id)))
+    reverse = False
+    if pair is None:
+        pair = pairs.get((int(in_id), int(out_id)))
+        reverse = pair is not None
+    if pair is None:
+        return False
+    ratio, effective_from, effective_to = pair
+    event_date = max(str(outgoing["trade_date"]), str(incoming["trade_date"]))
+    if effective_from is not None and event_date < effective_from:
+        return False
+    if effective_to is not None and event_date > effective_to:
+        return False
+    out_quantity = abs(_security_delta(outgoing))
+    in_quantity = abs(_security_delta(incoming))
+    expected = out_quantity / ratio if reverse else out_quantity * ratio
+    return abs(in_quantity - expected) <= 1e-8
+
+
 def link_transfers(
     path: Path | str | None = None,
     *,
@@ -460,8 +521,10 @@ def link_transfers(
              ORDER BY trade_date, transaction_id
             """
         ).fetchall()
+        journal_pairs = _journal_pair_ratios(conn)
 
         incoming: dict[tuple[str, str, str, float], list[sqlite3.Row]] = {}
+        incoming_security: list[sqlite3.Row] = []
         outgoing: list[sqlite3.Row] = []
         skipped_missing_key = 0
         for row in rows:
@@ -472,6 +535,8 @@ def link_transfers(
                 continue
             if delta > 0:
                 incoming.setdefault(key, []).append(row)
+                if key[0] == "instrument":
+                    incoming_security.append(row)
             else:
                 outgoing.append(row)
 
@@ -484,8 +549,16 @@ def link_transfers(
             if out_date is None or key is None:
                 skipped_missing_key += 1
                 continue
+            candidate_rows = list(incoming.get(key, []))
+            if key[0] == "instrument":
+                candidate_rows.extend(
+                    row
+                    for row in incoming_security
+                    if row not in candidate_rows
+                    and _journal_compatible(out_row, row, journal_pairs)
+                )
             candidates: list[tuple[int, sqlite3.Row]] = []
-            for in_row in incoming.get(key, []):
+            for in_row in candidate_rows:
                 in_id = int(in_row["transaction_id"])
                 if in_id in matched_incoming_ids or in_row["account_id"] == out_row["account_id"]:
                     continue
@@ -741,7 +814,7 @@ def _position_interval_replay(
     rows = conn.execute(
         f"""
         SELECT t.transaction_id, t.txn_type, t.quantity, t.position_delta,
-               i.instrument_key,
+               i.instrument_id, i.instrument_key,
                tc.conversion_ratio,
                successor.instrument_key AS successor_key,
                successor.instrument_id AS successor_id
@@ -771,6 +844,7 @@ def _position_interval_replay(
         if key is None:
             continue
         key = str(key)
+        instrument_ids.setdefault(key, int(row["instrument_id"]))
         transaction_id = int(row["transaction_id"])
         if row["successor_key"] is not None:
             successor_key = str(row["successor_key"])
@@ -787,6 +861,12 @@ def _position_interval_replay(
                 components[successor_key].append((transaction_id, new_delta))
             continue
         effect = _position_effect(row)
+        effect = contextual_position_delta(
+            str(row["txn_type"]),
+            row["quantity"],
+            balances.get(key, 0.0),
+            effect,
+        )
         if effect is None:
             if row["txn_type"] in POSITION_EFFECT_TYPES:
                 missing[key] += 1
@@ -833,7 +913,8 @@ def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
     scopes = conn.execute(
         f"""
         SELECT ss.snapshot_set_id, ss.statement_id, ss.account_id, ss.as_of_date,
-               ss.currency, ss.scope_key, ss.completeness, s.ingestion_run_id
+               ss.currency, ss.scope_key, ss.completeness, s.ingestion_run_id,
+               s.period_start, s.period_end
           FROM snapshot_sets ss
           JOIN statements s ON s.statement_id = ss.statement_id
          WHERE ss.section_type = 'positions'
@@ -890,6 +971,9 @@ def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
             elif prior["completeness"] != "complete":
                 status = "incomplete_input"
                 reason = "prior position scope is not complete"
+            elif not _statement_periods_are_adjacent(prior, scope):
+                status = "incomplete_input"
+                reason = "position checkpoint interval has an unobserved statement period"
             else:
                 unresolved_effects = _unresolved_position_effect_count(
                     conn,
@@ -971,6 +1055,9 @@ def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
             elif prior["completeness"] != "complete":
                 status = "incomplete_input"
                 reason = "prior position scope is not complete"
+            elif not _statement_periods_are_adjacent(prior, scope):
+                status = "incomplete_input"
+                reason = "position checkpoint interval has an unobserved statement period"
             else:
                 components = interval_components.get(instrument_key, [])
                 missing_effects = interval_missing.get(instrument_key, 0)
@@ -1182,6 +1269,9 @@ def _reconcile_cash_scopes(conn: sqlite3.Connection) -> dict[str, int]:
         elif prior["completeness"] != "complete":
             continuity_status = "incomplete_input"
             continuity_reason = "prior cash scope is not complete"
+        elif not _statement_periods_are_adjacent(prior, scope):
+            continuity_status = "incomplete_input"
+            continuity_reason = "cash continuity has an unobserved statement period"
         elif prior_balance is None or balance is None or opening_value is None:
             continuity_status = "incomplete_input"
             continuity_reason = "missing prior close or current opening balance"

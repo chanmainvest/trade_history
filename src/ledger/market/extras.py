@@ -15,10 +15,10 @@ import duckdb
 import pandas as pd
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from ..config import DUCKDB_PATH
+from ..config import DATA_DIR, DUCKDB_PATH
 from ..db import duckdb_store
 from ..logging_setup import get_logger, jsonl_path
-from .scrape import _held_symbols, _yf_symbol
+from .scrape import _held_symbols
 
 log = get_logger("market_scrape")
 
@@ -26,6 +26,7 @@ log = get_logger("market_scrape")
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=20))
 def _ticker(yfsym: str):
     import yfinance as yf
+    yf.set_tz_cache_location(str(DATA_DIR / "yfinance_cache"))
     return yf.Ticker(yfsym)
 
 
@@ -39,8 +40,8 @@ def refresh_profiles(*, sleep_s: float = 1.0) -> None:
     con = duckdb.connect(str(DUCKDB_PATH))
     jsonl = jsonl_path("market_scrape").open("a", encoding="utf-8")
     try:
-        for sym, ccy in _held_symbols():
-            yfsym = _yf_symbol(sym, ccy)
+        for target in _held_symbols():
+            sym = yfsym = target.provider_symbol
             log.info("Profile %s", yfsym)
             try:
                 t = _ticker(yfsym)
@@ -76,8 +77,9 @@ def refresh_dividends(*, sleep_s: float = 1.5) -> None:
     con = duckdb.connect(str(DUCKDB_PATH))
     jsonl = jsonl_path("market_scrape").open("a", encoding="utf-8")
     try:
-        for sym, ccy in _held_symbols():
-            yfsym = _yf_symbol(sym, ccy)
+        for target in _held_symbols():
+            sym, ccy = target.provider_symbol, target.currency
+            yfsym = target.provider_symbol
             log.info("Dividends %s", yfsym)
             try:
                 t = _ticker(yfsym)
@@ -115,8 +117,8 @@ def refresh_splits(*, sleep_s: float = 1.5) -> None:
     con = duckdb.connect(str(DUCKDB_PATH))
     jsonl = jsonl_path("market_scrape").open("a", encoding="utf-8")
     try:
-        for sym, ccy in _held_symbols():
-            yfsym = _yf_symbol(sym, ccy)
+        for target in _held_symbols():
+            sym = yfsym = target.provider_symbol
             log.info("Splits %s", yfsym)
             try:
                 t = _ticker(yfsym)
@@ -292,8 +294,8 @@ def refresh_financials(*, sleep_s: float = 2.0) -> None:
     con = duckdb.connect(str(DUCKDB_PATH))
     jsonl = jsonl_path("market_scrape").open("a", encoding="utf-8")
     try:
-        for sym, ccy in _held_symbols():
-            yfsym = _yf_symbol(sym, ccy)
+        for target in _held_symbols():
+            sym = yfsym = target.provider_symbol
             log.info("Financials %s", yfsym)
             try:
                 t = _ticker(yfsym)
@@ -348,8 +350,8 @@ def refresh_earnings(*, sleep_s: float = 1.5) -> None:
     con = duckdb.connect(str(DUCKDB_PATH))
     jsonl = jsonl_path("market_scrape").open("a", encoding="utf-8")
     try:
-        for sym, ccy in _held_symbols():
-            yfsym = _yf_symbol(sym, ccy)
+        for target in _held_symbols():
+            sym = yfsym = target.provider_symbol
             log.info("Earnings %s", yfsym)
             try:
                 t = _ticker(yfsym)

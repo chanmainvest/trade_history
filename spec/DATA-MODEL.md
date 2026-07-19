@@ -4,11 +4,11 @@ This document describes the schema currently implemented. Exact SQLite DDL is
 owned by `src/ledger/db/schema.sql`; exact DuckDB DDL is the `DDL` string in
 `src/ledger/db/duckdb_store.py`. Update code and this spec together.
 
-## SQLite ledger (schema version 8)
+## SQLite ledger (schema version 9)
 
 SQLite has no dedicated date, datetime, or enum storage class. Business dates
 therefore remain canonical `YYYY-MM-DD` `TEXT`, and audit timestamps use one
-UTC representation: `YYYY-MM-DDTHH:MM:SSZ`. Schema-v8 checks/triggers reject
+UTC representation: `YYYY-MM-DDTHH:MM:SSZ`. Current checks/triggers reject
 malformed or impossible new dates, non-canonical timestamps, currencies outside
 the private-ledger CAD/USD domain, and malformed SHA-256 values. API date
 parameters are parsed as dates before a query runs. Monetary values remain in
@@ -18,7 +18,7 @@ the row's native `currency`.
 |---|---|---|
 | Brokers | `institutions`, `accounts` | institution code; `(institution_id, account_number)` |
 | Transfers | `account_links` | automatically paired account-to-account transfers |
-| Securities | `instruments`, `instrument_aliases`, `instrument_identifier_lookups`, `instrument_ticker_changes`, `instrument_ticker_change_sources` | canonical listing identities, reviewed aliases, and dated ticker lineages |
+| Securities | `security_issuers`, `securities`, `instruments`, `instrument_aliases`, `instrument_resolution_candidates`, `instrument_market_symbols`, `instrument_journal_pairs`, `instrument_identifier_lookups`, ticker-change tables | issuer/share-class/listing identities, broker aliases, provider symbols, explicit journal pairs, and dated ticker lineages |
 | Source | `source_files`, `ingestion_runs`, `statements` | source metadata, immutable attempts, and account-period output |
 | Evidence | `source_evidence` | deterministic semantic source-row provenance without exposing it in public audit logs |
 | Geometry | `source_pages`, `source_lines`, `source_evidence_geometry`, `source_evidence_lines` | rebuildable PDF coordinates and evidence-to-line matches |
@@ -36,6 +36,33 @@ the row's native `currency`.
 native currency; option keys additionally include root, expiry, strike, type,
 and multiplier. `upsert_instrument()` conflicts only on this key, never on
 nullable option columns.
+
+Schema v9 separates four concepts that must not be collapsed:
+
+1. `security_issuers` groups a company/fund manager only for informational
+   identity. Different share classes can share an issuer without becoming the
+   same holding.
+2. `securities` identifies one share class/fungible security. Interlisted or
+   CAD/USD trading lines may share a `security_id`.
+3. `instruments` is the broker-facing exchange/currency listing used by ledger
+   rows. `BCE` CAD and `BCE` USD remain distinct instrument keys even when they
+   reference the same security.
+4. `instrument_market_symbols` maps a listing to a provider-specific symbol
+   such as Yahoo `BCE.TO` or `RCI-B.TO`. A broker symbol is never rewritten to
+   Yahoo punctuation in the ledger.
+
+Provider mappings begin as `candidate`. A successful non-empty Yahoo history
+fetch changes them to `verified`; empty/error responses are `failed` and retain
+the check status. Holdings and market refresh use the provider symbol as the
+DuckDB price key, so CAD and USD listings cannot overwrite one another merely
+because their broker symbols match.
+
+`instrument_resolution_candidates` stores unknown normalized broker names as
+pending/ambiguous/not-found/resolved review items. It does not create a ticker.
+The deterministic catalog and previously resolved candidates participate in
+the resolver cache. `instrument_journal_pairs` is the only permission for
+cross-listing/cross-currency transfer matching; sharing an issuer or a similar
+name is insufficient.
 
 A ticker change does **not** merge those keys. `instrument_ticker_changes`
 links the old and new instrument IDs with an ISO effective date, positive
@@ -75,7 +102,7 @@ source savepoint, writes its deterministic `content_counts_json` and
 `content_hash`, then switches `source_files.active_ingestion_run_id`. Failed
 attempts retain their own run/status/error while leaving the previous active
 pointer and active metadata intact. Successful replacements remove the prior
-derived run and its source children in that transaction. Schema v8's global
+derived run and its source children in that transaction. Schema v9's global
 statement/evidence uniqueness prevents old/new copies from coexisting, so this
 replacement is uncommitted until activation; readers only see the prior or new
 complete source output.
@@ -125,9 +152,11 @@ supporting position row. The description and reported numeric fields remain
 unchanged. Existing transaction and checkpoint evidence is sufficient for this
 derivation, while `instrument_aliases` remains reserved for reviewed mappings.
 
-Parser-contract v4 includes v3's `related_instrument` and
+Parser-contract v5 includes v3's `related_instrument` and
 `corporate_action_ratio` support and makes semantic evidence identity
-independent of replaceable geometry. For a supported ticker change,
+independent of replaceable geometry. It also carries resolver-assigned
+issuer/security/provider-listing metadata without making parsers network-aware.
+For a supported ticker change,
 `instrument_id` is the old printed
 listing and the related instrument is persisted through the dated relationship.
 Both must have the same asset type/native currency and different symbols.
@@ -167,7 +196,7 @@ point to evidence-linked transactions. No result creates an adjustment row.
 
 | Table | Primary key | Contents |
 |---|---|---|
-| `daily_prices` | `(symbol, trade_date)` | OHLC, adjusted close, volume, optional exchange/currency |
+| `daily_prices` | `(symbol, trade_date)` | provider symbol (for example `BCE.TO`) plus OHLC, adjusted close, volume, exchange/currency |
 | `dividends` | `(symbol, ex_date)` | amount and currency |
 | `splits` | `(symbol, split_date)` | split ratio |
 | `option_implied_vol` | `(symbol, trade_date)` | 30/60/90-day IV placeholders/data |
@@ -179,13 +208,14 @@ point to evidence-linked transactions. No result creates an adjustment row.
 | `scrape_log` | none | provider attempt audit rows |
 
 The market store is rebuildable and must not contain private account data.
-Price identity is currently symbol/date only; exchange/currency are not part of
-the primary key.
+The `symbol` column in market tables is the provider symbol, not necessarily the
+broker display symbol. Provider syntax embeds the exchange/listing distinction
+needed by the current Yahoo source; SQLite owns the explicit mapping.
 
 ## Current migration behavior
 
 `db init` executes idempotent DDL and a tested v5-to-v6 compatibility migration
-in `db/sqlite.py`, then installs v8 domain triggers on pre-v8 tables. The
+in `db/sqlite.py`, then installs current domain triggers on older tables. The
 migration preserves row IDs and foreign keys, creates legacy source
 runs/evidence, and marks migrated snapshot scopes `unknown`. Historical values
 are not rewritten merely to normalize formatting; new or changed domain values

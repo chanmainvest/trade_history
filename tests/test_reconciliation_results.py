@@ -1,12 +1,20 @@
 """Regression coverage for persisted, non-fabricating reconciliation results."""
 from __future__ import annotations
 
+import calendar
+
 from ledger.db import sqlite as sqlite_db
 from ledger.ingest.pipeline import activate_source_result
 from ledger.ingest.reconcile import rebuild_reconciliation_results, reconcile_after_ingest
 from ledger.parsers.td import TDParser
 
-from .db_fixtures import seed_cash, seed_position, seed_source, seed_statement
+from .db_fixtures import (
+    seed_cash,
+    seed_position,
+    seed_snapshot_set,
+    seed_source,
+    seed_statement,
+)
 from .fixture_loader import load_fixture
 
 
@@ -23,11 +31,13 @@ def _account(conn, number: str = "A-1") -> int:
 
 def _statement(conn, account_id: int, month: str) -> int:
     source_id = seed_source(conn, f"Statements/Test/{month}.pdf")
+    year, month_number = (int(part) for part in month.split("-"))
+    last_day = calendar.monthrange(year, month_number)[1]
     return seed_statement(
         conn,
         account_id=account_id,
         source_file_id=source_id,
-        period_end=f"{month}-28",
+        period_end=f"{month}-{last_day:02d}",
         period_start=f"{month}-01",
     )
 
@@ -162,6 +172,146 @@ def test_position_results_store_components_residuals_and_are_idempotent(tmp_path
     assert manual_result_count == 1
 
 
+def test_round_trip_instruments_absent_from_both_checkpoints_have_distinct_results(
+    tmp_path,
+):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id = _account(conn)
+        jan = _statement(conn, account_id, "2024-01")
+        feb = _statement(conn, account_id, "2024-02")
+        seed_snapshot_set(
+            conn,
+            statement_id=jan,
+            currency="CAD",
+            section_type="positions",
+        )
+        seed_snapshot_set(
+            conn,
+            statement_id=feb,
+            currency="CAD",
+            section_type="positions",
+        )
+        instrument_ids = [
+            sqlite_db.upsert_instrument(
+                conn,
+                asset_type="equity",
+                symbol=symbol,
+                currency="CAD",
+            )
+            for symbol in ("ABC", "XYZ")
+        ]
+        for instrument_id in instrument_ids:
+            _transaction(
+                conn,
+                account_id=account_id,
+                statement_id=feb,
+                trade_date="2024-02-10",
+                txn_type="buy",
+                instrument_id=instrument_id,
+                quantity=5,
+                position_delta=5,
+            )
+            _transaction(
+                conn,
+                account_id=account_id,
+                statement_id=feb,
+                trade_date="2024-02-20",
+                txn_type="sell",
+                instrument_id=instrument_id,
+                quantity=5,
+                position_delta=-5,
+            )
+
+    summary = rebuild_reconciliation_results(db_path)
+
+    assert summary["positions"]["reconciled"] == 2
+    with sqlite_db.session(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT instrument_id, opening_value, summed_deltas,
+                   expected_close, reported_close, residual, status
+              FROM reconciliation_results
+             WHERE kind = 'position' AND statement_id = ?
+             ORDER BY instrument_id
+            """,
+            (feb,),
+        ).fetchall()
+    assert [row["instrument_id"] for row in rows] == instrument_ids
+    assert all(
+        (
+            row["opening_value"],
+            row["summed_deltas"],
+            row["expected_close"],
+            row["reported_close"],
+            row["residual"],
+            row["status"],
+        )
+        == (0.0, 0.0, 0.0, 0.0, 0.0, "reconciled")
+        for row in rows
+    )
+
+
+def test_absolute_option_expiration_quantity_closes_short_position(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id = _account(conn)
+        instrument_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="option",
+            symbol="RIO",
+            currency="USD",
+            option_root="RIO",
+            option_expiry="2024-12-20",
+            option_strike=60,
+            option_type="PUT",
+            option_multiplier=100,
+        )
+        jan = _statement(conn, account_id, "2024-01")
+        feb = _statement(conn, account_id, "2024-02")
+        seed_position(
+            conn,
+            statement_id=jan,
+            instrument_id=instrument_id,
+            quantity=-20,
+            currency="USD",
+        )
+        seed_snapshot_set(
+            conn,
+            statement_id=feb,
+            currency="USD",
+            section_type="positions",
+        )
+        _transaction(
+            conn,
+            account_id=account_id,
+            statement_id=feb,
+            trade_date="2024-02-20",
+            txn_type="option_expiration",
+            instrument_id=instrument_id,
+            quantity=20,
+            position_delta=-20,
+            currency="USD",
+        )
+
+    summary = rebuild_reconciliation_results(db_path)
+
+    assert summary["positions"]["reconciled"] == 1
+    with sqlite_db.session(db_path) as conn:
+        row = conn.execute(
+            """
+            select opening_value, summed_deltas, expected_close,
+                   reported_close, status
+            from reconciliation_results
+            where kind = 'position' and statement_id = ?
+            """,
+            (feb,),
+        ).fetchone()
+    assert tuple(row) == (-20.0, 20.0, 0.0, 0.0, "reconciled")
+
+
 def test_cash_results_cover_statement_and_adjacent_checkpoint_equations(tmp_path):
     db_path = tmp_path / "ledger.sqlite"
     sqlite_db.init_db(db_path)
@@ -255,6 +405,73 @@ def test_cash_results_cover_statement_and_adjacent_checkpoint_equations(tmp_path
     assert mar_direct["status"] == "incomplete_input"
     assert "no cash delta" in mar_direct["reason"]
     assert [(row["transaction_id"], row["delta"]) for row in jan_components] == [(jan_txn, -10.0)]
+
+
+def test_reconciliation_quarantines_unobserved_statement_periods(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id = _account(conn)
+        instrument_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="equity",
+            symbol="ABC",
+            currency="CAD",
+        )
+        jan = _statement(conn, account_id, "2024-01")
+        mar = _statement(conn, account_id, "2024-03")
+        seed_cash(
+            conn,
+            statement_id=jan,
+            currency="CAD",
+            opening_balance=100,
+            closing_balance=100,
+        )
+        seed_cash(
+            conn,
+            statement_id=mar,
+            currency="CAD",
+            opening_balance=125,
+            closing_balance=125,
+        )
+        seed_position(
+            conn,
+            statement_id=jan,
+            instrument_id=instrument_id,
+            quantity=10,
+            currency="CAD",
+        )
+        seed_position(
+            conn,
+            statement_id=mar,
+            instrument_id=instrument_id,
+            quantity=12,
+            currency="CAD",
+        )
+
+    rebuild_reconciliation_results(db_path)
+
+    with sqlite_db.session(db_path) as conn:
+        cash = conn.execute(
+            """
+            SELECT status, reason FROM reconciliation_results
+             WHERE kind = 'cash' AND statement_id = ?
+               AND reconciliation_key LIKE 'recon:v1:cash:continuity:%'
+            """,
+            (mar,),
+        ).fetchone()
+        position = conn.execute(
+            """
+            SELECT status, reason FROM reconciliation_results
+             WHERE kind = 'position' AND statement_id = ?
+            """,
+            (mar,),
+        ).fetchone()
+
+    assert cash["status"] == "incomplete_input"
+    assert "unobserved statement period" in cash["reason"]
+    assert position["status"] == "incomplete_input"
+    assert "unobserved statement period" in position["reason"]
 
 
 def test_cash_results_use_effective_date_across_statement_rows(tmp_path):

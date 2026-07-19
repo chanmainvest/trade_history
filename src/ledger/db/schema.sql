@@ -54,9 +54,30 @@ CREATE TABLE IF NOT EXISTS account_links (
 -- INSTRUMENTS (equity + options + cash + others)
 -- ---------------------------------------------------------------------------
 
+-- Issuer identity is informational. Securities separate share classes/issues;
+-- instruments remain exchange/currency listings used by ledger rows.
+CREATE TABLE IF NOT EXISTS security_issuers (
+    issuer_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    issuer_key         TEXT NOT NULL UNIQUE,
+    canonical_name     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS securities (
+    security_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    security_key       TEXT NOT NULL UNIQUE,
+    issuer_id          INTEGER REFERENCES security_issuers(issuer_id),
+    canonical_name     TEXT NOT NULL,
+    asset_type         TEXT NOT NULL CHECK (asset_type IN
+                       ('equity','etf','option','bond','mutual_fund','cash','other')),
+    cusip              TEXT,
+    isin               TEXT,
+    journalable        INTEGER NOT NULL DEFAULT 0 CHECK (journalable IN (0,1))
+);
+
 CREATE TABLE IF NOT EXISTS instruments (
     instrument_id    INTEGER PRIMARY KEY AUTOINCREMENT,
     instrument_key   TEXT NOT NULL UNIQUE,         -- canonical logical identity (ik1)
+    security_id      INTEGER REFERENCES securities(security_id),
     asset_type       TEXT NOT NULL CHECK (asset_type IN
                        ('equity','etf','option','bond','mutual_fund','cash','other')),
     symbol           TEXT NOT NULL,               -- e.g. AAPL, BNS.TO, SPY
@@ -80,6 +101,52 @@ CREATE TABLE IF NOT EXISTS instruments (
 
 CREATE INDEX IF NOT EXISTS idx_instruments_symbol ON instruments(symbol);
 
+-- Provider symbols are listing metadata, not broker symbols. A candidate is
+-- fetched and becomes verified only after the provider returns price history.
+CREATE TABLE IF NOT EXISTS instrument_market_symbols (
+    market_symbol_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    instrument_id     INTEGER NOT NULL REFERENCES instruments(instrument_id) ON DELETE CASCADE,
+    provider          TEXT NOT NULL DEFAULT 'yahoo',
+    provider_symbol   TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'candidate'
+                      CHECK (status IN ('candidate','verified','failed','retired')),
+    last_checked_at   TEXT CHECK (last_checked_at IS NULL OR
+                      (length(last_checked_at) = 20
+                       AND last_checked_at GLOB '????-??-??T??:??:??Z')),
+    verified_at       TEXT CHECK (verified_at IS NULL OR
+                      (length(verified_at) = 20
+                       AND verified_at GLOB '????-??-??T??:??:??Z')),
+    last_error        TEXT,
+    UNIQUE(instrument_id, provider),
+    UNIQUE(provider, provider_symbol)
+);
+
+-- Only explicit pairs permit cross-currency/cross-listing transfer matching.
+CREATE TABLE IF NOT EXISTS instrument_journal_pairs (
+    journal_pair_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_instrument_id INTEGER NOT NULL REFERENCES instruments(instrument_id) ON DELETE CASCADE,
+    to_instrument_id  INTEGER NOT NULL REFERENCES instruments(instrument_id) ON DELETE CASCADE,
+    conversion_ratio  REAL NOT NULL DEFAULT 1.0 CHECK (conversion_ratio > 0),
+    status            TEXT NOT NULL DEFAULT 'catalog'
+                      CHECK (status IN ('catalog','reviewed','retired')),
+    effective_from    TEXT,
+    effective_to      TEXT,
+    notes             TEXT,
+    CHECK (from_instrument_id <> to_instrument_id),
+    CHECK (effective_from IS NULL OR
+           (length(effective_from) = 10 AND effective_from GLOB '????-??-??')),
+    CHECK (effective_to IS NULL OR
+           (length(effective_to) = 10 AND effective_to GLOB '????-??-??')),
+    UNIQUE(from_instrument_id, to_instrument_id, effective_from)
+);
+
+-- SQLite considers NULL values distinct in a UNIQUE table constraint. The
+-- expression index makes an open-ended pair idempotent across repeated ingest.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_pair_identity
+    ON instrument_journal_pairs(
+        from_instrument_id, to_instrument_id, COALESCE(effective_from, '')
+    );
+
 -- Map alternative names/symbols a statement may use to a canonical instrument.
 CREATE TABLE IF NOT EXISTS instrument_aliases (
     alias_id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -88,6 +155,31 @@ CREATE TABLE IF NOT EXISTS instrument_aliases (
     institution_id   INTEGER REFERENCES institutions(institution_id),
     UNIQUE(alias, institution_id)
 );
+
+-- Unknown broker names are queued rather than persisted as ticker symbols.
+-- A resolved candidate participates in the deterministic resolver cache.
+CREATE TABLE IF NOT EXISTS instrument_resolution_candidates (
+    candidate_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    institution_id     INTEGER NOT NULL REFERENCES institutions(institution_id),
+    normalized_text    TEXT NOT NULL,
+    display_text       TEXT NOT NULL,
+    asset_type         TEXT NOT NULL CHECK (asset_type IN
+                        ('equity','etf','option','bond','mutual_fund','cash','other')),
+    currency           TEXT NOT NULL REFERENCES currencies(code),
+    status             TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending','resolved','not_found','ambiguous','ignored')),
+    resolved_instrument_id INTEGER REFERENCES instruments(instrument_id),
+    resolution_method  TEXT,
+    resolution_confidence REAL,
+    first_seen_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    last_seen_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    CHECK (resolution_confidence IS NULL OR
+           (resolution_confidence >= 0 AND resolution_confidence <= 1)),
+    UNIQUE(institution_id, normalized_text, asset_type, currency)
+);
+
+CREATE INDEX IF NOT EXISTS idx_resolution_candidates_status
+    ON instrument_resolution_candidates(status, institution_id, currency);
 
 -- Statement names that need a first-time external identifier lookup.
 -- Example: CIBC mutual fund rows often print a fund name/class but no fund
@@ -610,4 +702,4 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value            TEXT NOT NULL
 );
 
-INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '8');
+INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '9');

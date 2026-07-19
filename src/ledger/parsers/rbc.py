@@ -23,6 +23,7 @@ Layout per block:
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 
@@ -73,9 +74,9 @@ RE_ACCT_TYPE = re.compile(r"^\s*(Margin|Cash|RRSP|TFSA|RRIF|RESP|LIRA)\s*-\s*(Lo
                           re.IGNORECASE | re.MULTILINE)
 
 # Activity row: "JAN. 06 BOUGHT NUTRIEN LTD ..." — we capture date prefix.
-RE_ACT_DATE = re.compile(r"^([A-Z]+)\.?\s+(\d{1,2})\s+([A-Z][A-Z .'/&-]+?)\s+(.*)$")
-RE_OPENING_BAL = re.compile(r"Opening Balance\s*\([^)]+\)\s+\$?\s*\(?(-?[\d,]+(?:\.\d+)?)\)?")
-RE_CLOSING_BAL = re.compile(r"Closing Balance\s*\([^)]+\)\s+\$?\s*\(?(-?[\d,]+(?:\.\d+)?)\)?")
+RE_ACT_DATE = re.compile(r"^([A-Z]+)\.?\s*(\d{1,2})\s+([A-Z][A-Z0-9 .'/&-]+?)\s+(.*)$")
+RE_OPENING_BAL = re.compile(r"Opening\s*Balance\s*\([^)]+\)\s+\$?\s*\(?(-?[\d,]+(?:\.\d+)?)\)?")
+RE_CLOSING_BAL = re.compile(r"Closing\s*Balance\s*\([^)]+\)\s+\$?\s*\(?(-?[\d,]+(?:\.\d+)?)\)?")
 
 # RBC option position: "CALL .BCE 09/20/24 54   40   0.020   80.00 ²   $80.00"
 RE_RBC_OPT_POS = re.compile(
@@ -98,10 +99,16 @@ ACT_VERBS = {
     "EXERCISE": "option_exercise",
     "EXPIRED": "option_expiration",
     "WIRE TFR": "transfer_out",  # direction inferred from text
+    "TFR OUT": "transfer_out",
+    "TFR IN": "transfer_in",
+    "TFRIN": "transfer_in",
+    "TRFIN": "transfer_in",
     "TRANSFER": "transfer_in",
     "JOURNAL": "journal", "JNL": "journal",
     "REINVEST": "dividend",
     "FEE": "fee",
+    "NONRES TX": "tax_withholding",
+    "NON-RES TAX": "tax_withholding",
     "ADJUSTMENT": "adjustment",
     "WITHDRAWAL": "withdrawal",
     "DEPOSIT": "deposit",
@@ -117,6 +124,86 @@ ACT_VERBS = {
 class _Block:
     currency: str
     text: str
+
+
+def _layout_cash_effects(pdf: PdfText) -> dict[str, list[float]]:
+    """Map RBC visual rows to their net printed debit/credit cash effect.
+
+    RBC text extraction preserves numbers but loses the empty debit/credit
+    cells. Some rows also print *both* a debit (for example, non-resident tax)
+    and a credit (the gross dividend). Derive the cash columns from each page's
+    header and return ``credits - debits`` instead of trusting the last number.
+    Text-only fixtures and pypdf fallback return no effects and retain the
+    parser's semantic signs.
+    """
+    effects: dict[str, list[float]] = defaultdict(list)
+    money = re.compile(r"^\(?-?\$?[\d,]+(?:\.\d+)?\)?-?$")
+    for lines in pdf.page_lines:
+        cash_start = cutoff = None
+        for line in lines:
+            rate = next(
+                (
+                    word
+                    for word in line.words
+                    if word.text.upper().lstrip("\\/") == "RATE"
+                ),
+                None,
+            )
+            debit = next(
+                (word for word in line.words if word.text.upper() == "DEBIT"),
+                None,
+            )
+            credit = next(
+                (word for word in line.words if word.text.upper() == "CREDIT"),
+                None,
+            )
+            if debit is not None and credit is not None:
+                debit_center = (debit.x0 + debit.x1) / 2
+                credit_center = (credit.x0 + credit.x1) / 2
+                cutoff = (debit_center + credit_center) / 2
+                if rate is not None:
+                    rate_center = (rate.x0 + rate.x1) / 2
+                    cash_start = (rate_center + debit_center) / 2
+                else:
+                    # The RATE word can be split by a PDF font encoding. The
+                    # debit/credit spacing still gives a conservative left
+                    # edge that excludes quantity and price columns.
+                    cash_start = debit_center - (credit_center - debit_center) * 0.75
+                break
+        if cutoff is None or cash_start is None:
+            continue
+        for line in lines:
+            debit_values: list[float] = []
+            credit_values: list[float] = []
+            saw_numeric = False
+            for word in line.words:
+                if not money.fullmatch(word.text):
+                    continue
+                saw_numeric = True
+                center = (word.x0 + word.x1) / 2
+                if center < cash_start:
+                    continue
+                value = parse_money(word.text)
+                if value is None:
+                    continue
+                if center < cutoff:
+                    debit_values.append(abs(value))
+                else:
+                    credit_values.append(abs(value))
+            if not saw_numeric:
+                continue
+            key = re.sub(r"\s+", " ", line.text).strip().upper()
+            effects[key].append(round(sum(credit_values) - sum(debit_values), 2))
+    return dict(effects)
+
+
+def _take_cash_effect(
+    effects: dict[str, list[float]],
+    line: str,
+) -> float | None:
+    key = re.sub(r"\s+", " ", line).strip().upper()
+    matches = effects.get(key)
+    return matches.pop(0) if matches else None
 
 
 def _is_annual(relpath: str, text: str) -> bool:
@@ -378,8 +465,13 @@ def _parse_asset_review(body: str, currency: str, stmt: ParsedStatement) -> bool
     return saw_section
 
 
-def _parse_activity(body: str, currency: str, year: int,
-                    stmt: ParsedStatement) -> bool:
+def _parse_activity(
+    body: str,
+    currency: str,
+    year: int,
+    stmt: ParsedStatement,
+    cash_effects: dict[str, list[float]],
+) -> bool:
     opening = closing = None
     cash_lines: list[str] = []
     cash_complete = False
@@ -387,6 +479,7 @@ def _parse_activity(body: str, currency: str, year: int,
         s = ln.strip()
         if not s:
             continue
+        cash_effect = _take_cash_effect(cash_effects, s)
         # Skip page footers, headers, and column-name rows.
         if (s.startswith("-CONTINUEDONNEXTPAGE-") or s.startswith("0017") or
             s.startswith("Member-Canadian") or s.startswith("DATE ACTIVITY") or
@@ -398,12 +491,12 @@ def _parse_activity(body: str, currency: str, year: int,
             continue
         mo = RE_OPENING_BAL.search(s)
         if mo:
-            opening = parse_money(mo.group(1))
+            opening = cash_effect if cash_effect is not None else parse_money(mo.group(1))
             cash_lines.append(ln)
             continue
         mc = RE_CLOSING_BAL.search(s)
         if mc:
-            closing = parse_money(mc.group(1))
+            closing = cash_effect if cash_effect is not None else parse_money(mc.group(1))
             if closing is None:
                 stmt.quarantine.append(ParsedQuarantine(
                     raw_line=ln,
@@ -412,7 +505,10 @@ def _parse_activity(body: str, currency: str, year: int,
             else:
                 cash_lines.append(ln)
                 cash_complete = True
-            continue
+            # Open Orders and other non-ledger sections can contain dated BUY
+            # rows after the closing balance. They are instructions, not
+            # executed transactions, so the activity scope ends here.
+            break
         if "closing balance" in s.lower():
             stmt.quarantine.append(ParsedQuarantine(
                 raw_line=ln,
@@ -449,6 +545,27 @@ def _parse_activity(body: str, currency: str, year: int,
                     if txn_type:
                         break
         if txn_type is None:
+            if cash_effect is not None and abs(cash_effect) > 0:
+                # Some RBC rows leave the Activity column blank but still
+                # print a dated description and an unambiguous debit/credit
+                # cash value. Preserve that source fact as a generic
+                # adjustment; do not invent an income/security subtype.
+                stmt.transactions.append(ParsedTxn(
+                    trade_date=trade_date,
+                    settle_date=None,
+                    txn_type="adjustment",
+                    instrument=None,
+                    quantity=None,
+                    price=None,
+                    gross_amount=None,
+                    commission=None,
+                    other_fees=None,
+                    net_amount=cash_effect,
+                    currency=currency,
+                    description=full,
+                    raw_line=ln,
+                ))
+                continue
             stmt.quarantine.append(ParsedQuarantine(
                 raw_line=ln,
                 reason=f"unknown verb: {verb_part}",
@@ -458,6 +575,11 @@ def _parse_activity(body: str, currency: str, year: int,
         # Pull DEBIT and CREDIT trailing numbers.
         nums = re.findall(r"-?\$?[\d,]+(?:\.\d+)?-?", full)
         qty = price = amount = None
+        security_transfer = (
+            txn_type in {"transfer_in", "transfer_out", "journal"}
+            and cash_effect == 0.0
+            and bool(nums)
+        )
         # If the description contains an option token, treat as option txn.
         opm = RE_RBC_OPT_TXN.search(full)
         if txn_type in {"buy", "sell"} and opm:
@@ -479,6 +601,8 @@ def _parse_activity(body: str, currency: str, year: int,
                 amount = parse_money(tail_nums[0])
             if txn_type == "buy" and amount and amount > 0:
                 amount = -amount
+            if cash_effect is not None:
+                amount = cash_effect
             # Open vs close: RBC doesn't say, infer by sign.
             if txn_type == "buy":
                 if qty is not None:
@@ -506,6 +630,18 @@ def _parse_activity(body: str, currency: str, year: int,
                 amount = parse_money(nums[-1])
                 if txn_type == "buy" and amount and amount > 0:
                     amount = -amount
+            elif len(nums) == 2 and cash_effect is not None:
+                # Nominal-cost corporate distributions can print quantity and
+                # only one other value. Geometry distinguishes a rate-column
+                # value with zero cash from a cash-column amount.
+                qty = parse_money(nums[0])
+                if cash_effect == 0.0:
+                    price = parse_money(nums[1])
+                    amount = 0.0
+                else:
+                    amount = parse_money(nums[1])
+                    if txn_type == "buy" and amount and amount > 0:
+                        amount = -amount
         elif txn_type in {"dividend", "distribution", "interest_income"}:
             if nums:
                 amount = parse_money(nums[-1])
@@ -535,10 +671,21 @@ def _parse_activity(body: str, currency: str, year: int,
             if nums:
                 amount = parse_money(nums[-1])
 
+        if security_transfer:
+            qty = parse_money(nums[-1])
+            amount = None
+            if txn_type != "journal" and qty is not None:
+                txn_type = "transfer_out" if qty < 0 else "transfer_in"
+
+        if cash_effect is not None:
+            amount = cash_effect
+        if txn_type == "interest_income" and amount is not None and amount < 0:
+            txn_type = "interest_expense"
+
         # Derive instrument from leading description tokens
         instrument = None
         if txn_type in {"buy", "sell", "dividend", "distribution",
-                        "return_of_capital"}:
+                        "return_of_capital"} or security_transfer:
             desc_only = re.split(
                 r"\s+\(?-?\$?[\d,]+(?:\.\d+)?", full, maxsplit=1,
             )[0].strip()
@@ -574,6 +721,7 @@ def _parse_activity(body: str, currency: str, year: int,
             gross_amount=None, commission=None, other_fees=None,
             net_amount=amount, currency=currency,
             description=full, raw_line=ln,
+            cash_delta=0.0 if security_transfer else None,
         ))
 
     if closing is not None:
@@ -593,7 +741,7 @@ def _parse_activity(body: str, currency: str, year: int,
 # ----------------------------------------------------------------- Parser
 class RBCParser:
     NAME = "rbc"
-    VERSION = "2.4.0"
+    VERSION = "2.5.1"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "RBC Invest Direct":
@@ -603,6 +751,7 @@ class RBCParser:
     def parse(self, pdf: PdfText) -> ParseResult:
         result = ParseResult(parser_name=self.NAME, parser_version=self.VERSION)
         text = pdf.full_text
+        cash_effects = _layout_cash_effects(pdf)
 
         if _is_annual(pdf.relpath, text):
             # Emit empty annual entry to record the file
@@ -683,7 +832,13 @@ class RBCParser:
                 tail = block.text[ac.end():]
                 fn = re.search(r"\bFOOTNOTES\b", tail)
                 act_body = tail[:fn.start()] if fn else tail
-                if _parse_activity(act_body, block.currency, year, stmt):
+                if _parse_activity(
+                    act_body,
+                    block.currency,
+                    year,
+                    stmt,
+                    cash_effects,
+                ):
                     cash_scopes[block.currency] = "complete"
 
         for key, stmt in statements.items():

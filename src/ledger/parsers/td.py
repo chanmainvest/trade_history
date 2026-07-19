@@ -72,10 +72,11 @@ RE_PERIOD_END_ONLY = re.compile(
 )
 RE_ACCT_NUM = re.compile(r"Account number:\s+([A-Z0-9]+)")
 RE_ACCT_TYPE = re.compile(r"Account type:\s+Direct Trading\s*-\s*(CDN|US)")
-RE_BEGIN_BAL = re.compile(r"Beginning cash balance\s+\$?\(?(-?[\d,]+(?:\.\d+)?)\)?")
-RE_END_BAL = re.compile(r"Ending cash balance\s+\$?\(?(-?[\d,]+(?:\.\d+)?)\)?")
-RE_LEGACY_BEGIN_BAL = re.compile(r"Cash-opening balance\s+\$?\(?(-?[\d,]+(?:\.\d+)?)\)?")
-RE_LEGACY_END_BAL = re.compile(r"Cash-closing balance\s+\$?\(?(-?[\d,]+(?:\.\d+)?)\)?")
+_SIGNED_MONEY_TOKEN = r"((?:-\$?|\$-?|\$)?\(?[\d,]+(?:\.\d+)?\)?-?)"
+RE_BEGIN_BAL = re.compile(rf"Beginning cash balance\s+{_SIGNED_MONEY_TOKEN}")
+RE_END_BAL = re.compile(rf"Ending cash balance\s+{_SIGNED_MONEY_TOKEN}")
+RE_LEGACY_BEGIN_BAL = re.compile(rf"Cash-opening balance\s+{_SIGNED_MONEY_TOKEN}")
+RE_LEGACY_END_BAL = re.compile(rf"Cash-closing balance\s+{_SIGNED_MONEY_TOKEN}")
 
 # Option token in activity (single line). Captures: cp, mult sign, root,
 # yy, [dd]mm, strike. Examples: "PUT -100 SLV'26 FB@100", "CALL-100 SLV'26 13FB@115"
@@ -89,7 +90,7 @@ RE_OPT_TAIL = re.compile(r"^(\d{0,2})([A-Z]{2})@(\d+(?:\.\d+)?)$")
 # A bare equity holding row: "BANK OF MONTREAL 1,600 SEG 174.230 45,606.97 278,768.00 233,161.03 16.87%"
 # Symbol may appear on this line (in parens) or on the *next* line.
 RE_HOLDING_LINE = re.compile(
-    r"^(.+?)\s+([\d,]+(?:\.\d+)?)\s*(?:SEG\s+)?"
+    r"^(.+?)\s+(-?[\d,]+(?:\.\d+)?-?)\s*(?:SEG\s+)?"
     r"([\d,]+(?:\.\d+)?)\s+(-?[\d,]+(?:\.\d+)?)\s+(-?[\d,]+(?:\.\d+)?)\s+"
     r"(-?[\d,]+(?:\.\d+)?)\s+(-?[\d,]+(?:\.\d+)?)\s*%$"
 )
@@ -107,6 +108,10 @@ RE_ACTIVITY_NUMERIC_TAIL = re.compile(
     rf"\s+({_ACTIVITY_NUMBER})\s+({_ACTIVITY_NUMBER})\s+"
     rf"({_ACTIVITY_NUMBER})(?:\s+({_ACTIVITY_NUMBER}))?\s*$"
 )
+RE_LEGACY_TRADE_ROW = re.compile(
+    rf"^({_ACTIVITY_NUMBER})\s+(.+?)\s+({_ACTIVITY_NUMBER})\s+"
+    rf"({_ACTIVITY_NUMBER})\s+({_ACTIVITY_NUMBER})\s*$"
+)
 RE_TD_REFERENCE = re.compile(r"\b[A-Z]{2}-\d{6}\b")
 
 # Activity date prefix:  "Oct 31", "Sep 30"
@@ -117,6 +122,7 @@ RE_ACT_DATE = re.compile(
 ACT_VERBS = {
     "Buy": "buy",
     "Sell": "sell",
+    "Disposition": "sell",
     "Dividend": "dividend",
     "Dividends": "dividend",
     "Distribution": "distribution",
@@ -128,13 +134,20 @@ ACT_VERBS = {
     "Exercise": "option_exercise",
     "Assignment": "option_assignment",
     "Assigned": "option_assignment",
+    "Assign": "option_assignment",
+    "Transfer In": "transfer_in",
+    "Transfer Out": "transfer_out",
     "Transfer": "transfer_in",
+    "Web Banking": "transfer_in",
     "Contribution": "deposit",
     "Deposit": "deposit",
     "Withdrawal": "withdrawal",
     "Cash withdrawal": "withdrawal",
     "Fee": "fee",
     "Service Charge": "fee",
+    "Admin FeeCharged": "fee",
+    "Cheque Issued By": "withdrawal",
+    "Cancel Interest": "interest_income",
     "Name Change": "name_change",
     "Symbol Change": "name_change",
     "Ticker Change": "name_change",
@@ -145,6 +158,9 @@ ACT_VERBS = {
     "Adjustment": "adjustment",
     "Journal": "journal",
     "Return of capital": "return_of_capital",
+    "Cash in Lieu": "distribution",
+    "CIL": "distribution",
+    "Capital Gains": "distribution",
     "Stock split": "stock_split",
     "Stock dividend": "dividend",
 }
@@ -157,6 +173,7 @@ _CASH_OUTFLOW_TYPES = {
     "option_buy_to_open",
     "option_buy_to_close",
     "withdrawal",
+    "transfer_out",
     "fee",
     "tax_withholding",
 }
@@ -186,6 +203,7 @@ class _CashState:
 
     opening: float | None = None
     lines: list[str] = field(default_factory=list)
+    uncertain: bool = False
 
 
 @dataclass
@@ -337,7 +355,8 @@ def _split_subs(text: str) -> list[_Sub]:
 
 
 def _option_expiry(yy: str, dd: str, mon: str) -> str | None:
-    m = _OPT_MON.get(mon.upper())
+    # TD uses both FE and FB for February across statement generations.
+    m = {**_OPT_MON, "FB": 2}.get(mon.upper())
     if not m:
         return None
     year = 2000 + int(yy)
@@ -351,8 +370,9 @@ def _option_expiry(yy: str, dd: str, mon: str) -> str | None:
 
 def _classify(verb_phrase: str) -> str | None:
     # Try longest match first.
+    folded = verb_phrase.casefold()
     for k in sorted(ACT_VERBS, key=len, reverse=True):
-        if verb_phrase.startswith(k):
+        if folded.startswith(k.casefold()):
             return ACT_VERBS[k]
     return None
 
@@ -424,6 +444,7 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
     """Parse one holdings state machine and quarantine unclaimed data rows."""
     section = None
     saw_holdings = False
+    holdings_complete = True
     lines = body.splitlines()
     i = 0
     while i < len(lines):
@@ -473,6 +494,7 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
         if legacy_holding:
             qty_s, name, symbol, price_s, book_s, mv_s, _pct_s = legacy_holding.groups()
             if price_s == "N/D" or mv_s == "N/D":
+                holdings_complete = False
                 stmt.quarantine.append(ParsedQuarantine(
                     raw_line=ln,
                     reason="legacy holding has unavailable price or market value",
@@ -480,6 +502,7 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
                 continue
             quantity = parse_money(qty_s)
             if quantity is None:
+                holdings_complete = False
                 stmt.quarantine.append(ParsedQuarantine(
                     raw_line=ln,
                     reason="legacy holding has no valid quantity",
@@ -521,6 +544,7 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
                 nums = re.findall(r"-?[\d,]+(?:\.\d+)?", num_part)
                 quantity = parse_money(nums[0]) if nums else None
                 if quantity is None:
+                    holdings_complete = False
                     stmt.quarantine.append(ParsedQuarantine(
                         raw_line=ln,
                         reason="option holding has no valid quantity",
@@ -550,11 +574,13 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
                 raw_line=ln,
                 reason="option holding without strike tail",
             ))
+            holdings_complete = False
             continue
 
         m = RE_HOLDING_LINE.match(s)
         if not m:
             if section is not None and re.search(r"\d", s):
+                holdings_complete = False
                 stmt.quarantine.append(ParsedQuarantine(
                     raw_line=ln,
                     reason="unrecognized holding row",
@@ -586,6 +612,7 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
                 extra = (extra + " " + nxt).strip()
                 j += 1
             if not symbol:
+                holdings_complete = False
                 stmt.quarantine.append(ParsedQuarantine(
                     raw_line=ln,
                     reason="holding without printed symbol",
@@ -598,6 +625,7 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
             continue
         quantity = parse_money(qty_s)
         if quantity is None:
+            holdings_complete = False
             stmt.quarantine.append(ParsedQuarantine(
                 raw_line=ln,
                 reason="holding has no valid quantity",
@@ -614,7 +642,7 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
             market_price=parse_money(price_s), market_value=parse_money(mv_s),
             unrealized_pnl=None, currency=currency, raw_line=ln,
         ))
-    return saw_holdings
+    return saw_holdings and holdings_complete
 
 
 def _parse_activity(body: str, currency: str, year_end: int,
@@ -657,6 +685,8 @@ def _parse_activity(body: str, currency: str, year_end: int,
                 cash_complete = True
             continue
         low = s.lower()
+        if low.startswith("pending activity in your account"):
+            break
         if "beginning cash balance" in low or "cash-opening balance" in low:
             stmt.quarantine.append(ParsedQuarantine(
                 raw_line=ln,
@@ -713,6 +743,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
                 raw_line=ln,
                 reason="activity row has an invalid date",
             ))
+            state.uncertain = True
             continue
 
         txn_type = _classify(rest)
@@ -721,12 +752,20 @@ def _parse_activity(body: str, currency: str, year_end: int,
                 raw_line=ln,
                 reason=f"unknown verb in '{rest[:60]}'",
             ))
+            if re.search(r"\d", rest):
+                state.uncertain = True
             cur = None
             continue
 
         # Strip the verb phrase from rest to get description
-        verb_key = next((k for k in sorted(ACT_VERBS, key=len, reverse=True)
-                        if rest.startswith(k)), None)
+        verb_key = next(
+            (
+                k
+                for k in sorted(ACT_VERBS, key=len, reverse=True)
+                if rest.casefold().startswith(k.casefold())
+            ),
+            None,
+        )
         desc = rest[len(verb_key):].strip() if verb_key else rest
 
         # Pull instrument + numbers
@@ -779,22 +818,56 @@ def _parse_activity(body: str, currency: str, year_end: int,
                         txn_type = "option_sell_to_close"
             elif txn_type in {"option_expiration", "option_exercise", "option_assignment"} and tnums:
                 qty = parse_money(tnums[0])
-        elif txn_type in {"buy", "sell"}:
+        elif verb_key and verb_key.casefold() == "disposition":
             numeric_tail = RE_ACTIVITY_NUMERIC_TAIL.search(desc)
-            if numeric_tail is None:
+            if numeric_tail is None or numeric_tail.group(4) is not None:
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="disposition row has no quantity/amount/balance tail",
+                ))
+                state.uncertain = True
+                cur = None
+                continue
+            qty = parse_money(numeric_tail.group(1))
+            amount = parse_money(numeric_tail.group(2))
+            instrument = _instrument_from_description(
+                desc[:numeric_tail.start()].strip(),
+                currency,
+            )
+            if qty is None or instrument is None:
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="disposition row lacks a valid quantity or instrument",
+                ))
+                state.uncertain = True
+                cur = None
+                continue
+        elif txn_type in {"buy", "sell"}:
+            legacy_trade = RE_LEGACY_TRADE_ROW.match(desc)
+            numeric_tail = RE_ACTIVITY_NUMERIC_TAIL.search(desc)
+            if legacy_trade is not None:
+                qty = parse_money(legacy_trade.group(1))
+                instrument = _instrument_from_description(
+                    legacy_trade.group(2).strip(),
+                    currency,
+                )
+                price = parse_money(legacy_trade.group(3))
+                amount = parse_money(legacy_trade.group(4))
+            elif numeric_tail is None:
                 stmt.quarantine.append(ParsedQuarantine(
                     raw_line=ln,
                     reason="buy/sell row has no complete numeric tail",
                 ))
                 cur = None
                 continue
-            qty = parse_money(numeric_tail.group(1))
-            price = parse_money(numeric_tail.group(2))
-            amount = parse_money(numeric_tail.group(3))
-            instrument = _instrument_from_description(
-                desc[:numeric_tail.start()].strip(),
-                currency,
-            )
+            else:
+                qty = parse_money(numeric_tail.group(1))
+                price = parse_money(numeric_tail.group(2))
+                amount = parse_money(numeric_tail.group(3))
+                instrument = _instrument_from_description(
+                    desc[:numeric_tail.start()].strip(),
+                    currency,
+                )
             if qty is None:
                 stmt.quarantine.append(ParsedQuarantine(
                     raw_line=ln,
@@ -809,6 +882,27 @@ def _parse_activity(body: str, currency: str, year_end: int,
                 ))
                 cur = None
                 continue
+        elif txn_type in {"transfer_in", "transfer_out", "journal"}:
+            numeric_tail = RE_ACTIVITY_NUMERIC_TAIL.search(desc)
+            transfer_amount = (
+                parse_money(numeric_tail.group(2))
+                if numeric_tail is not None and numeric_tail.group(4) is None
+                else None
+            )
+            if transfer_amount == 0.0:
+                # In-kind transfers print quantity, zero cash, then running
+                # balance. Preserve the security movement and its zero cash
+                # effect instead of treating the quantity as dollars.
+                qty = parse_money(numeric_tail.group(1))
+                amount = parse_money(numeric_tail.group(2))
+                instrument = _instrument_from_description(
+                    desc[:numeric_tail.start()].strip(),
+                    currency,
+                )
+                if instrument is None:
+                    qty = None
+            if instrument is None and nums:
+                amount = parse_money(nums[-2]) if len(nums) >= 2 else parse_money(nums[-1])
         elif txn_type in {"dividend", "distribution", "interest_income",
                           "tax_withholding", "return_of_capital"} and nums:
             # Last number is running cash balance; second-last is amount.
@@ -821,6 +915,12 @@ def _parse_activity(body: str, currency: str, year_end: int,
             amount = parse_money(nums[-2]) if len(nums) >= 2 else parse_money(nums[-1])
 
         if amount is not None:
+            if verb_key and verb_key.casefold() == "web banking":
+                upper_desc = desc.upper()
+                if " TSF TO " in f" {upper_desc} " or amount < 0:
+                    txn_type = "transfer_out"
+                else:
+                    txn_type = "transfer_in"
             if txn_type in _CASH_OUTFLOW_TYPES:
                 amount = -abs(amount)
             elif txn_type in _CASH_INFLOW_TYPES:
@@ -861,13 +961,13 @@ def _parse_activity(body: str, currency: str, year_end: int,
             raw_line="\n".join(cash_lines),
             reason="opening cash balance has no matching valid closing balance",
         ))
-    return cash_complete
+    return cash_complete and not state.uncertain
 
 
 # ---------------------------------------------------------------- Parser
 class TDParser:
     NAME = "td"
-    VERSION = "2.4.0"
+    VERSION = "2.5.1"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "TD Webbroker":

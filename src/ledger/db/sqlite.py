@@ -17,7 +17,7 @@ from ..identity import (
 from ..quantity import normalized_position_delta
 
 _SCHEMA = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 def connect(path: Path | str = SQLITE_PATH) -> sqlite3.Connection:
@@ -940,11 +940,15 @@ def _migrate_existing_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE initial_cash ADD COLUMN notes TEXT")
     for definition in ("opened_on TEXT", "closed_on TEXT", "notes TEXT"):
         _add_column(conn, "accounts", definition)
+    _add_column(conn, "instruments", "security_id INTEGER REFERENCES securities(security_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_instruments_security ON instruments(security_id)"
+    )
     _install_domain_triggers(conn)
 
 
 def _install_domain_triggers(conn: sqlite3.Connection) -> None:
-    """Enforce v8 domains on pre-v8 tables without rewriting private rows.
+    """Enforce current domains on older tables without rewriting private rows.
 
     Fresh databases receive inline checks from ``schema.sql``. Existing ledgers
     keep their historical values, while column-scoped triggers reject invalid
@@ -954,6 +958,7 @@ def _install_domain_triggers(conn: sqlite3.Connection) -> None:
         "accounts": ("base_currency",),
         "instruments": ("currency",),
         "instrument_identifier_lookups": ("currency",),
+        "instrument_resolution_candidates": ("currency",),
         "snapshot_sets": ("currency",),
         "transactions": ("currency",),
         "position_snapshots": ("currency",),
@@ -971,6 +976,7 @@ def _install_domain_triggers(conn: sqlite3.Connection) -> None:
         "snapshot_sets": ("as_of_date",),
         "transactions": ("trade_date", "settle_date", "cash_effective_date"),
         "instrument_ticker_changes": ("effective_date",),
+        "instrument_journal_pairs": ("effective_from", "effective_to"),
         "position_snapshots": ("as_of_date",),
         "cash_balances": ("as_of_date",),
         "initial_positions": ("as_of_date",),
@@ -982,6 +988,8 @@ def _install_domain_triggers(conn: sqlite3.Connection) -> None:
         "source_files": ("parsed_at",),
         "ingestion_runs": ("started_at", "finished_at", "activated_at"),
         "source_evidence_geometry": ("updated_at",),
+        "instrument_market_symbols": ("last_checked_at", "verified_at"),
+        "instrument_resolution_candidates": ("first_seen_at", "last_seen_at"),
     }
     hash_columns = {
         "source_files": ("sha256",),
@@ -1456,6 +1464,144 @@ def upsert_account(
     return cur.fetchone()[0]
 
 
+def upsert_security_identity(
+    conn: sqlite3.Connection,
+    *,
+    issuer_key: str,
+    issuer_name: str,
+    security_key: str,
+    security_name: str,
+    asset_type: str,
+    journalable: bool = False,
+) -> int:
+    issuer_id = int(
+        conn.execute(
+            """
+            INSERT INTO security_issuers(issuer_key, canonical_name)
+            VALUES (?, ?)
+            ON CONFLICT(issuer_key) DO UPDATE SET
+                canonical_name = excluded.canonical_name
+            RETURNING issuer_id
+            """,
+            (issuer_key, issuer_name),
+        ).fetchone()[0]
+    )
+    return int(
+        conn.execute(
+            """
+            INSERT INTO securities(
+                security_key, issuer_id, canonical_name, asset_type, journalable
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(security_key) DO UPDATE SET
+                issuer_id = COALESCE(excluded.issuer_id, securities.issuer_id),
+                canonical_name = excluded.canonical_name,
+                journalable = MAX(securities.journalable, excluded.journalable)
+            RETURNING security_id
+            """,
+            (security_key, issuer_id, security_name, asset_type, int(journalable)),
+        ).fetchone()[0]
+    )
+
+
+def upsert_market_symbol(
+    conn: sqlite3.Connection,
+    *,
+    instrument_id: int,
+    provider_symbol: str,
+    status: str = "candidate",
+    provider: str = "yahoo",
+) -> int:
+    return int(
+        conn.execute(
+            """
+            INSERT INTO instrument_market_symbols(
+                instrument_id, provider, provider_symbol, status
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(instrument_id, provider) DO UPDATE SET
+                provider_symbol = excluded.provider_symbol,
+                status = CASE
+                    WHEN instrument_market_symbols.status = 'verified'
+                     AND instrument_market_symbols.provider_symbol = excluded.provider_symbol
+                    THEN 'verified'
+                    ELSE excluded.status
+                END,
+                last_error = NULL
+            RETURNING market_symbol_id
+            """,
+            (instrument_id, provider, provider_symbol, status),
+        ).fetchone()[0]
+    )
+
+
+def _sync_catalog_journal_pairs(conn: sqlite3.Connection, security_id: int) -> None:
+    security = conn.execute(
+        "SELECT journalable FROM securities WHERE security_id = ?", (security_id,)
+    ).fetchone()
+    if security is None or not int(security["journalable"]):
+        return
+    rows = conn.execute(
+        """
+        SELECT instrument_id, currency FROM instruments
+         WHERE security_id = ? ORDER BY instrument_id
+        """,
+        (security_id,),
+    ).fetchall()
+    for index, left in enumerate(rows):
+        for right in rows[index + 1:]:
+            if left["currency"] == right["currency"]:
+                continue
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO instrument_journal_pairs(
+                    from_instrument_id, to_instrument_id, conversion_ratio,
+                    status, notes
+                ) VALUES (?, ?, 1.0, 'catalog', 'same reviewed fungible security')
+                """,
+                (left["instrument_id"], right["instrument_id"]),
+            )
+
+
+def queue_instrument_resolution_candidate(
+    conn: sqlite3.Connection,
+    *,
+    institution_code: str,
+    normalized_text: str,
+    display_text: str,
+    asset_type: str,
+    currency: str,
+) -> int:
+    validate_ledger_currency(currency)
+    institution = conn.execute(
+        "SELECT institution_id FROM institutions WHERE code = ?", (institution_code,)
+    ).fetchone()
+    if institution is None:
+        institution_id = upsert_institution(conn, institution_code, institution_code)
+    else:
+        institution_id = int(institution["institution_id"])
+    return int(
+        conn.execute(
+            """
+            INSERT INTO instrument_resolution_candidates(
+                institution_id, normalized_text, display_text, asset_type,
+                currency, status
+            ) VALUES (?, ?, ?, ?, ?, 'pending')
+            ON CONFLICT(institution_id, normalized_text, asset_type, currency)
+            DO UPDATE SET
+                display_text = excluded.display_text,
+                last_seen_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+            RETURNING candidate_id
+            """,
+            (
+                institution_id,
+                normalized_text,
+                display_text[:160],
+                asset_type,
+                currency,
+            ),
+        ).fetchone()[0]
+    )
+
+
 def upsert_instrument(
     conn: sqlite3.Connection,
     *,
@@ -1471,6 +1617,12 @@ def upsert_instrument(
     option_multiplier: int = 100,
     resolution_method: str | None = None,
     resolution_confidence: float | None = None,
+    issuer_key: str | None = None,
+    issuer_name: str | None = None,
+    security_key: str | None = None,
+    security_name: str | None = None,
+    journalable: bool = False,
+    market_symbol: str | None = None,
 ) -> int:
     validate_ledger_currency(currency)
     if option_expiry is not None:
@@ -1485,15 +1637,29 @@ def upsert_instrument(
         option_type=option_type,
         option_multiplier=option_multiplier,
     )
+    security_id = None
+    if security_key is not None:
+        if not issuer_key or not issuer_name or not security_name:
+            raise ValueError("security identity requires issuer and security names")
+        security_id = upsert_security_identity(
+            conn,
+            issuer_key=issuer_key,
+            issuer_name=issuer_name,
+            security_key=security_key,
+            security_name=security_name,
+            asset_type=asset_type,
+            journalable=journalable,
+        )
     cur = conn.execute(
         """
         INSERT INTO instruments
-            (instrument_key, asset_type, symbol, currency, exchange, name,
+            (instrument_key, security_id, asset_type, symbol, currency, exchange, name,
              option_root, option_expiry, option_strike, option_type,
              option_multiplier, resolution_method, resolution_confidence)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(instrument_key)
         DO UPDATE SET
+            security_id = COALESCE(excluded.security_id, instruments.security_id),
             exchange = COALESCE(excluded.exchange, instruments.exchange),
             name     = COALESCE(excluded.name, instruments.name),
             resolution_method = COALESCE(
@@ -1505,9 +1671,18 @@ def upsert_instrument(
         RETURNING instrument_id
         """,
         (
-            instrument_key, asset_type, symbol, currency, exchange, name,
+            instrument_key, security_id, asset_type, symbol, currency, exchange, name,
             option_root, option_expiry, option_strike, option_type, option_multiplier,
             resolution_method, resolution_confidence,
         ),
     )
-    return cur.fetchone()[0]
+    instrument_id = int(cur.fetchone()[0])
+    if market_symbol is not None:
+        upsert_market_symbol(
+            conn,
+            instrument_id=instrument_id,
+            provider_symbol=market_symbol,
+        )
+    if security_id is not None:
+        _sync_catalog_journal_pairs(conn, security_id)
+    return instrument_id

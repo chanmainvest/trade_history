@@ -1,7 +1,7 @@
 # CIBC parser
 
 Implementation: `src/ledger/parsers/cibc.py`, parser name `cibc`, current
-version `2.4.0`.
+version `2.5.0`.
 
 ## Recognition and account shape
 
@@ -35,11 +35,17 @@ separate positions and cash snapshot scopes.
   persistence.
 - Curated name fallback respects native-currency listings for dual-listed
   securities (for example, Barrick `ABX` in CAD and `GOLD` in USD).
+- `EFT DEBIT BANK ACCOUNT` is cash entering the brokerage account. Signed
+  `Contrib TRANSFER TO/FROM` rows retain their account-transfer direction and
+  never turn `TO`/`FROM` into an instrument. A dated row with two explicit
+  blank security cells and a signed cash value is retained as a generic
+  adjustment when CIBC prints no activity subtype.
 - Explicit name/symbol/ticker-change verbs are retained for the shared v3
   contract; only a printed `FROM <old> TO <new>` pair becomes a dated lineage.
 - A recognized portfolio section is declared `complete`; a cash scope is
-  complete only after a valid printed closing balance. Invalid/missing numeric
-  fields and unclaimed numeric rows are quarantined, never stored as zero.
+  complete only after a valid printed closing balance and no unsupported dated
+  numeric activity. Invalid/missing numeric fields and unclaimed numeric rows
+  are quarantined, never stored as zero.
 - Parsed transactions, positions, cash, and quarantine rows receive
   page/line source spans, with bounding boxes/words when PDF extraction
   supplied them.
@@ -52,6 +58,7 @@ separate positions and cash snapshot scopes.
 - Section completeness is evidence of a recognized printed section, not yet a
   reconciliation against every printed portfolio total.
 
-Fixtures cover dual currencies, options, funds, cash, source evidence, and a
+Fixtures cover dual currencies, options, funds, EFT/contribution cash rows,
+unlabelled signed adjustments, incomplete cash scopes, source evidence, and a
 TFSA option holding. See [PARSER-CONTRACT.md](../PARSER-CONTRACT.md) for the
 shared output rules.

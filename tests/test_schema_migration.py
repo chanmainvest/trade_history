@@ -246,7 +246,7 @@ def test_init_db_migrates_v5_identity_runs_scopes_and_evidence(tmp_path):
     with sqlite_db.session(db_path) as conn:
         assert conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'schema_version'"
-        ).fetchone()[0] == "8"
+        ).fetchone()[0] == "9"
         assert conn.execute(
             "SELECT COUNT(*) FROM instrument_ticker_changes"
         ).fetchone()[0] == 0
@@ -297,6 +297,20 @@ def test_init_db_migrates_v5_identity_runs_scopes_and_evidence(tmp_path):
         assert conn.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'source_pages'"
         ).fetchone()[0] == 1
+        assert "security_id" in {
+            row["name"] for row in conn.execute("PRAGMA table_info(instruments)")
+        }
+        for table in (
+            "security_issuers",
+            "securities",
+            "instrument_market_symbols",
+            "instrument_journal_pairs",
+            "instrument_resolution_candidates",
+        ):
+            assert conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table,),
+            ).fetchone()[0] == 1
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("UPDATE transactions SET currency = 'EUR'")
         with pytest.raises(sqlite3.IntegrityError):

@@ -30,10 +30,12 @@ Exact fields and the `TxnType` literal vocabulary are defined in
 contract on the complete `ParseResult` before staged ingestion writes any
 statement children.
 
-The active parser contract is version `4`. It retains v3's
+The active parser contract is version `5`. It retains v3's
 `ParsedTxn.related_instrument` and `corporate_action_ratio` support for an
 explicitly printed corporate-action replacement, and changes evidence identity
-so replaceable geometry cannot alter semantic rows.
+so replaceable geometry cannot alter semantic rows. Resolver-only listing
+metadata (issuer/security keys, journalability, and provider symbol) is carried
+on `ParsedInstrument` after parsing; institution parsers remain network-free.
 
 ## Required semantics
 
@@ -50,6 +52,9 @@ so replaceable geometry cannot alter semantic rows.
 - A parser declares the scope and completeness of every holdings/cash section.
 - A parser preserves its printed instrument identity; it does not need to guess
   a public ticker from an uncertain free-form name.
+- A compact company/fund name is not a ticker merely because it contains only
+  ticker-legal characters. Parsers mark description-derived tokens unresolved;
+  the staged resolver owns listing identity.
 - A ticker/name-change row may link old and new instruments only when both
   symbols are printed explicitly. The pair must differ and retain one asset
   type/native currency; the conversion ratio must be positive.
@@ -78,7 +83,9 @@ underdetermined movement and makes reconciliation incomplete.
 `SourceSpan` can carry raw text, page/line, bounding box, words, and parser
 rule. Transactions, positions, cash balances, snapshot sets, and the richer
 quarantine type can carry one. Normal ingest uses raw text plus deterministic
-page/line hints; it does not request boxes. The writer assigns every
+page/line hints. RBC additionally receives transient page words to interpret
+its financial debit/credit columns; persisted Verify geometry remains owned by
+the independent enrichment pass. The writer assigns every
 parsed/quarantined row a deterministic evidence record from source identity,
 row kind/occurrence, raw text, and parser rule. Page, line, boxes, and words do
 not participate in the `ev2` key. Cash balances carry their opening/closing
@@ -90,9 +97,10 @@ transaction vocabulary, incomplete options, duplicate statement identities,
 invalid snapshot declarations, and parser-reported errors as fatal.
 
 `PdfText` retains raw page text and page dimensions. It carries
-`PdfWord`/`PdfLine` layout rows only when the separate geometry pass explicitly
-sets `include_layout=True`. The parser bridge normalizes text only for matching
-and keeps original raw evidence. Normal ingest, text fixtures, and the `pypdf`
+`PdfWord`/`PdfLine` layout rows when extraction explicitly sets
+`include_layout=True`; normal ingest does this only for RBC semantic column
+signs, while the independent geometry pass does it for every supported PDF.
+The parser bridge keeps original raw evidence. Text fixtures and the `pypdf`
 fallback receive deterministic page/line evidence but no invented box or word
 coordinates. See [INGESTION.md](INGESTION.md) for the replaceable enrichment
 pass.
@@ -112,10 +120,15 @@ contract are likewise quarantined until the model can represent the variant
 addition to its parsed identity. During Phase 3 ingestion, the resolver records
 one of these outcomes without calling the broad name-to-ticker repair map:
 
-1. a complete option contract or explicit printed symbol is retained;
-2. an exact reviewed alias or resolved reviewed fund lookup is applied;
-3. one exact same-statement holding identity is applied; or
-4. the printed identity remains unresolved with confidence `0.0`.
+1. a complete option contract is retained before any underlying-listing lookup;
+2. an explicit printed symbol is retained or enriched through the listing catalog;
+3. an exact reviewed alias or resolved reviewed fund lookup is applied;
+4. one exact same-statement holding identity is applied; or
+5. the printed identity remains unresolved with confidence `0.0`.
+
+The resolver must never replace a complete option with its root equity. Root,
+expiry, strike, call/put, multiplier, and native currency together are the
+contract identity even when the root is also a catalogued public ticker.
 
 For transactions the selected method, confidence, and available source-span
 evidence are persisted in `transactions`. Holdings retain regular source

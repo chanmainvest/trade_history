@@ -1,0 +1,11 @@
+Statementperiod February1,2024toFebruary29,2024
+Your Canadian Margin Account
+Account#6Y-6HF9-E
+Details of holdings in your account
+Cash
+Account activity since your last statement
+OpeningBalance $100.00
+Feb10 Deposit 082-365679-1506Y6HF9E 270,000.00
+Feb10 Convert$ CAD/USD6Y6HF9F@1.357620 (270,000.00)
+Feb23 Refund PROMOTION 10.00
+Feb29 ClosingBalance $110.00

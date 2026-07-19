@@ -7,6 +7,8 @@ reconstruction.
 """
 from __future__ import annotations
 
+import math
+
 _POS_ABS = {
     "buy",
     "buy_to_cover",
@@ -67,6 +69,9 @@ NON_CASH_TXN_TYPES = frozenset(
 LEGACY_UNDERIVABLE_POSITION_TYPES = frozenset(
     {"stock_split", "name_change", "spinoff", "merger"}
 )
+CONTEXTUAL_CLOSE_TYPES = frozenset(
+    {"option_assignment", "option_exercise", "option_expiration"}
+)
 
 
 def quantity_delta(txn_type: str, quantity: float | None) -> float:
@@ -97,3 +102,25 @@ def normalized_position_delta(txn_type: str, quantity: float | None) -> float | 
     if quantity is None or txn_type in LEGACY_UNDERIVABLE_POSITION_TYPES:
         return None
     return quantity_delta(txn_type, quantity)
+
+
+def contextual_position_delta(
+    txn_type: str,
+    quantity: float | None,
+    current_quantity: float,
+    fallback: float | None,
+) -> float | None:
+    """Resolve an option-close sign from the position immediately before it.
+
+    Brokers inconsistently print an absolute or signed contract quantity for
+    expiration, assignment, and exercise. When the printed magnitude can close
+    all or part of the observed current position, its only defensible direction
+    is toward zero. Otherwise retain the parser/persistence fallback.
+    """
+    if txn_type not in CONTEXTUAL_CLOSE_TYPES or quantity is None:
+        return fallback
+    current = float(current_quantity)
+    magnitude = abs(float(quantity))
+    if abs(current) <= 1e-9 or magnitude > abs(current) + 1e-9:
+        return fallback
+    return -math.copysign(magnitude, current)

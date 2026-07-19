@@ -62,7 +62,11 @@ def _text_dump(path: Path, root: Path) -> PdfText:
 def _load_source(path: Path, root: Path) -> PdfText:
     if path.suffix.lower() == ".txt":
         return _text_dump(path, root)
-    return extract_pdf(path, repo_root=root.parent)
+    return extract_pdf(
+        path,
+        repo_root=root.parent,
+        include_layout=path.parent.name == "RBC Invest Direct",
+    )
 
 
 def _discover(root: Path, institution: str | None, limit: int | None) -> list[Path]:

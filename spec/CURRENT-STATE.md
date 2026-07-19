@@ -1,11 +1,10 @@
 # Current state
 
-Implementation review: **2026-07-18**. The live-ledger counts below remain a
-dated diagnostic snapshot from **2026-07-12**, not a release promise. Parser
-v2 and the reconciliation engine were validated in fixtures and read-only
-corpus audits on 2026-07-14. A new parser-v2 shadow ledger has been built and
-compared, but the live SQLite ledger has not been re-ingested, changed, or cut
-over to it.
+Implementation review: **2026-07-19**. Parser v2 and the reconciliation engine
+were validated in fixtures, full-corpus shadow builds, and a reproducible
+two-build fingerprint comparison. The signed shadow was cut over to the real
+`data/ledger.sqlite` profile on 2026-07-19; the pre-cutover database remains as
+a timestamped local backup.
 
 ## Product surface
 
@@ -17,7 +16,8 @@ over to it.
 - Ingestion stages one validated PDF source in a savepoint and activates it
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.
-- CIBC, RBC, and TD report parser version `2.4.0`, while HSBC reports `2.2.0`.
+- CIBC reports parser version `2.5.0`, RBC and TD report `2.5.1`, and HSBC
+  reports `2.4.0`.
   They retain semantic source page/line evidence, explicit snapshot scopes,
   and quarantine rather than fabricate unsupported values. Word/box geometry
   is rebuilt separately after semantic activation.
@@ -29,7 +29,7 @@ over to it.
   position/cash/statement-total reconciliation results, and source-linked cash
   and summary-total rows. Its unresolved/incomplete/unreconciled filters are
   read-only. Legacy rows without v6 facts are shown as unavailable, not complete.
-- Schema v8 constrains new ledger currencies to CAD/USD, validates canonical
+- Schema v9 constrains new ledger currencies to CAD/USD, validates canonical
   business dates/UTC timestamps and SHA-256 text, and stores replaceable PDF
   geometry separately from `ev2` semantic evidence. Verify reads persisted
   exact links; ambiguous/unmatched rows remain visibly unlinked.
@@ -44,11 +44,12 @@ over to it.
 
 ## Validation and corpus audits
 
-- The committed synthetic-fixture suite covers 11 files. Its extraction audit
-  emits 17 statements with zero duplicate keys, zero contract errors, zero
+- The committed synthetic-fixture suite covers 14 files. Its extraction audit
+  emits 18 statements with zero duplicate keys, zero contract errors, zero
   calculable cash residuals, and zero calculable position residuals. One annual
-  RBC fixture is intentionally unclaimed because the generic fixture folder is
-  not a production broker folder.
+  RBC fixture and two parser-only HSBC edge fixtures are intentionally
+  unclaimed because their generic fixture paths/headers are not production
+  broker recognition inputs.
 - The 324 stored text dumps produced 323 valid parses and one explicit tax
   document skip; there were zero invalid, unclaimed, or failed files, zero
   contract errors/warnings, and zero duplicate statement keys. The audit still
@@ -104,23 +105,77 @@ over to it.
   calculable intervals expose real residuals instead of being hidden as
   incomplete. This shadow was not signed off or cut over.
 
+- On 2026-07-19, a fresh disposable shadow parsed the unchanged 338-PDF
+  manifest with CIBC `2.5.0`, RBC/TD `2.5.1`, HSBC `2.4.0`, and resolver v5. It contains
+  548 statements, 644 instruments, 4,236 transactions, 6,737 position
+  snapshots, 648 cash balances, 45 initial positions, and 8,824 reconciliation
+  results. Cash results are 827 reconciled, 42 unexplained residuals, 402
+  incomplete inputs, and 17 missing-prior checks. Position results are 1,033
+  reconciled, 28 unexplained residuals, 6,439 incomplete inputs, 34
+  missing-prior checks, and two not-applicable scopes. The remaining position
+  residuals are RBC (24) and HSBC (4); TD has none because degraded legacy
+  holding tables now remain explicitly incomplete rather than masquerading as
+  complete checkpoints. A source audit found zero
+  null/contrary quantity signs
+  across 360 buys and 223 sells after complete option contracts were prevented
+  from collapsing into their root equities. RBC `2.5.1` recovers compact
+  historical activity dates and balances and reduced RBC position residuals
+  from 42 to 24. TD `2.5.1` retains signed holding quantities: seven negative
+  non-option snapshots are source-backed SMCI/RDDT shorts, while NTR has no
+  negative equity snapshot. Unrecognized numeric TD holding rows downgrade the
+  whole positions scope while retaining readable rows. Two clean rebuilds
+  produced the same content fingerprint, the user signed off the report, and
+  this database was atomically promoted to the real profile. The prior live
+  database is retained as `ledger.backup-20260719T215224Z.sqlite`. A subsequent
+  layout-enrichment pass persisted 2,896 pages, 141,250 lines, and 21,808 exact
+  evidence links; 2,329 ambiguous and 1,481 unmatched links remain explicit.
+  Remaining RBC/HSBC residuals still require source review.
+
+## Listing/provider identity support (fixture validated 2026-07-18)
+
+- Schema v9 separates issuer, security/share class, broker listing, Yahoo
+  provider symbol, unresolved candidate, and explicit journal-pair identities.
+- Resolver v5 no longer accepts compact HSBC company/ETF names as tickers and
+  retains a complete option contract before looking up its root equity.
+  Reviewed catalog mappings cover the observed BCE, BMO money-market, Global X
+  cash/currency/T-bill, iShares LQD, Nutrien, Rogers Class B, Purpose PSA,
+  US Benchmark Treasury, Sprott, TC Energy, TELUS, SPDR BILS, and Vanguard bond
+  variants. Unknown names remain queued and absent from financial-row identity.
+- On 2026-07-18 the live-profile database was backed up, compatibility-migrated
+  from schema v5 to v9, and passed integrity/foreign-key checks. The catalog
+  repair repointed 161 transactions, 128 non-conflicting snapshots, and 47
+  initial rows; 41 checkpoint collisions remain for clean shadow re-ingest
+  rather than merging source facts. The complete observed HSBC pseudo-ticker
+  list and bare `RCI` have zero references from transactions, snapshots, or
+  initials; Rogers references use `RCI.B`. This was not a full shadow rebuild
+  or cutover.
+- Yahoo verification is opt-in and requires a unique strong public-name match
+  in the expected currency/listing family plus non-empty history. Network
+  approval infrastructure was unavailable during this implementation, so
+  live Yahoo verification was not claimed; mocked verification and provider-
+  symbol selection regressions pass.
+
 ## Ticker-change support (fixture validated 2026-07-18)
 
-- Schema v8 preserves old and new tickers as separate canonical instruments
+- Schema v9 preserves old and new tickers as separate canonical instruments
   linked by an effective date and source transaction/evidence. It does not use
   the timeless alias table for this purpose.
-- Parser-contract v4 accepts only explicit printed old/new pairs. Generic name
+- Parser-contract v5 accepts only explicit printed old/new pairs. Generic name
   changes remain incomplete rather than being inferred from names or residuals.
 - Reconciliation debits the whole old-symbol balance and credits the new-symbol
   balance at the stored ratio. Holdings, Monthly diff, Performance filters, and
   Research consume the same non-branching lineage; Research constrains each
   ticker's public data to its validity dates.
 - Synthetic activation, reconciliation, holdings, and ambiguity regressions
-  pass. No fresh full-corpus audit or live/shadow re-ingest has been performed
-  for parser 2.4/2.2, so the dated counts above do not claim observed ticker
-  changes and the live ledger remains unchanged.
+  pass. The 2026-07-19 shadow exercised this code across the full corpus and
+  observed no ticker-change source rows; absence of an observed relationship
+  does not authorize an inferred one. The promoted live ledger therefore has
+  no source-backed ticker-change relationship yet.
 
-## Measured live ledger (2026-07-12)
+## Legacy pre-cutover live-ledger baseline (2026-07-12)
+
+These counts describe the replaced database and are retained only as a
+historical comparison with the rebuilt live counts above.
 
 | Item | Count |
 |---|---:|
@@ -176,29 +231,23 @@ over to it.
 
 ## Confirmed remaining correctness work
 
-1. **The dated live ledger still has broken historical instrument identity.**
-   Schema v8 gives new/migrated rows one canonical key per listing plus dated
-   ticker relationships, but the 2026-07-12 live snapshot is not the shadow
-   target. It contains 803 duplicate logical
-   groups, 31,567 excess IDs, and 28,587 unreferenced instrument rows.
-2. **The reconciliation engine is implemented, but the dated live ledger has
-   not been rebuilt with it.** `ledger ingest reconcile` now stores
-   source-traceable position, cash, and printed-total equations. This phase did
-   not mutate the live database. The GUI can surface results when they exist,
-   but legacy live rows have no v6 reconciliation facts yet.
+1. **The live ledger now uses the rebuilt identity model.** Schema v9 and
+   resolver v5 keep listing, security, issuer, provider symbol, ticker change,
+   and journal-pair identities separate. Remaining unresolved candidates are
+   review data, not invented financial-row tickers.
+2. **The live ledger now contains persisted reconciliation facts.** Position,
+   cash, and printed-total equations are source traceable and available to the
+   GUI. Incomplete inputs remain visibly incomplete.
 3. **Full-corpus cash and position residuals remain material.** The parser
    audit and shadow reconciliation expose them without fabricating balancing
    rows. The largest residuals and the RBC annual-report count difference still
-   need source spot-checks before a human can sign off or cut over.
-4. **The holdings engine is shared, but live data quality is still historical.**
+   need source spot-checks before those intervals can be considered reconciled.
+4. **The holdings engine is shared and reads the rebuilt live data.**
    Monthly, Performance, and Visualisations now use canonical identity,
    complete scopes, normalized movements, and explicit stale/unpriced status.
-   The dated live ledger has not been re-ingested or reconciled with parser v2,
-   so visible quality states remain historical/unavailable until review and
-   cutover.
-5. **Live scopes/provenance are historical.** Parser v2 can produce complete
-   scope and coordinate-aware evidence, but currently active v1-derived rows
-   remain conservative/legacy until an approved re-ingest and shadow rebuild.
+5. **Live semantic provenance and derived geometry are current.** Exact links
+   drive Verify highlighting. Ambiguous/unmatched links remain review states
+   and are never resolved by guessing.
 
 ## Operational and documentation limits
 

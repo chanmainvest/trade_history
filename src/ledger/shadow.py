@@ -39,6 +39,9 @@ class CuratedState:
     accounts: list[dict] = field(default_factory=list)
     instruments: dict[str, dict] = field(default_factory=dict)
     aliases: list[dict] = field(default_factory=list)
+    resolution_candidates: list[dict] = field(default_factory=list)
+    market_symbols: list[dict] = field(default_factory=list)
+    journal_pairs: list[dict] = field(default_factory=list)
     ticker_changes: list[dict] = field(default_factory=list)
     identifier_lookups: list[dict] = field(default_factory=list)
     initial_positions: list[dict] = field(default_factory=list)
@@ -56,6 +59,9 @@ class CuratedState:
         return {
             "accounts": len(self.accounts),
             "aliases": len(self.aliases),
+            "resolution_candidates": len(self.resolution_candidates),
+            "market_symbols": len(self.market_symbols),
+            "journal_pairs": len(self.journal_pairs),
             "ticker_changes": len(self.ticker_changes),
             "identifier_lookups": len(self.identifier_lookups),
             "initial_positions": len(self.initial_positions),
@@ -259,6 +265,70 @@ def export_curated_state(source_db: Path | str) -> CuratedState:
                 )
         elif _table_exists(conn, "instrument_aliases"):
             state.unavailable["aliases"] = "source aliases table has an unsupported schema"
+
+        candidate_columns = _columns(conn, "instrument_resolution_candidates")
+        if {"institution_id", "resolved_instrument_id", "status"}.issubset(candidate_columns):
+            rows = conn.execute(
+                """
+                SELECT candidate.*, institution.code AS institution_code
+                  FROM instrument_resolution_candidates candidate
+                  JOIN institutions institution
+                    ON institution.institution_id = candidate.institution_id
+                 WHERE candidate.status = 'resolved'
+                   AND candidate.resolved_instrument_id IS NOT NULL
+                 ORDER BY candidate.candidate_id
+                """
+            ).fetchall()
+            for row in rows:
+                key = remember_instrument(row["resolved_instrument_id"])
+                if key is None:
+                    state.unavailable["resolution_candidates"] = (
+                        "one or more resolved candidates reference missing instruments"
+                    )
+                    continue
+                record = dict(row)
+                record["instrument_key"] = key
+                state.resolution_candidates.append(record)
+
+        market_columns = _columns(conn, "instrument_market_symbols")
+        if {"instrument_id", "provider", "provider_symbol", "status"}.issubset(market_columns):
+            rows = conn.execute(
+                """
+                SELECT * FROM instrument_market_symbols
+                 WHERE status = 'verified' ORDER BY market_symbol_id
+                """
+            ).fetchall()
+            for row in rows:
+                key = remember_instrument(row["instrument_id"])
+                if key is None:
+                    state.unavailable["market_symbols"] = (
+                        "one or more verified market symbols reference missing instruments"
+                    )
+                    continue
+                record = dict(row)
+                record["instrument_key"] = key
+                state.market_symbols.append(record)
+
+        journal_columns = _columns(conn, "instrument_journal_pairs")
+        if {"from_instrument_id", "to_instrument_id", "status"}.issubset(journal_columns):
+            rows = conn.execute(
+                """
+                SELECT * FROM instrument_journal_pairs
+                 WHERE status = 'reviewed' ORDER BY journal_pair_id
+                """
+            ).fetchall()
+            for row in rows:
+                old_key = remember_instrument(row["from_instrument_id"])
+                new_key = remember_instrument(row["to_instrument_id"])
+                if old_key is None or new_key is None:
+                    state.unavailable["journal_pairs"] = (
+                        "one or more reviewed journal pairs reference missing instruments"
+                    )
+                    continue
+                record = dict(row)
+                record["from_instrument_key"] = old_key
+                record["to_instrument_key"] = new_key
+                state.journal_pairs.append(record)
 
         ticker_change_columns = _columns(conn, "instrument_ticker_changes")
         required_ticker_change_columns = {
@@ -619,6 +689,9 @@ def import_identity_state(target_db: Path | str, state: CuratedState) -> dict[st
         "account_ids_preserved": 0,
         "instruments": 0,
         "aliases": 0,
+        "resolution_candidates": 0,
+        "market_symbols": 0,
+        "journal_pairs": 0,
         "ticker_changes": 0,
         "identifier_lookups": 0,
     }
@@ -677,6 +750,139 @@ def import_identity_state(target_db: Path | str, state: CuratedState) -> dict[st
                     (instrument["instrument_id"], existing["alias_id"]),
                 )
             summary["aliases"] += 1
+
+        for candidate in state.resolution_candidates:
+            instrument = conn.execute(
+                "SELECT instrument_id FROM instruments WHERE instrument_key = ?",
+                (candidate["instrument_key"],),
+            ).fetchone()
+            if instrument is None:
+                continue
+            institution_id = sqlite_db.upsert_institution(
+                conn,
+                str(candidate["institution_code"]),
+                str(candidate["institution_code"]),
+            )
+            conn.execute(
+                """
+                INSERT INTO instrument_resolution_candidates(
+                    institution_id, normalized_text, display_text, asset_type,
+                    currency, status, resolved_instrument_id, resolution_method,
+                    resolution_confidence, first_seen_at, last_seen_at
+                ) VALUES (?, ?, ?, ?, ?, 'resolved', ?, ?, ?, ?, ?)
+                ON CONFLICT(institution_id, normalized_text, asset_type, currency)
+                DO UPDATE SET
+                    display_text = excluded.display_text,
+                    status = 'resolved',
+                    resolved_instrument_id = excluded.resolved_instrument_id,
+                    resolution_method = excluded.resolution_method,
+                    resolution_confidence = excluded.resolution_confidence,
+                    first_seen_at = excluded.first_seen_at,
+                    last_seen_at = excluded.last_seen_at
+                """,
+                (
+                    institution_id,
+                    candidate["normalized_text"],
+                    candidate["display_text"],
+                    candidate["asset_type"],
+                    candidate["currency"],
+                    instrument["instrument_id"],
+                    candidate.get("resolution_method"),
+                    candidate.get("resolution_confidence"),
+                    candidate["first_seen_at"],
+                    candidate["last_seen_at"],
+                ),
+            )
+            summary["resolution_candidates"] += 1
+
+        for market_symbol in state.market_symbols:
+            instrument = conn.execute(
+                "SELECT instrument_id FROM instruments WHERE instrument_key = ?",
+                (market_symbol["instrument_key"],),
+            ).fetchone()
+            if instrument is None:
+                continue
+            conn.execute(
+                """
+                INSERT INTO instrument_market_symbols(
+                    instrument_id, provider, provider_symbol, status,
+                    last_checked_at, verified_at, last_error
+                ) VALUES (?, ?, ?, 'verified', ?, ?, NULL)
+                ON CONFLICT(instrument_id, provider) DO UPDATE SET
+                    provider_symbol = excluded.provider_symbol,
+                    status = 'verified',
+                    last_checked_at = excluded.last_checked_at,
+                    verified_at = excluded.verified_at,
+                    last_error = NULL
+                """,
+                (
+                    instrument["instrument_id"],
+                    market_symbol["provider"],
+                    market_symbol["provider_symbol"],
+                    market_symbol.get("last_checked_at"),
+                    market_symbol.get("verified_at"),
+                ),
+            )
+            summary["market_symbols"] += 1
+
+        for pair in state.journal_pairs:
+            old = conn.execute(
+                "SELECT instrument_id FROM instruments WHERE instrument_key = ?",
+                (pair["from_instrument_key"],),
+            ).fetchone()
+            new = conn.execute(
+                "SELECT instrument_id FROM instruments WHERE instrument_key = ?",
+                (pair["to_instrument_key"],),
+            ).fetchone()
+            if old is None or new is None:
+                continue
+            existing = conn.execute(
+                """
+                SELECT journal_pair_id FROM instrument_journal_pairs
+                 WHERE from_instrument_id = ? AND to_instrument_id = ?
+                   AND ((effective_from = ?) OR
+                        (effective_from IS NULL AND ? IS NULL))
+                """,
+                (
+                    old["instrument_id"],
+                    new["instrument_id"],
+                    pair.get("effective_from"),
+                    pair.get("effective_from"),
+                ),
+            ).fetchone()
+            values = (
+                pair["conversion_ratio"],
+                pair.get("effective_to"),
+                pair.get("notes"),
+            )
+            if existing is None:
+                conn.execute(
+                    """
+                    INSERT INTO instrument_journal_pairs(
+                        from_instrument_id, to_instrument_id, conversion_ratio,
+                        status, effective_from, effective_to, notes
+                    ) VALUES (?, ?, ?, 'reviewed', ?, ?, ?)
+                    """,
+                    (
+                        old["instrument_id"],
+                        new["instrument_id"],
+                        pair["conversion_ratio"],
+                        pair.get("effective_from"),
+                        pair.get("effective_to"),
+                        pair.get("notes"),
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE instrument_journal_pairs
+                       SET conversion_ratio = ?, status = 'reviewed',
+                           effective_to = ?, notes = ?
+                     WHERE journal_pair_id = ?
+                    """,
+                    (*values, existing["journal_pair_id"]),
+                )
+            summary["journal_pairs"] += 1
 
         for change in state.ticker_changes:
             old = conn.execute(
@@ -954,6 +1160,11 @@ def _table_counts(path: Path | str) -> dict[str, int]:
         "cash_balances",
         "quarantine_transactions",
         "instruments",
+        "security_issuers",
+        "securities",
+        "instrument_market_symbols",
+        "instrument_journal_pairs",
+        "instrument_resolution_candidates",
         "initial_positions",
         "initial_cash",
         "reconciliation_results",
@@ -1041,6 +1252,49 @@ def _content_hash(path: Path | str) -> str:
                        option_multiplier, resolution_method, resolution_confidence
                   FROM instruments
                  ORDER BY instrument_key
+            """,
+            "securities": """
+                SELECT security.security_key, issuer.issuer_key,
+                       security.canonical_name, security.asset_type,
+                       security.cusip, security.isin, security.journalable
+                  FROM securities security
+                  LEFT JOIN security_issuers issuer
+                    ON issuer.issuer_id = security.issuer_id
+                 ORDER BY security.security_key
+            """,
+            "instrument_market_symbols": """
+                SELECT instrument.instrument_key, market.provider,
+                       market.provider_symbol, market.status
+                  FROM instrument_market_symbols market
+                  JOIN instruments instrument
+                    ON instrument.instrument_id = market.instrument_id
+                 ORDER BY instrument.instrument_key, market.provider
+            """,
+            "instrument_journal_pairs": """
+                SELECT source.instrument_key, target.instrument_key,
+                       pair.conversion_ratio, pair.status,
+                       pair.effective_from, pair.effective_to
+                  FROM instrument_journal_pairs pair
+                  JOIN instruments source
+                    ON source.instrument_id = pair.from_instrument_id
+                  JOIN instruments target
+                    ON target.instrument_id = pair.to_instrument_id
+                 ORDER BY source.instrument_key, target.instrument_key,
+                          pair.effective_from
+            """,
+            "instrument_resolution_candidates": """
+                SELECT institution.code, candidate.normalized_text,
+                       candidate.asset_type, candidate.currency,
+                       candidate.status, instrument.instrument_key,
+                       candidate.resolution_method,
+                       candidate.resolution_confidence
+                  FROM instrument_resolution_candidates candidate
+                  JOIN institutions institution
+                    ON institution.institution_id = candidate.institution_id
+                  LEFT JOIN instruments instrument
+                    ON instrument.instrument_id = candidate.resolved_instrument_id
+                 ORDER BY institution.code, candidate.normalized_text,
+                          candidate.asset_type, candidate.currency
             """,
             "aliases": """
                 SELECT alias.alias, COALESCE(institution.code, ''), instrument.instrument_key

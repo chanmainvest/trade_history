@@ -1,4 +1,6 @@
 """Self-contained tests for the HSBC parser."""
+from ledger.db import sqlite as sqlite_db
+from ledger.ingest.identity_resolution import resolve_parse_result
 from ledger.parsers.hsbc import HSBCParser
 from ledger.parsers.validation import validate_parse_result
 
@@ -52,3 +54,41 @@ def test_hsbc_continued_account_sections_are_merged():
     assert statement.positions[0].source_span and statement.positions[0].source_span.page_number == 1
     assert statement.transactions[0].source_span and statement.transactions[0].source_span.page_number == 2
     assert statement.cash_balances[0].source_span and statement.cash_balances[0].source_span.page_number == 2
+
+
+def test_hsbc_name_only_holding_resolves_and_parenthesized_cash_stays_negative(
+    tmp_path,
+):
+    result = HSBCParser().parse(
+        load_fixture("hsbc/name_only_holdings_negative_cash.txt")
+    )
+    statement = result.statements[0]
+
+    assert statement.cash_balances[0].opening_balance == 8949.29
+    assert statement.cash_balances[0].closing_balance == -96022.38
+    assert len(statement.positions) == 1
+    assert statement.positions[0].instrument.resolution_method == (
+        "unresolved_printed_identity"
+    )
+
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        resolve_parse_result(conn, institution_code="HSBC_IDI", result=result)
+
+    assert statement.positions[0].instrument.symbol == "CASH"
+    assert statement.positions[0].instrument.asset_type == "etf"
+    assert statement.snapshot_sets[0].completeness == "complete"
+
+
+def test_hsbc_fx_conversion_and_refund_complete_the_cash_equation():
+    result = HSBCParser().parse(load_fixture("hsbc/cash_fx_refund.txt"))
+    statement = result.statements[0]
+    transactions = {row.txn_type: row for row in statement.transactions}
+
+    assert transactions["deposit"].net_amount == 270000.0
+    assert transactions["fx_conversion"].net_amount == -270000.0
+    assert transactions["adjustment"].net_amount == 10.0
+    assert sum(row.net_amount or 0.0 for row in statement.transactions) == 10.0
+    assert statement.cash_balances[0].opening_balance == 100.0
+    assert statement.cash_balances[0].closing_balance == 110.0

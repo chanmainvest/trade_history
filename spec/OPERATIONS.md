@@ -29,6 +29,7 @@ ledger audit extraction [--statements-dir PATH] [--output PATH]
                         [--institution FOLDER] [--limit N] [--fail-on-errors]
 ledger ingest run [--institution FOLDER] [--limit N] [--force]
 ledger ingest enrich-layout [--source-file-id ID]
+ledger ingest resolve-instruments [--verify-yahoo]
 ledger ingest infer-initials
 ledger ingest repair-symbols
 ledger ingest reconcile
@@ -63,13 +64,21 @@ PDFs or reported transaction numerics; ambiguous identities remain null.
 rebuilds replaceable PDF page/line coordinates for active semantic evidence.
 Ambiguous/unmatched rows remain explicit and no financial row is changed.
 
+`ingest resolve-instruments` applies reviewed catalog mappings to derived rows,
+queues unknown public security names, and reports market-symbol status. Add
+`--verify-yahoo` to send only public name/symbol metadata to Yahoo, require a
+unique strong match with non-empty price history, and persist the result for a
+subsequent deterministic re-ingest. It never sends account numbers, statement
+text, quantities, or amounts. `ledger market refresh` rechecks stored provider
+symbols and marks them verified/failed.
+
 The extraction audit is read-only with respect to SQLite. It accepts either
 source PDFs or stored `.txt` dumps, overwrites a deterministic JSONL report
 (default `logs/extraction_audit.jsonl`), and omits raw statement text. Use
 `--fail-on-errors` in a gate where invalid/unclaimed/crashed outputs must
 return non-zero.
 
-`ledger db init` creates or upgrades schema version 8. The API/server does not
+`ledger db init` creates or upgrades schema version 9. The API/server does not
 silently migrate a database at startup; run `db init` deliberately before
 serving an older database. For an existing real ledger, use the guarded shadow
 workflow below rather than treating a compatibility migration as live cutover.
@@ -114,29 +123,31 @@ backup without deleting it. Shadow build itself never performs cutover.
 ```powershell
 uv sync --all-extras --dev
 uv run ledger db init
-uv run ledger serve --host 127.0.0.1 --port 8000
+uv run ledger serve --host 0.0.0.0 --port 8000
 
 cd frontend
 npm install
-npm run dev -- --host 127.0.0.1 --port 5175 --strictPort
+npm run dev -- --host 0.0.0.0 --port 5173 --strictPort
 ```
 
-Do not assume ports 5173/5174 belong to this project on a shared machine.
+Host-native FastAPI/Vite processes are the development workflow; Docker is
+deployment-only. Binding `0.0.0.0` permits another trusted LAN device to open
+`http://<development-computer-IP>:5173`; it does not make the app safe for an
+untrusted/public network. Do not assume ports 5173/5174 belong to this project.
 Confirm backend identity through `/openapi.json` (`Trade History API`) and the
 frontend title (`Trade History`). Always set Vite's host explicitly to avoid an
 IPv6-only listener.
 
 For a Windows frontend process that must survive the launching agent shell,
 use PowerShell `Start-Process -WindowStyle Hidden` with stdout/stderr redirected
-to repo logs. Prefer Docker Compose for a service that must outlive the coding
-session.
+under `temp/`. Do not substitute Docker for the host-native development loop.
 
 To review a built frontend against a shadow database without changing the live
 ledger, bind the database explicitly before any API module is imported:
 
 ```powershell
 cd frontend; npm run build; cd ..
-uv run python scripts/local_review_server.py --database data/ledger.vnext.sqlite --port 5175
+uv run python scripts/local_review_server.py --database data/ledger.vnext.sqlite --host 0.0.0.0 --port 5175
 ```
 
 The review server mounts the API at `/api` and serves SPA fallbacks from
@@ -145,11 +156,12 @@ The review server mounts the API at `/api` and serves SPA fallbacks from
 bound, causing different routes to read different databases and Verify links
 to return 404.
 
-## Docker
+## Docker deployment
 
 `docker compose up --build` exposes the backend on 8000 and the built frontend
 on 5173. It mounts `data/`, `logs/`, and `Statements/` into the backend. The
-profile defaults to `real` and can be overridden via `LEDGER_PROFILE`.
+profile defaults to `real` and can be overridden via `LEDGER_PROFILE`. This is
+the deployment-image workflow, not the normal development server.
 
 ## Logging and privacy
 

@@ -233,6 +233,8 @@ ACTIVITY_VERBS = {
     "Reinvest": "dividend", "Reinvested": "dividend",
     "Name Change": "name_change", "Symbol Change": "name_change",
     "Ticker Change": "name_change",
+    "EFT DEBIT": "deposit",
+    "Contrib": "transfer_in",
 }
 
 
@@ -382,6 +384,7 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
     opening_balance: float | None = None
     cash_lines: list[str] = []
     cash_complete = False
+    cash_uncertain = False
 
     while i < len(lines):
         ln = lines[i].rstrip()
@@ -505,7 +508,7 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
 
             # Stock / dividend / fee / interest line: extract trailing numbers.
             verb_match = re.match(
-                r"(Bought|Sold|Dividend|Distribution|Tax|Interest|Expired|Expire|"
+                r"(EFT DEBIT|Contrib|Bought|Sold|Dividend|Distribution|Tax|Interest|Expired|Expire|"
                 r"Exercised|Assigned|Transfer|Journal|Deposit|Withdrawal|Fee|"
                 r"Adjustment|Reinvested|Reinvest|Name Change|Symbol Change|"
                 r"Ticker Change)\b",
@@ -567,7 +570,7 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                 # Account-to-account cash transfers print TO/FROM followed by
                 # an account number. Those direction words are not tickers.
                 if txn_type in {"transfer_in", "transfer_out"} and re.match(
-                    r"^(?:TO|FROM)\s+\d", desc, re.IGNORECASE
+                    r"^(?:TRANSFER\s+)?(?:TO|FROM)\s+\d", desc, re.IGNORECASE
                 ):
                     instr = None
 
@@ -580,8 +583,39 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                 ))
                 continue
 
-            # Date-prefixed but no recognized verb → quarantine.
+            # Some CIBC rows have a blank Activity cell but retain an explicit
+            # date, description, two blank security columns, and signed cash
+            # amount. Preserve the observable cash effect as an adjustment;
+            # do not invent an income/tax subtype.
+            blank_cash = re.match(
+                r"(.+?)\s+—\s+—\s+(-?\$?[\d,]+(?:\.\d+)?-?)\s*$",
+                rest,
+            )
+            if blank_cash:
+                amount = parse_money(blank_cash.group(2))
+                if amount is not None:
+                    stmt.transactions.append(ParsedTxn(
+                        trade_date=trade_date or "",
+                        settle_date=None,
+                        txn_type="adjustment",
+                        instrument=None,
+                        quantity=None,
+                        price=None,
+                        gross_amount=None,
+                        commission=None,
+                        other_fees=None,
+                        net_amount=amount,
+                        currency=currency,
+                        description=blank_cash.group(1).strip(),
+                        raw_line=ln,
+                    ))
+                    continue
+
+            # Date-prefixed but no recognized verb → quarantine and make the
+            # cash scope non-authoritative when the row contains a number.
             stmt.quarantine.append((ln, "unrecognized activity row"))
+            if re.search(r"\d", rest):
+                cash_uncertain = True
             continue
 
         # A no-date line cannot be assigned to the preceding transaction
@@ -598,7 +632,7 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
             raw_line="\n".join(cash_lines),
             reason="opening cash balance has no valid closing balance",
         ))
-    return cash_complete
+    return cash_complete and not cash_uncertain
 
 
 def _last_money(s: str) -> str | None:
@@ -698,7 +732,7 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
 # ----------------------------------------------------------------- Parser
 class CIBCParser:
     NAME = "cibc"
-    VERSION = "2.4.0"
+    VERSION = "2.5.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name.startswith("CIBC "):

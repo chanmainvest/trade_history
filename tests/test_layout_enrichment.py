@@ -178,7 +178,7 @@ def test_layout_enrichment_quarantines_repeated_text_without_a_unique_hint(tmp_p
     }
 
 
-def test_schema_v8_rejects_invalid_domains_and_uses_canonical_utc(tmp_path):
+def test_schema_v9_rejects_invalid_domains_and_uses_canonical_utc(tmp_path):
     db_path = tmp_path / "ledger.sqlite"
     sqlite_db.init_db(db_path)
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", utc_now_text())

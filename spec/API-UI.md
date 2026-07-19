@@ -94,6 +94,7 @@ ticker history and current symbol.
 
 Each holdings row also returns checkpoint statement/scope identifiers, an
 optional exact `source_ref` (or checkpoint reference for reconstructed rows),
+the broker-facing `symbol` and distinct `market_symbol`,
 reported-versus-reconstructed state, reconciliation status/reason, price/date
 status, and quality warnings. Monthly renders checkpoint date, holding state,
 reconciliation state, and compact incomplete/reconciliation/pricing warnings.

@@ -12,6 +12,7 @@ data/*.sqlite-wal
 data/*.duckdb
 data/*.duckdb.wal
 data/text_dumps/
+data/yfinance_cache/
 example_data/data/config.json
 logs/*.log
 logs/*.jsonl

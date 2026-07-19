@@ -1,6 +1,7 @@
 """Self-contained tests for the RBC parser."""
 from ledger.parsers.rbc import RBCParser
 from ledger.parsers.validation import validate_parse_result
+from ledger.pdf_text import PdfLine, PdfWord
 
 from .fixture_loader import load_fixture
 
@@ -24,6 +25,29 @@ def test_rbc_dual_currency_blocks_form_one_statement_with_complete_scopes():
         ("USD", "positions", "complete"),
     }
     assert validate_parse_result(result).is_valid
+
+
+def test_rbc_compact_month_day_activity_is_not_dropped():
+    result = RBCParser().parse(load_fixture("rbc/compact_month_day_activity.txt"))
+
+    assert result.errors == []
+    statement = result.statements[0]
+    buys = [row for row in statement.transactions if row.txn_type == "buy"]
+    assert [(row.trade_date, row.quantity, row.price) for row in buys] == [
+        ("2021-08-10", 14000.0, 14.31),
+        ("2021-08-20", 3000.0, 15.36),
+        ("2021-08-20", 300.0, 31.463),
+        ("2021-08-20", 700.0, 31.45),
+        ("2021-08-23", 5000.0, 20.0),
+        ("2021-08-25", 1000.0, 48.8),
+        ("2021-08-25", 600.0, 76.84),
+    ]
+    deposit = next(row for row in statement.transactions if row.txn_type == "deposit")
+    assert deposit.net_amount == 49000.0
+    assert len(statement.transactions) == 8
+    assert all(row.txn_type != "adjustment" for row in statement.transactions)
+    assert statement.cash_balances[0].opening_balance == 425490.05
+    assert statement.cash_balances[0].closing_balance == 1642.4
 
 
 def test_rbc_holdings_dividend_option_and_cash():
@@ -75,3 +99,232 @@ def test_rbc_annual_performance_report():
     assert rows["USD"].since_date == "2022-03-28"
     assert rows["USD"].ending_market_value == 15900.0
     assert rows["USD"].money_weighted_since == -20.0
+
+
+def test_rbc_layout_columns_control_cash_signs():
+    pdf = load_fixture("rbc/monthly_dual_currency.txt")
+
+    def word(text: str, x0: float, x1: float) -> PdfWord:
+        return PdfWord(text=text, x0=x0, top=10, x1=x1, bottom=20)
+
+    header = PdfLine(
+        page_number=1,
+        line_number=1,
+        text="DATE ACTIVITY DESCRIPTION QUANTITY RATE DEBIT CREDIT",
+        words=(
+            word("RATE", 390, 420),
+            word("DEBIT", 470, 495),
+            word("CREDIT", 540, 570),
+        ),
+    )
+    interest = PdfLine(
+        page_number=1,
+        line_number=2,
+        text="JAN. 06 INTEREST CASH 5.00",
+        words=(
+            word("JAN.", 35, 55),
+            word("06", 60, 70),
+            word("INTEREST", 75, 115),
+            word("CASH", 130, 155),
+            word("5.00", 475, 495),
+        ),
+    )
+    pdf.page_lines = [[header, interest], []]
+
+    result = RBCParser().parse(pdf)
+    row = next(
+        transaction
+        for transaction in result.statements[0].transactions
+        if transaction.description == "INTEREST CASH 5.00"
+    )
+
+    assert row.txn_type == "interest_expense"
+    assert row.net_amount == -5.0
+
+
+def test_rbc_layout_nets_withholding_debit_against_dividend_credit():
+    pdf = load_fixture("rbc/monthly_dual_currency.txt")
+
+    def word(text: str, x0: float, x1: float) -> PdfWord:
+        return PdfWord(text=text, x0=x0, top=10, x1=x1, bottom=20)
+
+    line_text = "JAN. 06 DIVIDEND BCE INC 0.2944 176.64 1,177.60"
+    pdf.page_lines = [[
+        PdfLine(
+            page_number=1,
+            line_number=1,
+            text="DATE ACTIVITY DESCRIPTION QUANTITY RATE DEBIT CREDIT",
+            words=(
+                word("RATE", 390, 420),
+                word("DEBIT", 470, 495),
+                word("CREDIT", 540, 570),
+            ),
+        ),
+        PdfLine(
+            page_number=1,
+            line_number=2,
+            text=line_text,
+            words=(
+                word("0.2944", 390, 425),
+                word("176.64", 475, 510),
+                word("1,177.60", 545, 590),
+            ),
+        ),
+    ], []]
+    pdf.pages = [
+        page.replace("JAN. 06 INTEREST CASH 5.00", line_text)
+        for page in pdf.pages
+    ]
+
+    result = RBCParser().parse(pdf)
+    row = next(
+        transaction
+        for transaction in result.statements[0].transactions
+        if transaction.description == "DIVIDEND BCE INC 0.2944 176.64 1,177.60"
+    )
+
+    assert row.net_amount == 1000.96
+
+
+def test_rbc_layout_keeps_in_kind_transfer_out_of_cash():
+    pdf = load_fixture("rbc/monthly_dual_currency.txt")
+
+    def word(text: str, x0: float, x1: float) -> PdfWord:
+        return PdfWord(text=text, x0=x0, top=10, x1=x1, bottom=20)
+
+    line_text = "JAN. 06 TRANSFER NUTRIEN LTD 3,000-"
+    pdf.page_lines = [[
+        PdfLine(
+            page_number=1,
+            line_number=1,
+            text="DATE ACTIVITY DESCRIPTION QUANTITY RATE DEBIT CREDIT",
+            words=(
+                word("RATE", 390, 420),
+                word("DEBIT", 470, 495),
+                word("CREDIT", 540, 570),
+            ),
+        ),
+        PdfLine(
+            page_number=1,
+            line_number=2,
+            text=line_text,
+            words=(word("3,000-", 330, 375),),
+        ),
+    ], []]
+    pdf.pages = [
+        page.replace("JAN. 06 INTEREST CASH 5.00", line_text)
+        for page in pdf.pages
+    ]
+
+    result = RBCParser().parse(pdf)
+    row = next(
+        transaction
+        for transaction in result.statements[0].transactions
+        if transaction.description == "TRANSFER NUTRIEN LTD 3,000-"
+    )
+
+    assert row.txn_type == "transfer_out"
+    assert row.quantity == -3000.0
+    assert row.net_amount == 0.0
+    assert row.cash_delta == 0.0
+    assert row.instrument is not None
+    assert row.instrument.symbol == "NTR"
+
+
+def test_rbc_layout_parses_nominal_cost_buy_without_unit_price():
+    pdf = load_fixture("rbc/monthly_dual_currency.txt")
+
+    def word(text: str, x0: float, x1: float) -> PdfWord:
+        return PdfWord(text=text, x0=x0, top=10, x1=x1, bottom=20)
+
+    line_text = "JAN. 06 BOUGHT SOUTH BOW CORP 400 0.01"
+    pdf.page_lines = [[
+        PdfLine(
+            page_number=1,
+            line_number=1,
+            text="DATE ACTIVITY DESCRIPTION QUANTITY RATE DEBIT CREDIT",
+            words=(
+                word("RATE", 390, 420),
+                word("DEBIT", 470, 495),
+                word("CREDIT", 540, 570),
+            ),
+        ),
+        PdfLine(
+            page_number=1,
+            line_number=2,
+            text=line_text,
+            words=(word("400", 330, 360), word("0.01", 475, 495)),
+        ),
+    ], []]
+    pdf.pages = [
+        page.replace("JAN. 06 INTEREST CASH 5.00", line_text)
+        for page in pdf.pages
+    ]
+
+    result = RBCParser().parse(pdf)
+    row = next(
+        transaction
+        for transaction in result.statements[0].transactions
+        if transaction.description == "BOUGHT SOUTH BOW CORP 400 0.01"
+    )
+
+    assert row.txn_type == "buy"
+    assert row.quantity == 400.0
+    assert row.price is None
+    assert row.net_amount == -0.01
+
+
+def test_rbc_layout_parses_transfer_reference_and_unlabelled_cash():
+    pdf = load_fixture("rbc/monthly_dual_currency.txt")
+
+    def word(text: str, x0: float, x1: float) -> PdfWord:
+        return PdfWord(text=text, x0=x0, top=10, x1=x1, bottom=20)
+
+    transfer_text = "JAN. 06 TRFIN146 ACCOUNT TRANSFER 50,000.00"
+    adjustment_text = "JAN. 07 MACKENZIE US TIPS INDEX 0.205 1,189.99"
+    pdf.page_lines = [[
+        PdfLine(
+            page_number=1,
+            line_number=1,
+            text="DATE ACTIVITY DESCRIPTION QUANTITY RATE DEBIT CREDIT",
+            words=(
+                word("RATE", 390, 420),
+                word("DEBIT", 470, 495),
+                word("CREDIT", 540, 570),
+            ),
+        ),
+        PdfLine(
+            page_number=1,
+            line_number=2,
+            text=transfer_text,
+            words=(word("50,000.00", 540, 590),),
+        ),
+        PdfLine(
+            page_number=1,
+            line_number=3,
+            text=adjustment_text,
+            words=(word("0.205", 390, 425), word("1,189.99", 540, 590)),
+        ),
+    ], []]
+    pdf.pages = [
+        page.replace(
+            "JAN. 06 INTEREST CASH 5.00",
+            transfer_text + "\n" + adjustment_text,
+        )
+        for page in pdf.pages
+    ]
+
+    result = RBCParser().parse(pdf)
+    transfer = next(
+        row for row in result.statements[0].transactions
+        if row.raw_line == transfer_text
+    )
+    adjustment = next(
+        row for row in result.statements[0].transactions
+        if row.raw_line == adjustment_text
+    )
+
+    assert transfer.txn_type == "transfer_in"
+    assert transfer.net_amount == 50_000.0
+    assert adjustment.txn_type == "adjustment"
+    assert adjustment.net_amount == 1189.99

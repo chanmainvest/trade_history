@@ -5,6 +5,11 @@ This note records parser and repair cases that are easy to get wrong when statem
 ## Symbol Resolution
 
 - Prefer explicit statement symbols and option contract fields when printed.
+- A compact company/fund name is not an explicit ticker. HSBC tokens such as
+  `BCEINC`, `NUTRIENLTD`, and `ISHARESIBOXX...` go through the listing resolver.
+- Keep the broker symbol (for example `RCI.B`) separate from the Yahoo symbol
+  (`RCI-B.TO`). Different exchange listings may share one `security_id`; share
+  classes that only share an issuer remain separate securities.
 - Use `parsers/name_resolver.py` only for conservative security-name aliases that are defensible from statement text and public ticker conventions.
 - When a transaction has a synthetic or missing symbol, `ledger ingest repair-symbols` first tries the known-name resolver, then matches the row to same-statement holdings by description words, quantity hints, currency, and canonical holding symbols.
 - Generic activity labels such as `DIVIDEND`, `DISTRIBUTION`, and `DISTRIB.` are placeholders, not instruments. Repair should resolve them from the underlying description or holding row.
@@ -27,6 +32,8 @@ Use `ingest.fund_lookup.lookup_fund_code()` / `lookup_fund_instrument_id()` inst
 - RBC transfer rows may use a trailing negative such as `5,000-` or text like `TRANSFER TO C$`; both indicate `transfer_out`.
 - `TRANSFER FROM ...` with a positive amount is inbound and should remain `transfer_in`.
 - For DLR/DLR.U currency journaling, the CAD ticker (`DLR`) can transfer out while the USD ticker (`DLR.U`) transfers in; the later sale of `DLR.U` is the actual USD-side exit.
+- Pair the two journal legs only through `instrument_journal_pairs` and its
+  conversion ratio. Never infer fungibility from an issuer/name match.
 
 ## Options
 

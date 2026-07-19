@@ -12,8 +12,9 @@ unknown folders use their literal name as the code.
 `pdf_text.extract_pdf()` reads text and page dimensions with `pdfplumber`,
 falls back to `pypdf` only when the first result is empty, fingerprints the
 file, and marks fewer than 20 extracted characters as image-only. Normal ingest
-does not request word/box extraction. This keeps semantic parsing independent
-from PDF drawing order and coordinate heuristics. OCR is not implemented.
+requests page words only for RBC, whose semantic debit/credit columns cannot be
+recovered from plain text; other parsers remain text-first. Persisted Verify
+geometry is still a separate rebuildable pass. OCR is not implemented.
 
 PDFs are immutable inputs. Text dumps under `<DATA_DIR>/text_dumps/` and logs
 are derived artifacts.
@@ -36,8 +37,8 @@ discover path
   -> regenerate derived ingestion audit indexes
 ```
 
-The registered parsers are CIBC, HSBC, RBC, and TD. CIBC, RBC, and TD report
-`2.4.0`; HSBC reports `2.2.0`. Parser, contract, schema, and resolver changes
+The registered parsers are CIBC, HSBC, RBC, and TD. CIBC reports `2.5.0`, RBC
+and TD report `2.5.1`, and HSBC reports `2.4.0`. Parser, contract, schema, and resolver changes
 intentionally invalidate older active cache entries so a reviewed re-ingest
 exercises the current extraction contract.
 
@@ -106,6 +107,12 @@ replacement:
   content hash stable; and
 - a parser/validation/write failure cannot partially fan out into active rows.
 
+When one complete snapshot prints several distinct lots for the same canonical
+instrument, persistence sums quantity/book/market/P&L values whose components
+are known. It keeps one exact duplicate raw row once, never overwrites an
+earlier distinct lot with the last row, and clears average cost when aggregation
+cannot preserve one reported value.
+
 `ingestion_runs` retains failed attempts for audit. Successful replaced runs are
 derived output and are removed with their source children; active run content
 hash/counts are the authoritative current-extraction record.
@@ -113,23 +120,46 @@ hash/counts are the authoritative current-extraction record.
 ## Identity resolution
 
 Resolution runs inside the same source savepoint, after parser validation and
-before persistence. It preserves the parser's printed identity and applies only
+before persistence. It preserves the parser's printed identity and applies
 these deterministic steps:
 
-1. retain an explicit printed ticker or complete option contract;
-2. match an exact reviewed user alias or resolved reviewed fund lookup;
-3. match one unambiguous exact identity in the same statement's holdings; or
-4. mark the identity `unresolved_printed_identity` with zero confidence.
+1. retain a complete printed option contract before considering its underlying
+   ticker in the listing catalog;
+2. resolve an exact institution/currency entry in the reviewed listing catalog;
+3. match an exact reviewed alias, previously resolved candidate, reviewed fund
+   lookup, or uniquely known database listing;
+4. retain a genuinely ticker-shaped printed symbol;
+5. match one unambiguous exact identity in the same statement's holdings; or
+6. queue the public security name in `instrument_resolution_candidates` and
+   mark the financial row `unresolved_printed_identity` with zero confidence.
 
-It does not use the broad free-form name-to-ticker repair map. Transaction rows
+Compact company/fund descriptions such as `BCEINC`, `NUTRIENLTD`, and
+`ISHARESIBOXX...` are not accepted merely because they satisfy a permissive
+symbol regex. Transaction rows
 store the selected method/confidence and a resolution evidence link when a
 source span is available. An unresolved transaction remains auditable with a
 null instrument; its printed-name token is never persisted as a ticker. An
 unresolved position is moved to quarantine and its complete scope is downgraded
 to `unknown`, because a checkpoint cannot safely identify that holding.
 Resolved instrument rows retain their identity provenance.
+This ordering is material: resolving `PUT NTR ...` as the NTR equity would
+erase expiry/strike/type and create a false negative stock holding.
 `ledger ingest repair-symbols` remains a legacy/manual maintenance command for
 old derived data, but normal ingest no longer invokes it.
+
+`ledger ingest resolve-instruments` applies the deterministic catalog to an
+older derived ledger and reports pending candidates/Yahoo mappings. Conflicting
+checkpoint rows are not merged; use a clean shadow re-ingest for those. With
+`--verify-yahoo`, the command sends only public security names/symbols (never
+account/source values), requires one strong unique search match in the expected
+currency/listing family plus non-empty price history, and records
+verified/failed/ambiguous status. A newly resolved candidate affects financial
+rows only on the next deterministic re-ingest.
+
+Yahoo verification is not part of `ledger ingest run`: source activation must
+remain reproducible and must not depend on network availability. The resolver
+cache includes the catalog version, resolved candidates, and provider mappings,
+so a verified resolution makes affected sources stale for re-ingest.
 
 ## Post-processing
 

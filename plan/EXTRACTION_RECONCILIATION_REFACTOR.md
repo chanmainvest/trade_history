@@ -912,6 +912,73 @@ After every phase, update the focused owner spec from Phase 0. At completion:
   plausible wrong highlight. No live/shadow re-ingest or cutover was performed
   as part of this implementation.
 
+### Post-Phase 8 listing/provider identity record (2026-07-18)
+
+- Schema v9 separates issuer, security/share class, broker listing, Yahoo
+  provider symbol, unresolved candidate, and explicit cross-currency journal
+  pair. Same issuer no longer implies the same holding; only an active journal
+  pair permits transfer matching across listing/currency keys.
+- Parser-contract v5 and HSBC `2.3.0` mark description-derived compact tokens as
+  unresolved. Resolver v4 uses deterministic institution/currency catalog
+  entries, reviewed aliases/candidates, and known listings before accepting a
+  printed ticker. Unknown names are queued, not promoted.
+- Market refresh uses stored provider symbols such as `BCE.TO`, `BCE`, and
+  `RCI-B.TO` as distinct DuckDB price keys. Successful non-empty Yahoo history
+  marks a mapping verified; empty/error results are retained as failed.
+- `ledger ingest resolve-instruments --verify-yahoo` is the opt-in public-name
+  verification path. It sends no account/source values and requires a unique
+  strong currency-compatible match plus price history. Network approval was
+  unavailable in this run, so tests use injected public metadata and no live
+  verification claim is made.
+- The later approved live compatibility update backed up the schema-v5 ledger,
+  migrated it to v9, and repointed 161 transactions, 128 non-conflicting
+  snapshots, and 47 initial rows. Forty-one snapshot conflicts were
+  deliberately left for clean re-ingest. Integrity and foreign-key checks pass;
+  the observed pseudo-ticker set and bare `RCI` have no financial-row
+  references. This was not a shadow rebuild/cutover.
+
+### Post-Phase 8 extraction/reconciliation audit record (2026-07-19)
+
+- CIBC `2.5.0`, RBC/TD `2.5.1`, HSBC `2.4.0`, and resolver v5 address source-backed
+  cash/quantity defects found during institution-by-institution rebuilds.
+  CIBC retains EFT/contribution and blank-activity signed cash rows; TD accepts
+  signed closes, `FB` option months, pending boundaries, legacy leading
+  quantities, signed holding quantities, in-kind transfers, and explicit cash-event variants; HSBC fixes
+  parentheses cash, digit-bearing names, lots, FX/refunds, and footer rows.
+  A degraded/unrecognized numeric TD holding row now makes its position scope
+  incomplete, so a partial table cannot become a false precise checkpoint.
+- RBC uses its printed `RATE`/`DEBIT`/`CREDIT` geometry to net debit and credit
+  values on one row. In-kind transfers have zero cash plus a security movement;
+  two-number nominal-cost rows keep quantity and use geometry to distinguish
+  a rate from a cash amount. `TFR OUT`/`TRFIN<reference>` pairs retain their
+  printed direction; dated rows with a blank Activity cell and definite cash
+  column become generic adjustments rather than invented income.
+  Compact historical dates/balances (`AUG.10`, `OpeningBalance`, and
+  `ClosingBalance`) remain parseable, and the closing balance terminates the
+  activity section before Open Orders.
+- A complete option contract now wins before root-equity catalog lookup. This
+  prevents short puts such as NTR/BCE from becoming negative equity snapshots.
+  Option close events use the immediately preceding position to direct an
+  absolute printed contract count toward zero.
+- Reconciliation treats a gap between statement periods as incomplete, not as
+  evidence of no movement. Unknown dated numeric CIBC/TD activity likewise
+  downgrades the cash scope instead of producing a false precise residual.
+- A disposable full shadow rebuilt all 338 immutable PDFs (manifest unchanged)
+  into 548 statements, 4,236 transactions, 6,737 position snapshots, 648 cash
+  balances, and 8,824 reconciliation results. It has 827 reconciled/42
+  unexplained/402 incomplete cash results and 1,033 reconciled/28
+  unexplained/6,439 incomplete position results, plus expected first/gap
+  statuses. The seven negative reported non-option snapshots are source-backed
+  SMCI/RDDT shorts; NTR has none. All 360 buys plus 223 sells have a quantity
+  with the expected sign. TD has zero unexplained position results; its
+  degraded legacy holding tables are explicit incomplete inputs. Two clean
+  rebuilds subsequently produced the same fingerprint; the user signed off the
+  report and the shadow was atomically promoted to `data/ledger.sqlite`, with
+  the previous live file retained as a timestamped backup. Post-cutover layout
+  enrichment rebuilt 2,896 pages, 141,250 lines, and 21,808 exact evidence
+  links while preserving 2,329 ambiguous and 1,481 unmatched review states.
+  RBC and HSBC source residuals remain review work.
+
 ## 5. Final acceptance criteria
 
 The refactor is complete only when all of the following are true:
