@@ -53,6 +53,8 @@ class _SecurityState:
     option_type: str | None
     quantity: float
     source_snapshot_id: int | None = None
+    source_geometry_status: str | None = None
+    source_page_numbers: tuple[int, ...] = ()
     anchor: _ScopeAnchor | None = None
     initial_date: str | None = None
     anchor_quantity: float | None = None
@@ -68,6 +70,7 @@ class _SecurityState:
     lineage_key: str | None = None
     ticker_symbols: tuple[str, ...] = ()
     anchor_instrument_id: int | None = None
+    movement_source_refs: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -77,11 +80,14 @@ class _CashState:
     scope_key: str
     balance: float
     source_cash_balance_id: int | None = None
+    source_geometry_status: str | None = None
+    source_page_numbers: tuple[int, ...] = ()
     anchor: _ScopeAnchor | None = None
     initial_date: str | None = None
     cash_movement: bool = False
     incomplete: bool = False
     warnings: set[str] = field(default_factory=set)
+    movement_source_refs: list[dict] = field(default_factory=list)
 
 
 def _account_clause(column: str, account_ids: list[int]) -> tuple[str, list[int]]:
@@ -96,6 +102,29 @@ def _scope_identity(row: dict) -> tuple[int, str, str]:
 
 def _scope_rank(row: dict) -> tuple[str, int, int]:
     return (str(row["as_of_date"]), int(row["statement_id"]), int(row["snapshot_set_id"]))
+
+
+def _geometry_pages(row: dict) -> tuple[int, ...]:
+    return tuple(sorted({
+        int(page)
+        for page in str(row.get("geometry_pages") or "").split(",")
+        if page.isdigit()
+    }))
+
+
+def _transaction_source_ref(row: dict) -> dict | None:
+    if row.get("statement_id") is None or row.get("evidence_id") is None:
+        return None
+    pages = _geometry_pages(row)
+    status = row.get("geometry_status") or "unavailable"
+    return {
+        "statement_id": int(row["statement_id"]),
+        "kind": "transaction",
+        "id": int(row["transaction_id"]),
+        "geometry_status": status,
+        "page_numbers": list(pages),
+        "linkable": status in {"exact", "unique_tokens"} and bool(pages),
+    }
 
 
 def _latest_scopes(rows: list[dict], *, complete_only: bool) -> dict[tuple[int, str, str], dict]:
@@ -166,19 +195,29 @@ def _fetch_position_rows(conn: sqlite3.Connection, snapshot_set_ids: list[int]) 
     placeholders = ",".join("?" * len(snapshot_set_ids))
     rows = conn.execute(
         f"""
-        SELECT ps.snapshot_id, ps.snapshot_set_id, ps.account_id,
+        SELECT ps.snapshot_id, ps.snapshot_set_id, ps.account_id, ps.evidence_id,
                ps.instrument_id, ps.quantity,
                ps.avg_cost, ps.book_value, ps.market_price, ps.market_value,
                ps.unrealized_pnl, ps.currency,
                i.instrument_key, COALESCE(i.option_root, i.symbol) AS symbol,
                COALESCE(market.provider_symbol, i.symbol) AS pricing_symbol,
-               i.asset_type, i.option_expiry, i.option_strike, i.option_type
+               i.asset_type, i.option_expiry, i.option_strike, i.option_type,
+               geometry.status AS geometry_status,
+               (SELECT GROUP_CONCAT(DISTINCT page.page_number)
+                  FROM source_evidence_lines evidence_line
+                  JOIN source_lines source_line
+                    ON source_line.source_line_id = evidence_line.source_line_id
+                  JOIN source_pages page
+                    ON page.source_page_id = source_line.source_page_id
+                 WHERE evidence_line.evidence_id = ps.evidence_id) AS geometry_pages
           FROM position_snapshots ps
           JOIN instruments i ON i.instrument_id = ps.instrument_id
           LEFT JOIN instrument_market_symbols market
             ON market.instrument_id = i.instrument_id
            AND market.provider = 'yahoo'
            AND market.status IN ('candidate','verified','failed')
+          LEFT JOIN source_evidence_geometry geometry
+            ON geometry.evidence_id = ps.evidence_id
          WHERE ps.snapshot_set_id IN ({placeholders})
         """,
         snapshot_set_ids,
@@ -192,10 +231,20 @@ def _fetch_cash_rows(conn: sqlite3.Connection, snapshot_set_ids: list[int]) -> l
     placeholders = ",".join("?" * len(snapshot_set_ids))
     rows = conn.execute(
         f"""
-        SELECT cash_balance_id, snapshot_set_id, account_id, currency,
-               opening_balance, closing_balance
-          FROM cash_balances
-         WHERE snapshot_set_id IN ({placeholders})
+        SELECT cash.cash_balance_id, cash.snapshot_set_id, cash.account_id,
+               cash.currency, cash.opening_balance, cash.closing_balance,
+               geometry.status AS geometry_status,
+               (SELECT GROUP_CONCAT(DISTINCT page.page_number)
+                  FROM source_evidence_lines evidence_line
+                  JOIN source_lines source_line
+                    ON source_line.source_line_id = evidence_line.source_line_id
+                  JOIN source_pages page
+                    ON page.source_page_id = source_line.source_page_id
+                 WHERE evidence_line.evidence_id = cash.evidence_id) AS geometry_pages
+          FROM cash_balances cash
+          LEFT JOIN source_evidence_geometry geometry
+            ON geometry.evidence_id = cash.evidence_id
+         WHERE cash.snapshot_set_id IN ({placeholders})
         """,
         snapshot_set_ids,
     ).fetchall()
@@ -271,7 +320,8 @@ def _fetch_transactions(
     canonical_sql = canonical_statement_clause("t.statement_id")
     rows = conn.execute(
         f"""
-        SELECT t.transaction_id, t.account_id, t.trade_date, t.settle_date,
+        SELECT t.transaction_id, t.statement_id, t.evidence_id,
+               t.account_id, t.trade_date, t.settle_date,
                t.txn_type, t.instrument_id, t.quantity, t.position_delta,
                t.net_amount, t.cash_delta, t.cash_effective_date, t.currency,
                 i.instrument_key, i.currency AS instrument_currency,
@@ -288,9 +338,19 @@ def _fetch_transactions(
                 successor.asset_type AS successor_asset_type,
                 successor.option_expiry AS successor_option_expiry,
                 successor.option_strike AS successor_option_strike,
-                successor.option_type AS successor_option_type
+                successor.option_type AS successor_option_type,
+                geometry.status AS geometry_status,
+                (SELECT GROUP_CONCAT(DISTINCT page.page_number)
+                   FROM source_evidence_lines evidence_line
+                   JOIN source_lines source_line
+                     ON source_line.source_line_id = evidence_line.source_line_id
+                   JOIN source_pages page
+                     ON page.source_page_id = source_line.source_page_id
+                  WHERE evidence_line.evidence_id = t.evidence_id) AS geometry_pages
           FROM transactions t
           LEFT JOIN instruments i ON i.instrument_id = t.instrument_id
+          LEFT JOIN source_evidence_geometry geometry
+            ON geometry.evidence_id = t.evidence_id
           LEFT JOIN instrument_market_symbols market
             ON market.instrument_id = i.instrument_id
            AND market.provider = 'yahoo'
@@ -620,6 +680,27 @@ def _security_record(
     holding_state = "reported" if is_reported else "reconstructed"
     if state.incomplete or reconciliation_incomplete:
         holding_state = "incomplete"
+    source_ref = (
+        {
+            "statement_id": state.anchor.statement_id,
+            "kind": "position",
+            "id": state.source_snapshot_id,
+            "checkpoint": not is_reported,
+            "geometry_status": state.source_geometry_status or "unavailable",
+            "page_numbers": list(state.source_page_numbers),
+            "linkable": state.source_geometry_status in {"exact", "unique_tokens"}
+            and bool(state.source_page_numbers),
+        }
+        if state.anchor is not None and state.source_snapshot_id is not None
+        else None
+    )
+    provenance_type = (
+        "reported_row"
+        if is_reported
+        else "checkpoint_plus_movements"
+        if source_ref is not None or state.movement_source_refs
+        else "unavailable"
+    )
     return {
         "as_of_date": as_of,
         "account_id": state.account_id,
@@ -642,16 +723,12 @@ def _security_record(
         "option_strike": state.option_strike,
         "option_type": state.option_type,
         "quantity": state.quantity,
-        "source_ref": (
-            {
-                "statement_id": state.anchor.statement_id,
-                "kind": "position",
-                "id": state.source_snapshot_id,
-                "checkpoint": not is_reported,
-            }
-            if state.anchor is not None and state.source_snapshot_id is not None
-            else None
-        ),
+        "source_ref": source_ref,
+        "provenance": {
+            "type": provenance_type,
+            "checkpoint": source_ref,
+            "movements": state.movement_source_refs,
+        },
         "avg_cost": state.avg_cost if is_reported or not state.cost_basis_stale else None,
         "book_value": state.book_value if is_reported or not state.cost_basis_stale else None,
         "market_price": state.market_price if is_reported else None,
@@ -697,6 +774,20 @@ def _cash_record(
     if state.incomplete or reconciliation_incomplete:
         holding_state = "incomplete"
     instrument_key = f"cash|{state.currency}"
+    source_ref = (
+        {
+            "statement_id": state.anchor.statement_id,
+            "kind": "cash",
+            "id": state.source_cash_balance_id,
+            "checkpoint": not is_reported,
+            "geometry_status": state.source_geometry_status or "unavailable",
+            "page_numbers": list(state.source_page_numbers),
+            "linkable": state.source_geometry_status in {"exact", "unique_tokens"}
+            and bool(state.source_page_numbers),
+        }
+        if state.anchor is not None and state.source_cash_balance_id is not None
+        else None
+    )
     return {
         "as_of_date": as_of,
         "account_id": state.account_id,
@@ -715,16 +806,18 @@ def _cash_record(
         "option_strike": None,
         "option_type": None,
         "quantity": state.balance,
-        "source_ref": (
-            {
-                "statement_id": state.anchor.statement_id,
-                "kind": "cash",
-                "id": state.source_cash_balance_id,
-                "checkpoint": not is_reported,
-            }
-            if state.anchor is not None and state.source_cash_balance_id is not None
-            else None
-        ),
+        "source_ref": source_ref,
+        "provenance": {
+            "type": (
+                "reported_row"
+                if is_reported
+                else "checkpoint_plus_movements"
+                if source_ref is not None or state.movement_source_refs
+                else "unavailable"
+            ),
+            "checkpoint": source_ref,
+            "movements": state.movement_source_refs,
+        },
         "avg_cost": None,
         "book_value": state.balance,
         "market_price": 1.0,
@@ -916,6 +1009,8 @@ def holdings_at(
             option_type=row["option_type"],
             quantity=float(row["quantity"]),
             source_snapshot_id=int(row["snapshot_id"]),
+            source_geometry_status=row["geometry_status"],
+            source_page_numbers=_geometry_pages(row),
             anchor=anchor,
             anchor_quantity=float(row["quantity"]),
             avg_cost=row["avg_cost"],
@@ -968,6 +1063,8 @@ def holdings_at(
             scope_key=anchor.scope_key,
             balance=float(row["closing_balance"]),
             source_cash_balance_id=int(row["cash_balance_id"]),
+            source_geometry_status=row["geometry_status"],
+            source_page_numbers=_geometry_pages(row),
             anchor=anchor,
         )
     for (account_id, currency), row in initial_cash.items():
@@ -987,6 +1084,7 @@ def holdings_at(
 
     for row in transactions:
         account_id = int(row["account_id"])
+        transaction_source_ref = _transaction_source_ref(row)
         if row["successor_instrument_id"] is not None and row["trade_date"] <= as_of:
             currency = str(row["instrument_currency"] or row["currency"])
             instrument_key = str(row["instrument_key"])
@@ -1028,6 +1126,8 @@ def holdings_at(
                         option_type=row["successor_option_type"],
                         quantity=0.0,
                         source_snapshot_id=old_state.source_snapshot_id,
+                        source_geometry_status=old_state.source_geometry_status,
+                        source_page_numbers=old_state.source_page_numbers,
                         anchor=old_state.anchor,
                         initial_date=old_state.initial_date,
                         anchor_quantity=old_state.anchor_quantity,
@@ -1042,10 +1142,13 @@ def holdings_at(
                         anchor_instrument_id=(
                             old_state.anchor_instrument_id or old_state.instrument_id
                         ),
+                        movement_source_refs=list(old_state.movement_source_refs),
                     )
                     position_states[new_key] = new_state
                 new_state.quantity += moved * float(row["ticker_change_ratio"])
                 new_state.position_movement = True
+                if transaction_source_ref is not None:
+                    new_state.movement_source_refs.append(transaction_source_ref)
             # The source transaction is represented by the old -> new move;
             # do not also treat generic name_change as a missing delta.
             continue
@@ -1120,6 +1223,8 @@ def holdings_at(
                         state.quantity += effect
                         state.position_movement = True
                         state.cost_basis_stale = True
+                        if transaction_source_ref is not None:
+                            state.movement_source_refs.append(transaction_source_ref)
 
         if row["instrument_id"] is None and row["txn_type"] in POSITION_AFFECTING_TYPES:
             transaction_currency = str(row["currency"])
@@ -1178,6 +1283,8 @@ def holdings_at(
             if abs(delta) > EPSILON:
                 state.balance += delta
                 state.cash_movement = True
+                if transaction_source_ref is not None:
+                    state.movement_source_refs.append(transaction_source_ref)
 
     for state in position_states.values():
         _warn_for_incomplete_scope(state, latest_position_scope, section="position")

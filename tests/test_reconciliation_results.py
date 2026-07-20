@@ -129,8 +129,9 @@ def test_position_results_store_components_residuals_and_are_idempotent(tmp_path
     with sqlite_db.session(db_path) as conn:
         feb_result = conn.execute(
             """
-            SELECT reconciliation_id, opening_value, summed_deltas,
-                   expected_close, reported_close, residual, status
+            SELECT reconciliation_id, check_type, reason_code,
+                   opening_value, summed_deltas, expected_close,
+                   reported_close, residual, status
               FROM reconciliation_results
              WHERE kind = 'position' AND statement_id = ?
             """,
@@ -138,7 +139,7 @@ def test_position_results_store_components_residuals_and_are_idempotent(tmp_path
         ).fetchone()
         mar_result = conn.execute(
             """
-            SELECT residual, status
+            SELECT check_type, reason_code, residual, status
               FROM reconciliation_results
              WHERE kind = 'position' AND statement_id = ?
             """,
@@ -167,7 +168,10 @@ def test_position_results_store_components_residuals_and_are_idempotent(tmp_path
         feb_result["residual"],
         feb_result["status"],
     ) == (10.0, 2.0, 12.0, 12.0, 0.0, "reconciled")
+    assert feb_result["check_type"] == "position_rollforward"
+    assert feb_result["reason_code"] is None
     assert (mar_result["residual"], mar_result["status"]) == (-1.0, "unexplained_residual")
+    assert mar_result["reason_code"] == "residual_outside_tolerance"
     assert [(row["transaction_id"], row["delta"]) for row in components] == [(buy_id, 2.0)]
     assert manual_result_count == 1
 

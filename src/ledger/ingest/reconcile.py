@@ -707,12 +707,39 @@ def _add_result_metric(metrics: Counter[str], status: str) -> None:
     metrics[status] += 1
 
 
+def _reason_code(status: str, reason: str | None) -> str | None:
+    """Return a stable machine-readable explanation for one equation result."""
+    if status in {"reconciled", "within_rounding", "not_applicable"}:
+        return None
+    text = (reason or "").casefold()
+    if "current" in text and "scope is not complete" in text:
+        return "current_scope_incomplete"
+    if "prior" in text and "scope is not complete" in text:
+        return "prior_scope_incomplete"
+    if status == "missing_prior_checkpoint" or "no prior" in text:
+        return "prior_scope_missing"
+    if "unobserved statement period" in text:
+        return "statement_period_gap"
+    if "lack an instrument" in text:
+        return "movement_identity_missing"
+    if "position delta" in text or "cash delta" in text:
+        return "movement_value_missing"
+    if "opening balance" in text or "closing balance" in text or "no closing" in text:
+        return "statement_balance_missing"
+    if "market value" in text:
+        return "statement_value_missing"
+    if status == "unexplained_residual":
+        return "residual_outside_tolerance"
+    return "incomplete_input"
+
+
 def _write_reconciliation_result(
     conn: sqlite3.Connection,
     *,
     reconciliation_key: str,
     ingestion_run_id: int | None,
     kind: str,
+    check_type: str,
     account_id: int,
     statement_id: int | None,
     snapshot_set_id: int | None,
@@ -735,18 +762,21 @@ def _write_reconciliation_result(
         conn.execute(
             """
             INSERT INTO reconciliation_results(
-                reconciliation_key, ingestion_run_id, kind, account_id,
+                reconciliation_key, ingestion_run_id, kind, check_type,
+                reason_code, account_id,
                 statement_id, snapshot_set_id, prior_snapshot_set_id,
                 instrument_id, currency, prior_checkpoint, current_checkpoint,
                 opening_value, summed_deltas, expected_close, reported_close,
                 residual, tolerance, status, reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING reconciliation_id
             """,
             (
                 reconciliation_key,
                 ingestion_run_id,
                 kind,
+                check_type,
+                _reason_code(status, reason),
                 account_id,
                 statement_id,
                 snapshot_set_id,
@@ -998,6 +1028,7 @@ def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
                 reconciliation_key=f"{RECONCILIATION_KEY_PREFIX}position:{scope['snapshot_set_id']}:scope",
                 ingestion_run_id=scope["ingestion_run_id"],
                 kind="position",
+                check_type="position_rollforward",
                 account_id=scope["account_id"],
                 statement_id=scope["statement_id"],
                 snapshot_set_id=scope["snapshot_set_id"],
@@ -1089,6 +1120,7 @@ def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
                 ),
                 ingestion_run_id=scope["ingestion_run_id"],
                 kind="position",
+                check_type="position_rollforward",
                 account_id=scope["account_id"],
                 statement_id=scope["statement_id"],
                 snapshot_set_id=scope["snapshot_set_id"],
@@ -1228,6 +1260,7 @@ def _reconcile_cash_scopes(conn: sqlite3.Connection) -> dict[str, int]:
             reconciliation_key=f"{RECONCILIATION_KEY_PREFIX}cash:statement:{scope['snapshot_set_id']}",
             ingestion_run_id=scope["ingestion_run_id"],
             kind="cash",
+            check_type="cash_activity",
             account_id=scope["account_id"],
             statement_id=scope["statement_id"],
             snapshot_set_id=scope["snapshot_set_id"],
@@ -1288,6 +1321,7 @@ def _reconcile_cash_scopes(conn: sqlite3.Connection) -> dict[str, int]:
             reconciliation_key=f"{RECONCILIATION_KEY_PREFIX}cash:continuity:{scope['snapshot_set_id']}",
             ingestion_run_id=scope["ingestion_run_id"],
             kind="cash",
+            check_type="cash_continuity",
             account_id=scope["account_id"],
             statement_id=scope["statement_id"],
             snapshot_set_id=scope["snapshot_set_id"],
@@ -1434,6 +1468,7 @@ def _reconcile_statement_totals(conn: sqlite3.Connection) -> dict[str, int]:
             reconciliation_key=f"{RECONCILIATION_KEY_PREFIX}total:{scope['snapshot_set_id']}",
             ingestion_run_id=scope["ingestion_run_id"],
             kind="statement_total",
+            check_type="portfolio_total",
             account_id=scope["account_id"],
             statement_id=scope["statement_id"],
             snapshot_set_id=scope["snapshot_set_id"],

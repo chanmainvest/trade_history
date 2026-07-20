@@ -50,6 +50,31 @@ def _geometry_pdf(sha256: str) -> PdfText:
     )
 
 
+def _cash_geometry_pdf(sha256: str) -> PdfText:
+    texts = ["Beginning cash balance $100.00", "Jan 10 Buy ABC 10 -20.00", "Ending cash balance $80.00"]
+    lines = [
+        PdfLine(
+            page_number=1,
+            line_number=index,
+            text=value,
+            x0=10,
+            top=20.0 * index,
+            x1=210,
+            bottom=20.0 * index + 10,
+        )
+        for index, value in enumerate(texts, start=1)
+    ]
+    return PdfText(
+        relpath="Statements/Test/cash-layout.pdf",
+        page_count=1,
+        pages=["\n".join(texts)],
+        sha256=sha256,
+        size_bytes=84,
+        page_lines=[lines],
+        page_sizes=[(612.0, 792.0)],
+    )
+
+
 def test_evidence_identity_does_not_change_when_geometry_changes():
     common = {
         "source_identity": "a" * 64,
@@ -176,6 +201,58 @@ def test_layout_enrichment_quarantines_repeated_text_without_a_unique_hint(tmp_p
         "status": "ambiguous",
         "match_method": "repeated_exact_text",
     }
+
+
+def test_layout_enrichment_links_ordered_noncontiguous_cash_lines(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        source_id = seed_source(conn, "Statements/Test/cash-layout.pdf")
+        source = conn.execute(
+            "SELECT sha256, active_ingestion_run_id FROM source_files WHERE source_file_id = ?",
+            (source_id,),
+        ).fetchone()
+        evidence_id = sqlite_db.upsert_source_evidence(
+            conn,
+            source_file_id=source_id,
+            ingestion_run_id=int(source["active_ingestion_run_id"]),
+            row_kind="cash",
+            occurrence=1,
+            raw_text="Beginning cash balance $100.00\nEnding cash balance $80.00",
+            parser_version="fixture",
+            parser_rule="fixture:cash",
+            page_number=1,
+        )
+        evidence_rows = conn.execute(
+            "SELECT evidence_id, row_kind, raw_text, page_number, line_number "
+            "FROM source_evidence WHERE evidence_id = ?",
+            (evidence_id,),
+        ).fetchall()
+
+        metrics = _write_source_geometry(
+            conn,
+            source_file_id=source_id,
+            ingestion_run_id=int(source["active_ingestion_run_id"]),
+            source_sha256=str(source["sha256"]),
+            pdf=_cash_geometry_pdf(str(source["sha256"])),
+            evidence_rows=evidence_rows,
+            allowed_pages_by_evidence={evidence_id: frozenset({1})},
+        )
+        geometry = conn.execute(
+            "SELECT status, match_method FROM source_evidence_geometry WHERE evidence_id = ?",
+            (evidence_id,),
+        ).fetchone()
+        link_count = conn.execute(
+            "SELECT COUNT(*) FROM source_evidence_lines WHERE evidence_id = ?",
+            (evidence_id,),
+        ).fetchone()[0]
+
+    assert metrics["exact"] == 1
+    assert dict(geometry) == {
+        "status": "exact",
+        "match_method": "ordered_noncontiguous_lines",
+    }
+    assert link_count == 2
 
 
 def test_schema_v9_rejects_invalid_domains_and_uses_canonical_utc(tmp_path):

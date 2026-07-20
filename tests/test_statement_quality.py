@@ -215,3 +215,61 @@ def test_statement_quality_batches_large_picker_lists_for_sqlite_limits():
 
     assert [len(batch) for batch in batches] == [900, 900, 200]
     assert [statement_id for batch in batches for statement_id in batch] == list(range(2_000))
+
+
+def test_statement_detail_does_not_leak_quarantine_from_sibling_statement(tmp_path):
+    """One PDF can contain several statements; review rows remain statement-owned."""
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        institution_id = sqlite_db.upsert_institution(conn, "TST", "Test Broker")
+        first_account = sqlite_db.upsert_account(
+            conn,
+            institution_id=institution_id,
+            account_number="A-CAD",
+            account_type="Margin",
+        )
+        second_account = sqlite_db.upsert_account(
+            conn,
+            institution_id=institution_id,
+            account_number="A-USD",
+            account_type="Margin",
+            base_currency="USD",
+        )
+        source_id = seed_source(conn, "Statements/Test/two-accounts.pdf")
+        first_statement = seed_statement(
+            conn,
+            account_id=first_account,
+            source_file_id=source_id,
+            period_end="2024-01-31",
+        )
+        second_statement = seed_statement(
+            conn,
+            account_id=second_account,
+            source_file_id=source_id,
+            period_end="2024-01-31",
+        )
+        run_id = conn.execute(
+            "SELECT active_ingestion_run_id FROM source_files WHERE source_file_id = ?",
+            (source_id,),
+        ).fetchone()[0]
+        conn.executemany(
+            """
+            INSERT INTO quarantine_transactions(
+                source_file_id, ingestion_run_id, statement_id, account_id,
+                occurrence, raw_line, reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (source_id, run_id, first_statement, first_account, 1, "first row", "first issue"),
+                (source_id, run_id, second_statement, second_account, 2, "second row", "second issue"),
+                (source_id, run_id, None, None, 3, "source row", "unassigned source issue"),
+            ],
+        )
+
+    first = statement_route._load_statement_rows(first_statement, path=db_path)
+    second = statement_route._load_statement_rows(second_statement, path=db_path)
+
+    assert first is not None and second is not None
+    assert [row["reason"] for row in first["quarantine"]] == ["first issue"]
+    assert [row["reason"] for row in second["quarantine"]] == ["second issue"]

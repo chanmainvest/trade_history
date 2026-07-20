@@ -161,6 +161,9 @@ def test_holdings_reprices_post_checkpoint_movement_without_recomputing_cost(tmp
         "kind": "position",
         "id": security["source_ref"]["id"],
         "checkpoint": True,
+        "geometry_status": "unavailable",
+        "page_numbers": [],
+        "linkable": False,
     }
     assert security["is_reported"] is False
     assert security["is_reconstructed"] is True

@@ -43,6 +43,15 @@ def list_transactions(
             SELECT 'transaction' AS row_kind,
                    'transaction:' || t.transaction_id AS row_id,
                    t.transaction_id, NULL AS initial_id, t.statement_id,
+                   t.evidence_id, geometry.status AS geometry_status,
+                   (SELECT GROUP_CONCAT(DISTINCT page.page_number)
+                      FROM source_evidence_lines evidence_line
+                      JOIN source_lines source_line
+                        ON source_line.source_line_id = evidence_line.source_line_id
+                      JOIN source_pages page
+                        ON page.source_page_id = source_line.source_page_id
+                     WHERE evidence_line.evidence_id = t.evidence_id)
+                     AS geometry_pages,
                    t.trade_date, t.settle_date, t.txn_type,
                    t.quantity, t.price, t.gross_amount, t.commission,
                    t.other_fees, t.net_amount, t.currency, t.description,
@@ -56,6 +65,8 @@ def list_transactions(
               JOIN accounts a ON a.account_id = t.account_id
               JOIN institutions i ON i.institution_id = a.institution_id
               LEFT JOIN instruments inst ON inst.instrument_id = t.instrument_id
+              LEFT JOIN source_evidence_geometry geometry
+                     ON geometry.evidence_id = t.evidence_id
               LEFT JOIN instrument_ticker_change_sources source
                      ON source.transaction_id = t.transaction_id
               LEFT JOIN instrument_ticker_changes tc
@@ -67,6 +78,8 @@ def list_transactions(
             SELECT 'initial_position' AS row_kind,
                    'initial:' || ip.initial_id AS row_id,
                    NULL AS transaction_id, ip.initial_id, NULL AS statement_id,
+                   NULL AS evidence_id, NULL AS geometry_status,
+                   NULL AS geometry_pages,
                    ip.as_of_date AS trade_date, NULL AS settle_date,
                    'initial_position' AS txn_type,
                    ip.quantity, NULL AS price, NULL AS gross_amount,
@@ -132,6 +145,29 @@ def list_transactions(
         ]
     total_count = len(all_rows)
     rows = all_rows[:limit]
+    for row in rows:
+        geometry_pages = sorted({
+            int(page)
+            for page in str(row.pop("geometry_pages", "") or "").split(",")
+            if page.isdigit()
+        })
+        status = row.pop("geometry_status", None)
+        evidence_id = row.pop("evidence_id", None)
+        row["source_ref"] = (
+            {
+                "statement_id": row["statement_id"],
+                "kind": "transaction",
+                "id": row["transaction_id"],
+                "geometry_status": status,
+                "page_numbers": geometry_pages,
+                "linkable": status in {"exact", "unique_tokens"}
+                and bool(geometry_pages),
+            }
+            if row["statement_id"] is not None
+            and row["transaction_id"] is not None
+            and evidence_id is not None
+            else None
+        )
     return {"rows": rows, "count": len(rows), "total_count": total_count, "has_more": total_count > len(rows)}
 
 

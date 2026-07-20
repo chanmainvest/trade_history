@@ -15,7 +15,7 @@ from ledger.parsers.td import TDParser
 from ledger.parsers.types import ParsedAccount, ParsedStatement
 from ledger.pdf_text import PdfText
 
-from .db_fixtures import seed_cash, seed_position, seed_source, seed_statement
+from .db_fixtures import _seed_evidence, seed_cash, seed_position, seed_source, seed_statement
 
 
 def test_transactions_include_opening_positions_without_fake_source_links(
@@ -37,14 +37,59 @@ def test_transactions_include_opening_positions_without_fake_source_links(
             """,
             (account_id, instrument_id),
         )
-        conn.execute(
+        transaction_id = conn.execute(
             """
             INSERT INTO transactions(
                 account_id, statement_id, trade_date, txn_type,
                 instrument_id, quantity, currency
             ) VALUES (?, ?, '2024-01-10', 'buy', ?, 2, 'CAD')
+            RETURNING transaction_id
             """,
             (account_id, statement_id, instrument_id),
+        ).fetchone()[0]
+        evidence_id = _seed_evidence(
+            conn, statement_id=statement_id, row_kind="transaction", row_index=0
+        )
+        conn.execute(
+            "UPDATE transactions SET evidence_id = ? WHERE transaction_id = ?",
+            (evidence_id, transaction_id),
+        )
+        source = conn.execute(
+            "SELECT active_ingestion_run_id, sha256 FROM source_files WHERE source_file_id = ?",
+            (source_id,),
+        ).fetchone()
+        page_id = conn.execute(
+            """
+            INSERT INTO source_pages(
+                source_file_id, ingestion_run_id, extractor_version,
+                page_number, width, height
+            ) VALUES (?, ?, 'fixture', 1, 612, 792)
+            RETURNING source_page_id
+            """,
+            (source_id, source["active_ingestion_run_id"]),
+        ).fetchone()[0]
+        line_id = conn.execute(
+            """
+            INSERT INTO source_lines(
+                source_page_id, line_number, raw_text,
+                normalized_text_hash, x0, top, x1, bottom
+            ) VALUES (?, 1, 'synthetic transaction evidence', ?, 10, 20, 200, 30)
+            RETURNING source_line_id
+            """,
+            (page_id, "a" * 64),
+        ).fetchone()[0]
+        conn.execute(
+            """
+            INSERT INTO source_evidence_geometry(
+                evidence_id, extractor_version, source_sha256, status
+            ) VALUES (?, 'fixture', ?, 'exact')
+            """,
+            (evidence_id, source["sha256"]),
+        )
+        conn.execute(
+            "INSERT INTO source_evidence_lines(evidence_id, source_line_id, ordinal) "
+            "VALUES (?, ?, 0)",
+            (evidence_id, line_id),
         )
     monkeypatch.setattr(transactions_route.sqlite_db, "SQLITE_PATH", db_path)
 
@@ -66,9 +111,18 @@ def test_transactions_include_opening_positions_without_fake_source_links(
     transaction, initial = response["rows"]
     assert transaction["statement_id"] == statement_id
     assert transaction["transaction_id"] is not None
+    assert transaction["source_ref"] == {
+        "statement_id": statement_id,
+        "kind": "transaction",
+        "id": transaction_id,
+        "geometry_status": "exact",
+        "page_numbers": [1],
+        "linkable": True,
+    }
     assert initial["txn_type"] == "initial_position"
     assert initial["statement_id"] is None
     assert initial["transaction_id"] is None
+    assert initial["source_ref"] is None
 
 
 def _seed_account(conn, *, source_relpath: str = "Statements/Test/sample.pdf"):

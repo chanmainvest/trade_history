@@ -26,6 +26,7 @@ class _StoredLine:
     line: PdfLine
     normalized: str
     tokens: tuple[str, ...]
+    token_words: tuple[int, ...]
 
 
 @dataclass(frozen=True)
@@ -34,18 +35,23 @@ class _Match:
     method: str | None
     confidence: float | None
     line_indexes: tuple[int, ...] = ()
+    token_ranges: tuple[tuple[int, int] | None, ...] = ()
 
 
 def _tokens(value: str) -> tuple[str, ...]:
     return tuple(_TOKEN_RE.findall(normalize_layout_text(value).upper()))
 
 
-def _contains_tokens(haystack: tuple[str, ...], needle: tuple[str, ...]) -> bool:
+def _token_offset(haystack: tuple[str, ...], needle: tuple[str, ...]) -> int | None:
     if not needle or len(needle) > len(haystack):
-        return False
-    return any(
-        haystack[index:index + len(needle)] == needle
-        for index in range(len(haystack) - len(needle) + 1)
+        return None
+    return next(
+        (
+            index
+            for index in range(len(haystack) - len(needle) + 1)
+            if haystack[index:index + len(needle)] == needle
+        ),
+        None,
     )
 
 
@@ -64,6 +70,7 @@ def _match_evidence(
     *,
     page_hint: int | None,
     line_hint: int | None,
+    allowed_pages: frozenset[int] | None = None,
 ) -> _Match:
     parts = tuple(
         normalized
@@ -73,41 +80,111 @@ def _match_evidence(
     if not parts:
         return _Match("unmatched", None, None)
 
+    def allowed(indexes: tuple[int, ...]) -> bool:
+        return allowed_pages is None or all(
+            lines[index].line.page_number in allowed_pages for index in indexes
+        )
+
     exact: list[tuple[int, ...]] = []
     for index in range(len(lines)):
         if index + len(parts) > len(lines):
             break
         indexes = tuple(range(index, index + len(parts)))
-        if tuple(lines[item].normalized for item in indexes) == parts:
+        if allowed(indexes) and tuple(lines[item].normalized for item in indexes) == parts:
             exact.append(indexes)
     if exact:
-        hinted = [
+        page_hinted = [
             candidate
             for candidate in exact
             if lines[candidate[0]].line.page_number == page_hint
-            and (line_hint is None or lines[candidate[0]].line.line_number == line_hint)
         ]
-        if len(hinted) == 1:
-            return _Match("exact", "persisted_page_line", 1.0, hinted[0])
+        line_hinted = [
+            candidate
+            for candidate in page_hinted
+            if line_hint is not None
+            and lines[candidate[0]].line.line_number == line_hint
+        ]
+        if len(line_hinted) == 1:
+            return _Match("exact", "persisted_page_line", 1.0, line_hinted[0])
+        if len(page_hinted) == 1:
+            return _Match("exact", "persisted_page", 1.0, page_hinted[0])
         if len(exact) == 1:
             return _Match("exact", "exact_line_sequence", 1.0, exact[0])
         return _Match("ambiguous", "repeated_exact_text", None)
 
+    # Semantic evidence can intentionally join non-adjacent statement lines,
+    # notably an opening and closing cash balance around transaction rows.
+    # Match the exact normalized fragments in order, but only accept a unique
+    # sequence within the statement's physical pages.
+    ordered: list[tuple[int, ...]] = []
+
+    def extend(prefix: tuple[int, ...], part_index: int) -> None:
+        if len(ordered) > 1:
+            return
+        if part_index == len(parts):
+            ordered.append(prefix)
+            return
+        start = prefix[-1] + 1 if prefix else 0
+        for index in range(start, len(lines)):
+            if lines[index].normalized != parts[part_index] or not allowed((index,)):
+                continue
+            extend((*prefix, index), part_index + 1)
+
+    if len(parts) > 1:
+        extend((), 0)
+    if len(ordered) == 1:
+        return _Match("exact", "ordered_noncontiguous_lines", 1.0, ordered[0])
+    if ordered:
+        page_hinted = [
+            candidate
+            for candidate in ordered
+            if lines[candidate[0]].line.page_number == page_hint
+        ]
+        if len(page_hinted) == 1:
+            return _Match("exact", "ordered_noncontiguous_persisted_page", 1.0, page_hinted[0])
+        return _Match("ambiguous", "repeated_ordered_text", None)
+
     needle = _tokens(" ".join(parts))
-    token_candidates: list[tuple[int, ...]] = []
+    token_candidates: list[tuple[tuple[int, ...], tuple[tuple[int, int] | None, ...]]] = []
     for start in range(len(lines)):
         for width in range(1, min(4, len(lines) - start) + 1):
             indexes = tuple(range(start, start + width))
+            if not allowed(indexes):
+                continue
             combined = tuple(
                 token
                 for item in indexes
                 for token in lines[item].tokens
             )
-            if _contains_tokens(combined, needle):
-                token_candidates.append(indexes)
+            offset = _token_offset(combined, needle)
+            if offset is not None:
+                end_offset = offset + len(needle)
+                token_ranges: list[tuple[int, int] | None] = []
+                cursor = 0
+                for item in indexes:
+                    line = lines[item]
+                    overlap_start = max(offset, cursor)
+                    overlap_end = min(end_offset, cursor + len(line.tokens))
+                    if overlap_start >= overlap_end or not line.token_words:
+                        token_ranges.append(None)
+                    else:
+                        local_start = overlap_start - cursor
+                        local_end = overlap_end - cursor
+                        first_word = line.token_words[local_start]
+                        last_word = line.token_words[local_end - 1] + 1
+                        token_ranges.append((first_word, last_word))
+                    cursor += len(line.tokens)
+                token_candidates.append((indexes, tuple(token_ranges)))
                 break
     if len(token_candidates) == 1:
-        return _Match("unique_tokens", "unique_contiguous_tokens", 0.95, token_candidates[0])
+        indexes, ranges = token_candidates[0]
+        return _Match(
+            "unique_tokens",
+            "unique_contiguous_tokens",
+            0.95,
+            indexes,
+            ranges,
+        )
     if token_candidates:
         return _Match("ambiguous", "repeated_token_sequence", None)
     return _Match("unmatched", "no_unique_text_alignment", None)
@@ -121,6 +198,7 @@ def _write_source_geometry(
     source_sha256: str,
     pdf,
     evidence_rows: list[sqlite3.Row],
+    allowed_pages_by_evidence: dict[int, frozenset[int]] | None = None,
 ) -> Counter[str]:
     conn.execute(
         "DELETE FROM source_pages WHERE ingestion_run_id = ?",
@@ -177,9 +255,22 @@ def _write_source_geometry(
                     ),
                 ).fetchone()[0]
             )
-            stored_lines.append(
-                _StoredLine(source_line_id, line, normalized, _tokens(normalized))
-            )
+            line_tokens: list[str] = []
+            token_words: list[int] = []
+            if line.words:
+                for word_index, word in enumerate(line.words):
+                    word_tokens = _tokens(word.text)
+                    line_tokens.extend(word_tokens)
+                    token_words.extend([word_index] * len(word_tokens))
+            else:
+                line_tokens.extend(_tokens(normalized))
+            stored_lines.append(_StoredLine(
+                source_line_id,
+                line,
+                normalized,
+                tuple(line_tokens),
+                tuple(token_words),
+            ))
 
     metrics: Counter[str] = Counter()
     for evidence in evidence_rows:
@@ -193,6 +284,7 @@ def _write_source_geometry(
                 stored_lines,
                 page_hint=evidence["page_number"],
                 line_hint=evidence["line_number"],
+                allowed_pages=(allowed_pages_by_evidence or {}).get(evidence_id),
             )
         conn.execute(
             """
@@ -218,12 +310,24 @@ def _write_source_geometry(
             ),
         )
         for ordinal, index in enumerate(match.line_indexes):
+            token_range = (
+                match.token_ranges[ordinal]
+                if ordinal < len(match.token_ranges)
+                else None
+            )
             conn.execute(
                 """
-                INSERT INTO source_evidence_lines(evidence_id, source_line_id, ordinal)
-                VALUES (?, ?, ?)
+                INSERT INTO source_evidence_lines(
+                    evidence_id, source_line_id, ordinal, token_start, token_end
+                ) VALUES (?, ?, ?, ?, ?)
                 """,
-                (evidence_id, stored_lines[index].source_line_id, ordinal),
+                (
+                    evidence_id,
+                    stored_lines[index].source_line_id,
+                    ordinal,
+                    token_range[0] if token_range else None,
+                    token_range[1] if token_range else None,
+                ),
             )
         metrics[match.status] += 1
     metrics["pages"] = pdf.page_count
@@ -280,6 +384,34 @@ def enrich_layout(
                 """,
                 (source["source_file_id"], source["active_ingestion_run_id"]),
             ).fetchall()
+            evidence_ids = {int(row["evidence_id"]) for row in evidence_rows}
+            allowed_pages_by_evidence: dict[int, set[int]] = {}
+            if evidence_ids:
+                owner_rows = conn.execute(
+                    """
+                    SELECT owner.evidence_id, pages.page_number
+                      FROM (
+                            SELECT evidence_id, statement_id FROM transactions
+                            UNION SELECT evidence_id, statement_id FROM position_snapshots
+                            UNION SELECT evidence_id, statement_id FROM cash_balances
+                            UNION SELECT evidence_id, statement_id FROM snapshot_sets
+                            UNION SELECT evidence_id, statement_id FROM quarantine_transactions
+                            UNION
+                            SELECT issue.evidence_id, snapshot.statement_id
+                              FROM snapshot_scope_issues issue
+                              JOIN snapshot_sets snapshot
+                                ON snapshot.snapshot_set_id = issue.snapshot_set_id
+                           ) owner
+                      JOIN statement_pages pages ON pages.statement_id = owner.statement_id
+                     WHERE owner.evidence_id IS NOT NULL
+                    """
+                ).fetchall()
+                for owner in owner_rows:
+                    evidence_id = int(owner["evidence_id"])
+                    if evidence_id in evidence_ids:
+                        allowed_pages_by_evidence.setdefault(evidence_id, set()).add(
+                            int(owner["page_number"])
+                        )
             conn.execute("SAVEPOINT layout_source")
             try:
                 metrics = _write_source_geometry(
@@ -289,6 +421,10 @@ def enrich_layout(
                     source_sha256=str(source["sha256"]),
                     pdf=pdf,
                     evidence_rows=evidence_rows,
+                    allowed_pages_by_evidence={
+                        evidence_id: frozenset(pages)
+                        for evidence_id, pages in allowed_pages_by_evidence.items()
+                    },
                 )
                 conn.execute("RELEASE SAVEPOINT layout_source")
             except Exception:
