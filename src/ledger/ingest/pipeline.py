@@ -257,7 +257,7 @@ def _write_statement(
         else sqlite_db.active_ingestion_run_id(conn, source_file_id)
     )
     source = conn.execute(
-        "SELECT relpath, sha256 FROM source_files WHERE source_file_id = ?",
+        "SELECT relpath, sha256, page_count FROM source_files WHERE source_file_id = ?",
         (source_file_id,),
     ).fetchone()
     source_identity = source["sha256"] or source["relpath"]
@@ -292,6 +292,19 @@ def _write_statement(
         ),
     )
     statement_id = cur.fetchone()[0]
+    page_numbers = stmt.page_numbers or tuple(
+        range(1, int(source["page_count"] or 0) + 1)
+    )
+    assignment_method = (
+        stmt.page_assignment_method
+        or ("parser_explicit" if stmt.page_numbers else "single_statement_source")
+    )
+    sqlite_db.replace_statement_pages(
+        conn,
+        statement_id=statement_id,
+        page_numbers=page_numbers,
+        assignment_method=assignment_method,
+    )
     parser_version = conn.execute(
         "SELECT parser_version FROM ingestion_runs WHERE ingestion_run_id = ?",
         (run_id,),
@@ -659,6 +672,7 @@ def _write_statement(
             ),
         )
 
+    persisted_quarantine: dict[int, tuple[int, int]] = {}
     for row_index, item in enumerate(stmt.quarantine):
         raw, reason, span = _quarantine_parts(item)
         evidence_id = _write_evidence(
@@ -673,12 +687,13 @@ def _write_statement(
             source_span=span,
             default_rule="parser:quarantine",
         )
-        conn.execute(
+        quarantine_id = int(conn.execute(
             """
             INSERT INTO quarantine_transactions(
                 source_file_id, ingestion_run_id, statement_id, account_id,
                 evidence_id, occurrence, raw_line, reason
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING quarantine_id
             """,
             (
                 source_file_id,
@@ -690,7 +705,48 @@ def _write_statement(
                 raw,
                 reason,
             ),
-        )
+        ).fetchone()[0])
+        if isinstance(item, ParsedQuarantine):
+            persisted_quarantine[id(item)] = (quarantine_id, evidence_id)
+
+    for set_index, parsed_set in enumerate(stmt.snapshot_sets):
+        snapshot_set_id = snapshot_sets[
+            (parsed_set.currency, parsed_set.section_type, parsed_set.scope_key)
+        ]
+        for issue_index, issue in enumerate(parsed_set.issues):
+            quarantine_id = None
+            evidence_id = None
+            if issue.quarantine is not None:
+                persisted = persisted_quarantine.get(id(issue.quarantine))
+                if persisted is not None:
+                    quarantine_id, evidence_id = persisted
+            if issue.source_span is not None:
+                evidence_id = _write_evidence(
+                    conn,
+                    source_file_id=source_file_id,
+                    run_id=run_id,
+                    parser_version=parser_version,
+                    statement_key=persisted_statement_key,
+                    row_kind=f"scope_issue_{parsed_set.section_type}",
+                    row_index=set_index * 10_000 + issue_index,
+                    raw_text=issue.source_span.raw_text,
+                    source_span=issue.source_span,
+                    default_rule="parser:scope-issue",
+                )
+            sqlite_db.upsert_snapshot_scope_issue(
+                conn,
+                issue_key=(
+                    f"scope-issue:v1:{persisted_statement_key}:"
+                    f"{set_index}:{issue_index}:{issue.issue_code}"
+                ),
+                snapshot_set_id=snapshot_set_id,
+                issue_code=issue.issue_code,
+                severity=issue.severity,
+                detail=issue.detail,
+                blocks_completeness=issue.blocks_completeness,
+                evidence_id=evidence_id,
+                quarantine_id=quarantine_id,
+            )
 
 
 def _content_counts(result: ParseResult) -> dict[str, int]:
@@ -700,6 +756,12 @@ def _content_counts(result: ParseResult) -> dict[str, int]:
         "positions": sum(len(stmt.positions) for stmt in result.statements),
         "quarantine": sum(len(stmt.quarantine) for stmt in result.statements),
         "snapshot_sets": sum(len(stmt.snapshot_sets) for stmt in result.statements),
+        "snapshot_scope_issues": sum(
+            len(snapshot.issues)
+            for stmt in result.statements
+            for snapshot in stmt.snapshot_sets
+        ),
+        "statement_pages": sum(len(stmt.page_numbers) for stmt in result.statements),
         "statements": len(result.statements),
         "transactions": sum(len(stmt.transactions) for stmt in result.statements),
     }
@@ -751,6 +813,12 @@ def _assert_unique_stage_keys(
             (f"snapshot_set_{snapshot.section_type}", index)
             for index, snapshot in enumerate(statement.snapshot_sets)
         ]
+        row_indexes += [
+            (f"scope_issue_{snapshot.section_type}", set_index * 10_000 + issue_index)
+            for set_index, snapshot in enumerate(statement.snapshot_sets)
+            for issue_index, issue in enumerate(snapshot.issues)
+            if issue.source_span is not None
+        ]
         for row_kind, row_index in row_indexes:
             key = (statement_key, row_kind, row_index)
             if key in source_row_keys:
@@ -778,7 +846,10 @@ def activate_source_result(
     if result.status != "parsed":
         raise ValueError("cannot activate a skipped parser result")
     enrich_ticker_change_transactions(result)
-    validation = validate_parse_result(result)
+    if len(result.statements) == 1 and not result.statements[0].page_numbers:
+        result.statements[0].page_numbers = tuple(range(1, pdf.page_count + 1))
+        result.statements[0].page_assignment_method = "single_statement_source"
+    validation = validate_parse_result(result, page_count=pdf.page_count)
     if not validation.is_valid:
         messages = "; ".join(issue.message for issue in validation.errors[:3])
         raise ValueError(f"cannot activate invalid parser result: {messages}")
@@ -814,6 +885,12 @@ def activate_source_result(
             institution_code=institution_code,
             result=result,
         )
+        resolved_validation = validate_parse_result(result, page_count=pdf.page_count)
+        if not resolved_validation.is_valid:
+            messages = "; ".join(
+                issue.message for issue in resolved_validation.errors[:3]
+            )
+            raise ValueError(f"identity resolution produced invalid parser result: {messages}")
         counts = _content_counts(result)
         content_hash = _content_hash(result)
 
@@ -1107,7 +1184,10 @@ def run_ingest(
                 continue
 
             enrich_ticker_change_transactions(result)
-            validation = validate_parse_result(result)
+            if len(result.statements) == 1 and not result.statements[0].page_numbers:
+                result.statements[0].page_numbers = tuple(range(1, pdf.page_count + 1))
+                result.statements[0].page_assignment_method = "single_statement_source"
+            validation = validate_parse_result(result, page_count=pdf.page_count)
             if not validation.is_valid:
                 summary = "; ".join(
                     f"{issue.code}: {issue.message}" for issue in validation.errors[:3]

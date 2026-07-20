@@ -52,6 +52,8 @@ def _statement(
         account=ParsedAccount(account_number="A-1", account_type="Margin"),
         period_start=period_start,
         period_end=period_end,
+        page_numbers=(1,),
+        page_assignment_method="parser_explicit",
         snapshot_sets=[
             ParsedSnapshotSet("CAD", "positions", "complete"),
             ParsedSnapshotSet("CAD", "cash", "complete"),

@@ -96,8 +96,20 @@ def test_source_reparse_removes_obsolete_statement_outputs(tmp_path):
         parser_name="synthetic",
         parser_version="1",
         statements=[
-            ParsedStatement(account=account, period_start="2024-01-01", period_end="2024-01-31"),
-            ParsedStatement(account=account, period_start="2024-02-01", period_end="2024-02-29"),
+                ParsedStatement(
+                    account=account,
+                    period_start="2024-01-01",
+                    period_end="2024-01-31",
+                    page_numbers=(1,),
+                    page_assignment_method="parser_explicit",
+                ),
+                ParsedStatement(
+                    account=account,
+                    period_start="2024-02-01",
+                    period_end="2024-02-29",
+                    page_numbers=(1,),
+                    page_assignment_method="parser_explicit",
+                ),
         ],
     )
     replacement = ParseResult(

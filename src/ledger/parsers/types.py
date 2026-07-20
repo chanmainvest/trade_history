@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-PARSER_CONTRACT_VERSION = "5"
+PARSER_CONTRACT_VERSION = "6"
 
 # Canonical transaction-type vocabulary. See schema.sql for definitions.
 TxnType = Literal[
@@ -129,6 +129,30 @@ class ParsedCashBalance:
 
 
 @dataclass
+class ParsedQuarantine:
+    raw_line: str
+    reason: str
+    source_span: SourceSpan | None = None
+
+    def __iter__(self):
+        """Retain tuple-unpacking compatibility during parser migration."""
+        yield self.raw_line
+        yield self.reason
+
+
+@dataclass
+class ParsedScopeIssue:
+    """One structured reason a snapshot scope cannot be trusted as complete."""
+
+    issue_code: str
+    severity: Literal["info", "warning", "error"] = "warning"
+    detail: dict[str, object] = field(default_factory=dict)
+    blocks_completeness: bool = True
+    source_span: SourceSpan | None = None
+    quarantine: ParsedQuarantine | None = None
+
+
+@dataclass
 class ParsedSnapshotSet:
     """Declared completeness of one statement currency/section scope."""
 
@@ -141,18 +165,7 @@ class ParsedSnapshotSet:
         "unvalidated"
     )
     source_span: SourceSpan | None = None
-
-
-@dataclass
-class ParsedQuarantine:
-    raw_line: str
-    reason: str
-    source_span: SourceSpan | None = None
-
-    def __iter__(self):
-        """Retain tuple-unpacking compatibility during parser migration."""
-        yield self.raw_line
-        yield self.reason
+    issues: list[ParsedScopeIssue] = field(default_factory=list)
 
 
 @dataclass
@@ -192,6 +205,10 @@ class ParsedStatement:
     annual_performance: list[ParsedAnnualPerformance] = field(default_factory=list)
     quarantine: list[tuple[str, str] | ParsedQuarantine] = field(default_factory=list)
     snapshot_sets: list[ParsedSnapshotSet] = field(default_factory=list)
+    page_numbers: tuple[int, ...] = ()
+    page_assignment_method: Literal[
+        "parser_explicit", "single_statement_source"
+    ] | None = "parser_explicit"
 
 
 @dataclass

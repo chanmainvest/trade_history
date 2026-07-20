@@ -287,6 +287,19 @@ CREATE TABLE IF NOT EXISTS statements (
 CREATE INDEX IF NOT EXISTS idx_statements_account_period ON statements(account_id, period_end);
 CREATE INDEX IF NOT EXISTS idx_statements_run ON statements(ingestion_run_id);
 
+-- Semantic ownership of physical source pages. This is parser output rather
+-- than replaceable PDF geometry, and can represent non-contiguous/shared pages.
+CREATE TABLE IF NOT EXISTS statement_pages (
+    statement_id      INTEGER NOT NULL REFERENCES statements(statement_id) ON DELETE CASCADE,
+    page_number       INTEGER NOT NULL CHECK (page_number >= 1),
+    assignment_method TEXT NOT NULL CHECK (assignment_method IN
+                       ('parser_explicit','single_statement_source')),
+    PRIMARY KEY(statement_id, page_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_statement_pages_page
+    ON statement_pages(page_number, statement_id);
+
 -- Source evidence is semantic provenance. Its identity is independent of
 -- replaceable layout geometry; legacy single-box columns remain readable.
 CREATE TABLE IF NOT EXISTS source_evidence (
@@ -395,6 +408,25 @@ CREATE TABLE IF NOT EXISTS snapshot_sets (
 
 CREATE INDEX IF NOT EXISTS idx_snapshot_sets_scope
     ON snapshot_sets(account_id, as_of_date, currency, section_type, completeness);
+
+-- One incomplete snapshot scope can have several source-linked blockers. The
+-- issue code/JSON detail are non-localized; the API/UI owns translated text.
+CREATE TABLE IF NOT EXISTS snapshot_scope_issues (
+    scope_issue_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    issue_key          TEXT NOT NULL UNIQUE,
+    snapshot_set_id    INTEGER NOT NULL REFERENCES snapshot_sets(snapshot_set_id)
+                                    ON DELETE CASCADE,
+    issue_code         TEXT NOT NULL,
+    severity           TEXT NOT NULL CHECK (severity IN ('info','warning','error')),
+    detail_json        TEXT CHECK (detail_json IS NULL OR json_valid(detail_json)),
+    blocks_completeness INTEGER NOT NULL DEFAULT 1 CHECK (blocks_completeness IN (0,1)),
+    evidence_id        INTEGER REFERENCES source_evidence(evidence_id) ON DELETE SET NULL,
+    quarantine_id      INTEGER REFERENCES quarantine_transactions(quarantine_id)
+                                    ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_scope_issues_snapshot
+    ON snapshot_scope_issues(snapshot_set_id, blocks_completeness, issue_code);
 
 -- ---------------------------------------------------------------------------
 -- TRANSACTIONS: every event that affects positions or cash
@@ -655,6 +687,10 @@ CREATE TABLE IF NOT EXISTS reconciliation_results (
     ingestion_run_id INTEGER REFERENCES ingestion_runs(ingestion_run_id) ON DELETE CASCADE,
     kind             TEXT NOT NULL CHECK (kind IN
                        ('position','cash','statement_total','transfer')),
+    check_type       TEXT CHECK (check_type IS NULL OR check_type IN
+                       ('position_rollforward','cash_activity','cash_continuity',
+                        'position_total','cash_total','portfolio_total','transfer_pair')),
+    reason_code      TEXT,
     account_id       INTEGER NOT NULL REFERENCES accounts(account_id),
     statement_id     INTEGER REFERENCES statements(statement_id) ON DELETE CASCADE,
     snapshot_set_id  INTEGER REFERENCES snapshot_sets(snapshot_set_id) ON DELETE CASCADE,
@@ -702,4 +738,4 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value            TEXT NOT NULL
 );
 
-INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '9');
+INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '10');

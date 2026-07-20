@@ -18,6 +18,8 @@ from ledger.parsers.types import (
 )
 from ledger.pdf_text import PdfText
 
+from .db_fixtures import seed_snapshot_set, seed_source, seed_statement
+
 
 def _create_v5_database(path) -> None:
     conn = sqlite_db.connect(path)
@@ -246,7 +248,7 @@ def test_init_db_migrates_v5_identity_runs_scopes_and_evidence(tmp_path):
     with sqlite_db.session(db_path) as conn:
         assert conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'schema_version'"
-        ).fetchone()[0] == "9"
+        ).fetchone()[0] == "10"
         assert conn.execute(
             "SELECT COUNT(*) FROM instrument_ticker_changes"
         ).fetchone()[0] == 0
@@ -300,12 +302,17 @@ def test_init_db_migrates_v5_identity_runs_scopes_and_evidence(tmp_path):
         assert "security_id" in {
             row["name"] for row in conn.execute("PRAGMA table_info(instruments)")
         }
+        assert {"check_type", "reason_code"}.issubset(
+            {row["name"] for row in conn.execute("PRAGMA table_info(reconciliation_results)")}
+        )
         for table in (
             "security_issuers",
             "securities",
             "instrument_market_symbols",
             "instrument_journal_pairs",
             "instrument_resolution_candidates",
+            "statement_pages",
+            "snapshot_scope_issues",
         ):
             assert conn.execute(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -316,6 +323,97 @@ def test_init_db_migrates_v5_identity_runs_scopes_and_evidence(tmp_path):
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("UPDATE transactions SET trade_date = '2024-02-30'")
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_statement_pages_and_scope_issues_are_structured_and_cascade(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        institution_id = sqlite_db.upsert_institution(conn, "TST", "Test")
+        account_id = sqlite_db.upsert_account(
+            conn,
+            institution_id=institution_id,
+            account_number="A-1",
+        )
+        source_id = seed_source(conn, "Statements/Test/scoped.pdf")
+        statement_id = seed_statement(
+            conn,
+            account_id=account_id,
+            source_file_id=source_id,
+            period_end="2024-01-31",
+        )
+        run_id = conn.execute(
+            "SELECT active_ingestion_run_id FROM source_files WHERE source_file_id = ?",
+            (source_id,),
+        ).fetchone()[0]
+        sqlite_db.replace_statement_pages(
+            conn,
+            statement_id=statement_id,
+            page_numbers=[3, 1, 3],
+            assignment_method="parser_explicit",
+        )
+        snapshot_set_id = seed_snapshot_set(
+            conn,
+            statement_id=statement_id,
+            currency="CAD",
+            section_type="positions",
+            completeness="unknown",
+        )
+        quarantine_id = conn.execute(
+            """
+            INSERT INTO quarantine_transactions(
+                source_file_id, ingestion_run_id, statement_id, account_id,
+                occurrence, raw_line, reason
+            ) VALUES (?, ?, ?, ?, 1, 'unsupported row', 'unrecognized holding row')
+            RETURNING quarantine_id
+            """,
+            (source_id, run_id, statement_id, account_id),
+        ).fetchone()[0]
+        issue_id = sqlite_db.upsert_snapshot_scope_issue(
+            conn,
+            issue_key="scope-issue:test",
+            snapshot_set_id=snapshot_set_id,
+            issue_code="unrecognized_holding_row",
+            severity="warning",
+            detail={"count": 1},
+            quarantine_id=quarantine_id,
+        )
+
+        pages = conn.execute(
+            "SELECT page_number, assignment_method FROM statement_pages ORDER BY page_number"
+        ).fetchall()
+        issue = conn.execute(
+            """
+            SELECT scope_issue_id, issue_code, severity, detail_json,
+                   blocks_completeness, quarantine_id
+              FROM snapshot_scope_issues
+            """
+        ).fetchone()
+
+        assert [tuple(row) for row in pages] == [
+            (1, "parser_explicit"),
+            (3, "parser_explicit"),
+        ]
+        assert dict(issue) == {
+            "scope_issue_id": issue_id,
+            "issue_code": "unrecognized_holding_row",
+            "severity": "warning",
+            "detail_json": '{"count": 1}',
+            "blocks_completeness": 1,
+            "quarantine_id": quarantine_id,
+        }
+
+        with pytest.raises(ValueError, match="positive"):
+            sqlite_db.replace_statement_pages(
+                conn,
+                statement_id=statement_id,
+                page_numbers=[0],
+                assignment_method="parser_explicit",
+            )
+
+        conn.execute("DELETE FROM statements WHERE statement_id = ?", (statement_id,))
+        assert conn.execute("SELECT COUNT(*) FROM statement_pages").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM snapshot_scope_issues").fetchone()[0] == 0
 
 
 def test_reconciliation_schema_records_residual_without_adjustment(tmp_path):

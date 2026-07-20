@@ -30,6 +30,7 @@ from datetime import date
 from ..pdf_text import PdfText
 from .helpers import parse_money, parse_option_expiry
 from .layout import (
+    PageTextIndex,
     attach_source_spans,
     declare_snapshot_scopes,
     quarantine_unsupported_rows,
@@ -124,6 +125,7 @@ ACT_VERBS = {
 class _Block:
     currency: str
     text: str
+    page_numbers: tuple[int, ...] = ()
 
 
 def _layout_cash_effects(pdf: PdfText) -> dict[str, list[float]]:
@@ -346,7 +348,11 @@ def _parse_block_period(text: str, year: int) -> tuple[str, str] | None:
     return (date(year, end_mon, 1).isoformat(), period_end)
 
 
-def _split_currency_blocks(text: str) -> list[_Block]:
+def _split_currency_blocks(
+    text: str,
+    *,
+    page_index: PageTextIndex | None = None,
+) -> list[_Block]:
     """Each PDF page repeats the 'Cdn. Dollar Statement' / 'U.S. Dollar Statement'
     header. We only split when currency CHANGES."""
     matches = list(RE_BLOCK_HDR.finditer(text))
@@ -359,11 +365,22 @@ def _split_currency_blocks(text: str) -> list[_Block]:
             cur_ccy = ccy
             cur_start = m.start()
         elif ccy != cur_ccy:
-            blocks.append(_Block(currency=cur_ccy, text=text[cur_start:m.start()]))
+            end = m.start()
+            blocks.append(_Block(
+                currency=cur_ccy,
+                text=text[cur_start:end],
+                page_numbers=page_index.pages_for_range(cur_start, end) if page_index else (),
+            ))
             cur_ccy = ccy
             cur_start = m.start()
     if cur_ccy is not None and cur_start is not None:
-        blocks.append(_Block(currency=cur_ccy, text=text[cur_start:]))
+        blocks.append(_Block(
+            currency=cur_ccy,
+            text=text[cur_start:],
+            page_numbers=(
+                page_index.pages_for_range(cur_start, len(text)) if page_index else ()
+            ),
+        ))
     return blocks
 
 
@@ -741,7 +758,7 @@ def _parse_activity(
 # ----------------------------------------------------------------- Parser
 class RBCParser:
     NAME = "rbc"
-    VERSION = "2.5.1"
+    VERSION = "2.6.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "RBC Invest Direct":
@@ -750,7 +767,8 @@ class RBCParser:
 
     def parse(self, pdf: PdfText) -> ParseResult:
         result = ParseResult(parser_name=self.NAME, parser_version=self.VERSION)
-        text = pdf.full_text
+        page_index = PageTextIndex.from_pdf(pdf)
+        text = page_index.text
         cash_effects = _layout_cash_effects(pdf)
 
         if _is_annual(pdf.relpath, text):
@@ -777,6 +795,7 @@ class RBCParser:
                     period_start=ps, period_end=pe,
                     statement_type="annual",
                     annual_performance=_parse_annual_performance(text, ps, pe),
+                    page_numbers=page_index.all_pages,
                 ))
             return result
 
@@ -787,7 +806,7 @@ class RBCParser:
         scope_state: dict[tuple[str, str, str], tuple[dict[str, str], dict[str, str]]] = {}
 
         # Year is in the block header line.
-        for block in _split_currency_blocks(text):
+        for block in _split_currency_blocks(text, page_index=page_index):
             ym = re.search(r"Statement\s+(\d{4})", block.text)
             if not ym:
                 continue
@@ -814,9 +833,14 @@ class RBCParser:
                     account=ParsedAccount(account_number=acct, account_type=atype,
                                           base_currency="CAD"),
                     period_start=ps, period_end=pe, statement_type="monthly",
+                    page_numbers=block.page_numbers,
                 )
                 statements[key] = stmt
                 scope_state[key] = ({}, {})
+            else:
+                stmt.page_numbers = tuple(
+                    sorted(set(stmt.page_numbers) | set(block.page_numbers))
+                )
             position_scopes, cash_scopes = scope_state[key]
 
             # Asset Review block

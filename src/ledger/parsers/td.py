@@ -33,6 +33,7 @@ from datetime import date
 from ..pdf_text import PdfText
 from .helpers import _OPT_MON, _third_friday, parse_money
 from .layout import (
+    PageTextIndex,
     attach_source_spans,
     declare_snapshot_scopes,
     quarantine_unsupported_rows,
@@ -45,6 +46,7 @@ from .types import (
     ParsedInstrument,
     ParsedPosition,
     ParsedQuarantine,
+    ParsedScopeIssue,
     ParsedStatement,
     ParsedTxn,
     ParseResult,
@@ -195,6 +197,7 @@ class _Sub:
     currency: str
     account_number: str
     text: str
+    page_numbers: tuple[int, ...] = ()
 
 
 @dataclass
@@ -209,10 +212,13 @@ class _CashState:
 @dataclass
 class _ScopeState:
     positions_seen: bool = False
-    positions_complete: bool = False
+    positions_complete: bool = True
     cash_seen: bool = False
     cash_complete: bool = False
+    cash_failed: bool = False
     cash: _CashState = field(default_factory=_CashState)
+    position_issues: list[ParsedScopeIssue] = field(default_factory=list)
+    cash_issues: list[ParsedScopeIssue] = field(default_factory=list)
 
 
 def _is_summary(relpath: str) -> bool:
@@ -281,7 +287,7 @@ def _full_period_from_match(match: re.Match[str]) -> tuple[str, str] | None:
         return None
 
 
-def _statement_chunks(text: str) -> list[tuple[str, str, str]]:
+def _statement_chunks(text: str) -> list[tuple[str, str, str, int, int]]:
     markers: list[tuple[int, tuple[str, str]]] = []
     for match in RE_PERIOD_LEGACY.finditer(text):
         period = _legacy_period_from_match(match)
@@ -294,21 +300,32 @@ def _statement_chunks(text: str) -> list[tuple[str, str, str]]:
     markers.sort(key=lambda item: item[0])
     if not markers:
         period = _parse_period(text)
-        return [(period[0], period[1], text)] if period else []
+        return [(period[0], period[1], text, 0, len(text))] if period else []
 
-    chunks: list[tuple[str, str, str]] = []
+    chunks: list[tuple[str, str, str, int, int]] = []
     current_start, current_period = markers[0]
     for start, period in markers[1:]:
         if period != current_period:
-            chunks.append((current_period[0], current_period[1], text[current_start:start]))
+            chunks.append((
+                current_period[0], current_period[1], text[current_start:start],
+                current_start, start,
+            ))
             current_period = period
             current_start = start
     if current_period is not None:
-        chunks.append((current_period[0], current_period[1], text[current_start:]))
+        chunks.append((
+            current_period[0], current_period[1], text[current_start:],
+            current_start, len(text),
+        ))
     return chunks
 
 
-def _split_subs(text: str) -> list[_Sub]:
+def _split_subs(
+    text: str,
+    *,
+    base_offset: int = 0,
+    page_index: PageTextIndex | None = None,
+) -> list[_Sub]:
     """Split the PDF text on each 'Account number: X / Account type: Direct Trading - Y' header.
 
     For legacy 2016-2017 statements (no 'Account type:' literal), fall back
@@ -346,12 +363,52 @@ def _split_subs(text: str) -> list[_Sub]:
     for i in range(1, len(marks)):
         pos, an, ccy = marks[i]
         if (an, ccy) != (cur_an, cur_ccy):
-            subs.append(_Sub(currency=cur_ccy, account_number=cur_an,
-                             text=text[cur_start:pos]))
+            start = base_offset + cur_start
+            end = base_offset + pos
+            subs.append(_Sub(
+                currency=cur_ccy,
+                account_number=cur_an,
+                text=text[cur_start:pos],
+                page_numbers=page_index.pages_for_range(start, end) if page_index else (),
+            ))
             cur_an, cur_ccy, cur_start = an, ccy, pos
-    subs.append(_Sub(currency=cur_ccy, account_number=cur_an,
-                     text=text[cur_start:]))
+    start = base_offset + cur_start
+    end = base_offset + len(text)
+    subs.append(_Sub(
+        currency=cur_ccy,
+        account_number=cur_an,
+        text=text[cur_start:],
+        page_numbers=page_index.pages_for_range(start, end) if page_index else (),
+    ))
     return subs
+
+
+def _scope_issues_from_quarantine(
+    rows: list[tuple[str, str] | ParsedQuarantine],
+    *,
+    section_type: str,
+) -> list[ParsedScopeIssue]:
+    issues: list[ParsedScopeIssue] = []
+    for row in rows:
+        if not isinstance(row, ParsedQuarantine):
+            continue
+        reason = row.reason.lower()
+        if reason == "unrecognized holding row":
+            code = "unrecognized_holding_row"
+        elif reason == "holding without printed symbol":
+            code = "holding_identity_missing"
+        elif "closing balance" in reason:
+            code = "closing_balance_missing"
+        elif section_type == "positions":
+            code = "position_row_unavailable"
+        else:
+            code = "cash_activity_unavailable"
+        issues.append(ParsedScopeIssue(
+            issue_code=code,
+            detail={"section_type": section_type},
+            quarantine=row,
+        ))
+    return issues
 
 
 def _option_expiry(yy: str, dd: str, mon: str) -> str | None:
@@ -967,7 +1024,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
 # ---------------------------------------------------------------- Parser
 class TDParser:
     NAME = "td"
-    VERSION = "2.5.1"
+    VERSION = "2.6.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "TD Webbroker":
@@ -977,7 +1034,8 @@ class TDParser:
 
     def parse(self, pdf: PdfText) -> ParseResult:
         result = ParseResult(parser_name=self.NAME, parser_version=self.VERSION)
-        text = pdf.full_text
+        page_index = PageTextIndex.from_pdf(pdf)
+        text = page_index.text
 
         if _is_summary(pdf.relpath):
             ym = re.search(r"_(\d{4})_(?:mid_year_)?summary", pdf.relpath)
@@ -993,6 +1051,7 @@ class TDParser:
                     period_start=f"{year}-01-01",
                     period_end=f"{year}-12-31",
                     statement_type="annual",
+                    page_numbers=page_index.all_pages,
                 ))
             attach_source_spans(pdf, result, parser_name=self.NAME)
             return result
@@ -1007,11 +1066,15 @@ class TDParser:
         # a source cannot emit duplicate account-period statement identities.
         statements: dict[tuple[str, str, str, str], ParsedStatement] = {}
         scope_state: dict[tuple[str, str, str, str], _ScopeState] = {}
-        for ps, pe, chunk_text in chunks:
+        for ps, pe, chunk_text, chunk_start, _chunk_end in chunks:
             period_end_month = int(pe[5:7])
             period_end_year = int(pe[:4])
 
-            for sub in _split_subs(chunk_text):
+            for sub in _split_subs(
+                chunk_text,
+                base_offset=chunk_start,
+                page_index=page_index,
+            ):
                 key = (ps, pe, sub.account_number, sub.currency)
                 stmt = statements.get(key)
                 if stmt is None:
@@ -1022,9 +1085,14 @@ class TDParser:
                             base_currency=sub.currency,
                         ),
                         period_start=ps, period_end=pe, statement_type="monthly",
+                        page_numbers=sub.page_numbers,
                     )
                     statements[key] = stmt
                     scope_state[key] = _ScopeState()
+                else:
+                    stmt.page_numbers = tuple(
+                        sorted(set(stmt.page_numbers) | set(sub.page_numbers))
+                    )
                 state = scope_state[key]
                 hm = re.search(r"Holdings in your account|^Holdings\b", sub.text, re.MULTILINE)
                 am = re.search(
@@ -1035,16 +1103,25 @@ class TDParser:
                 if hm:
                     state.positions_seen = True
                     holdings_end = am.start() if am and am.start() > hm.start() else len(sub.text)
+                    quarantine_start = len(stmt.quarantine)
                     try:
-                        if _parse_holdings(
+                        fragment_complete = _parse_holdings(
                             sub.text[hm.end():holdings_end], sub.currency, stmt
-                        ):
-                            state.positions_complete = True
+                        )
+                        state.positions_complete = (
+                            state.positions_complete and fragment_complete
+                        )
                     except Exception as exc:
-                        stmt.quarantine.append(ParsedQuarantine(
+                        state.positions_complete = False
+                        quarantine = ParsedQuarantine(
                             raw_line="<holdings section>",
                             reason=f"holdings section parse error: {exc}",
-                        ))
+                        )
+                        stmt.quarantine.append(quarantine)
+                    state.position_issues.extend(_scope_issues_from_quarantine(
+                        stmt.quarantine[quarantine_start:],
+                        section_type="positions",
+                    ))
                 if am:
                     state.cash_seen = True
                     tail = sub.text[am.end():]
@@ -1053,25 +1130,45 @@ class TDParser:
                     end = re.search(r"Details of investment income|^\s*Disclosures",
                                     tail, re.MULTILINE)
                     act_body = tail[:end.start()] if end else tail
+                    quarantine_start = len(stmt.quarantine)
                     try:
-                        if _parse_activity(
+                        fragment_complete = _parse_activity(
                             act_body, sub.currency, period_end_year,
                             period_end_month, stmt, cash_state=state.cash,
-                        ):
-                            state.cash_complete = True
+                        )
+                        state.cash_complete = (
+                            state.cash_complete or fragment_complete
+                        ) and not state.cash_failed
                     except Exception as exc:
-                        stmt.quarantine.append(ParsedQuarantine(
+                        state.cash_failed = True
+                        state.cash_complete = False
+                        quarantine = ParsedQuarantine(
                             raw_line="<activity section>",
                             reason=f"activity section parse error: {exc}",
-                        ))
+                        )
+                        stmt.quarantine.append(quarantine)
+                    fragment_issues = _scope_issues_from_quarantine(
+                        stmt.quarantine[quarantine_start:],
+                        section_type="cash",
+                    )
+                    if fragment_issues:
+                        state.cash_failed = True
+                        state.cash_complete = False
+                    state.cash_issues.extend(fragment_issues)
 
         for key, stmt in statements.items():
             state = scope_state[key]
             currency = stmt.account.base_currency
             if state.cash.opening is not None:
-                stmt.quarantine.append(ParsedQuarantine(
+                quarantine = ParsedQuarantine(
                     raw_line="\n".join(state.cash.lines),
                     reason="opening cash balance has no matching valid closing balance",
+                )
+                stmt.quarantine.append(quarantine)
+                state.cash_failed = True
+                state.cash_complete = False
+                state.cash_issues.extend(_scope_issues_from_quarantine(
+                    [quarantine], section_type="cash",
                 ))
             position_scopes = {}
             if state.positions_seen or any(
@@ -1091,6 +1188,8 @@ class TDParser:
                 stmt,
                 position_scopes=position_scopes,
                 cash_scopes=cash_scopes,
+                position_issues={currency: state.position_issues},
+                cash_issues={currency: state.cash_issues},
             )
             result.statements.append(stmt)
         quarantine_unsupported_rows(result)

@@ -25,6 +25,7 @@ from ..parsers.name_resolver import resolve_ticker
 from ..parsers.types import (
     ParsedInstrument,
     ParsedQuarantine,
+    ParsedScopeIssue,
     ParsedStatement,
     ParsedTxn,
     ParseResult,
@@ -535,22 +536,29 @@ def resolve_parse_result(
                 instrument=position.instrument,
             )
             if method == "unresolved_printed_identity":
-                statement.quarantine.append(
-                    ParsedQuarantine(
-                        raw_line=position.raw_line or "",
-                        reason="position identity unresolved; row not persisted",
-                        source_span=position.source_span,
-                    )
+                quarantine = ParsedQuarantine(
+                    raw_line=position.raw_line or "",
+                    reason="position identity unresolved; row not persisted",
+                    source_span=position.source_span,
                 )
+                statement.quarantine.append(quarantine)
                 for scope in statement.snapshot_sets:
                     if (
                         scope.currency == position.currency
                         and scope.section_type == "positions"
                         and scope.scope_key == position.scope_key
-                        and scope.completeness == "complete"
                     ):
-                        scope.completeness = "unknown"
-                        scope.validation_status = "warning"
+                        if scope.completeness == "complete":
+                            scope.completeness = "unknown"
+                            scope.validation_status = "warning"
+                        scope.issues.append(ParsedScopeIssue(
+                            issue_code="holding_identity_missing",
+                            severity="error",
+                            detail={"resolution_method": method},
+                            blocks_completeness=True,
+                            source_span=position.source_span,
+                            quarantine=quarantine,
+                        ))
                 methods["quarantined_unresolved_position"] += 1
                 continue
             resolved_positions.append(position)

@@ -9,6 +9,7 @@ from ledger.parsers.types import (
     ParsedTxn,
     ParseResult,
 )
+from ledger.parsers.validation import validate_parse_result
 
 
 def test_unresolved_name_tokens_are_never_persistable_tickers(tmp_path):
@@ -84,6 +85,11 @@ def test_unresolved_name_tokens_are_never_persistable_tickers(tmp_path):
     assert statement.positions == []
     assert statement.snapshot_sets[0].completeness == "unknown"
     assert statement.snapshot_sets[0].validation_status == "warning"
+    assert [issue.issue_code for issue in statement.snapshot_sets[0].issues] == [
+        "holding_identity_missing"
+    ]
+    assert statement.snapshot_sets[0].issues[0].quarantine is statement.quarantine[0]
+    assert validate_parse_result(result).is_valid
     assert statement.quarantine[0].reason == (
         "position identity unresolved; row not persisted"
     )

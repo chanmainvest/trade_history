@@ -197,7 +197,7 @@ def _record_for_result(
     pdf: PdfText,
     result: ParseResult,
 ) -> dict:
-    validation = validate_parse_result(result)
+    validation = validate_parse_result(result, page_count=pdf.page_count)
     statements = result.statements
     cash_checks = [
         {

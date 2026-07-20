@@ -25,6 +25,7 @@ from datetime import date
 from ..pdf_text import PdfText
 from .helpers import _option_mon, _third_friday, parse_money
 from .layout import (
+    PageTextIndex,
     attach_source_spans,
     declare_snapshot_scopes,
     quarantine_unsupported_rows,
@@ -80,6 +81,7 @@ class _AcctSection:
     account_type: str
     base_currency: str
     text: str  # body text for this account
+    page_numbers: tuple[int, ...] = ()
 
 
 def _is_fee_summary(relpath: str) -> bool:
@@ -173,7 +175,11 @@ def _parse_period(text: str) -> tuple[str, str] | None:
 _SUFFIX_CCY = {"E": "CAD", "F": "USD"}
 
 
-def _split_account_sections(text: str) -> list[_AcctSection]:
+def _split_account_sections(
+    text: str,
+    *,
+    page_index: PageTextIndex | None = None,
+) -> list[_AcctSection]:
     """Split by 'Your X Account ... Account#NNN' headers (per-account blocks)."""
     out: list[_AcctSection] = []
     # Find boundaries
@@ -188,8 +194,8 @@ def _split_account_sections(text: str) -> list[_AcctSection]:
         start = m.start()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         type_label = m.group(1).strip()
-        if type_label.lower().endswith("(continued)"):
-            continue
+        is_continued = type_label.lower().endswith("(continued)")
+        clean_type_label = re.sub(r"\s*\(continued\)\s*$", "", type_label, flags=re.IGNORECASE)
         acct = m.group(2).upper()
         suffix = acct[-1]
         if "USD" in type_label.upper():
@@ -198,15 +204,26 @@ def _split_account_sections(text: str) -> list[_AcctSection]:
             ccy = "CAD"
         else:
             ccy = _SUFFIX_CCY.get(suffix, "CAD")
-        out.append(_AcctSection(
-            account_number=acct, account_type=type_label,
-            base_currency=ccy, text=text[start:end],
-        ))
+        section = _AcctSection(
+            account_number=acct,
+            account_type=clean_type_label,
+            base_currency=ccy,
+            text=text[start:end],
+            page_numbers=(page_index.pages_for_range(start, end) if page_index else ()),
+        )
+        if is_continued and out and out[-1].account_number == acct:
+            out[-1].text += "\n" + section.text
+            out[-1].page_numbers = tuple(sorted(set(out[-1].page_numbers) | set(section.page_numbers)))
+        else:
+            out.append(section)
     # Merge "(continued)" sections back into their preceding section.
     merged: list[_AcctSection] = []
     for sec in out:
         if merged and merged[-1].account_number == sec.account_number:
             merged[-1].text += "\n" + sec.text
+            merged[-1].page_numbers = tuple(
+                sorted(set(merged[-1].page_numbers) | set(sec.page_numbers))
+            )
         else:
             merged.append(sec)
     return merged
@@ -511,7 +528,7 @@ def _parse_activity(text: str, currency: str, year_default: int,
 # ----------------------------------------------------------------- Parser
 class HSBCParser:
     NAME = "hsbc"
-    VERSION = "2.4.0"
+    VERSION = "2.5.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "HSBC direct invest":
@@ -520,7 +537,8 @@ class HSBCParser:
 
     def parse(self, pdf: PdfText) -> ParseResult:
         result = ParseResult(parser_name=self.NAME, parser_version=self.VERSION)
-        text = _normalize(pdf.full_text)
+        page_index = PageTextIndex.from_pdf(pdf, transform=_normalize)
+        text = page_index.text
 
         # Annual fee summary PDFs: emit empty annual statement so they're recorded.
         if _is_fee_summary(pdf.relpath):
@@ -540,6 +558,7 @@ class HSBCParser:
                     period_start=f"{year}-01-01",
                     period_end=f"{year}-12-31",
                     statement_type="annual",
+                    page_numbers=page_index.all_pages,
                 ))
             attach_source_spans(pdf, result, parser_name=self.NAME)
             return result
@@ -551,7 +570,7 @@ class HSBCParser:
         period_start, period_end = period
         year = int(period_end[:4])
 
-        sections = _split_account_sections(text)
+        sections = _split_account_sections(text, page_index=page_index)
         if not sections:
             result.errors.append("could not split account sections")
             return result
@@ -563,6 +582,7 @@ class HSBCParser:
                                       base_currency=sec.base_currency),
                 period_start=period_start, period_end=period_end,
                 statement_type="monthly",
+                page_numbers=sec.page_numbers,
             )
             try:
                 position_complete = _parse_holdings(sec.text, sec.base_currency, stmt)

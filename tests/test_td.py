@@ -155,6 +155,7 @@ def test_td_repeated_account_fragments_merge_into_one_scope_per_currency():
     assert len(cad.positions) == 1
     assert len(cad.transactions) == 2
     assert len(cad.cash_balances) == 1
+    assert cad.page_numbers == (1, 2, 3)
     assert cad.cash_balances[0].opening_balance == 100.0
     assert cad.cash_balances[0].closing_balance == 115.0
     assert cad.transactions[-1].source_span and cad.transactions[-1].source_span.page_number == 3
@@ -165,6 +166,7 @@ def test_td_repeated_account_fragments_merge_into_one_scope_per_currency():
         ("CAD", "cash", "complete"),
         ("CAD", "positions", "complete"),
     }
+    assert all(scope.issues == [] for scope in cad.snapshot_sets)
     assert validate_parse_result(result).is_valid
 
 
@@ -293,6 +295,11 @@ def test_td_unknown_numeric_activity_marks_cash_scope_incomplete():
     assert next(
         scope for scope in usd.snapshot_sets if scope.section_type == "cash"
     ).completeness == "unknown"
+    cash_scope = next(
+        scope for scope in usd.snapshot_sets if scope.section_type == "cash"
+    )
+    assert cash_scope.issues
+    assert cash_scope.issues[0].blocks_completeness
 
 
 def test_td_unrecognized_numeric_holding_marks_position_scope_incomplete():

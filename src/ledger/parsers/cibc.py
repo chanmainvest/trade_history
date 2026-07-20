@@ -27,6 +27,7 @@ from .helpers import (
     parse_money,
 )
 from .layout import (
+    PageTextIndex,
     attach_source_spans,
     declare_snapshot_scopes,
     quarantine_unsupported_rows,
@@ -732,7 +733,7 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
 # ----------------------------------------------------------------- Parser
 class CIBCParser:
     NAME = "cibc"
-    VERSION = "2.5.0"
+    VERSION = "2.6.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name.startswith("CIBC "):
@@ -745,7 +746,13 @@ class CIBCParser:
         result = ParseResult(parser_name=self.NAME, parser_version=self.VERSION)
         # Normalize pdfplumber font-fallback artifacts: 'ð' is its standard
         # placeholder for em-dash in some CIBC e-Statements (older years).
-        text = pdf.full_text.replace("\u00f0", "\u2014").replace("\u00d0", "\u2014")
+        page_index = PageTextIndex.from_pdf(
+            pdf,
+            transform=lambda value: value.replace("\u00f0", "\u2014").replace(
+                "\u00d0", "\u2014"
+            ),
+        )
+        text = page_index.text
 
         if _is_tax_doc(text, pdf.relpath):
             result.status = "skipped"
@@ -771,6 +778,7 @@ class CIBCParser:
                                   base_currency=base_ccy),
             period_start=period_start, period_end=period_end,
             statement_type="monthly",
+            page_numbers=page_index.all_pages,
         )
 
         year = _activity_year(period_end)

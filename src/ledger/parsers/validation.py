@@ -342,7 +342,54 @@ def _validate_statement(
     report: ValidationReport,
     statement: ParsedStatement,
     statement_index: int,
+    *,
+    page_count: int | None = None,
+    require_pages: bool = False,
 ) -> None:
+    pages = statement.page_numbers
+    if require_pages and not pages:
+        _issue(
+            report,
+            "missing_statement_pages",
+            "statement has no explicit physical page membership",
+            statement_index=statement_index,
+        )
+    if pages:
+        invalid_pages = [
+            page for page in pages
+            if not isinstance(page, int) or isinstance(page, bool) or page < 1
+        ]
+        if invalid_pages:
+            _issue(
+                report,
+                "invalid_statement_pages",
+                f"statement pages must be positive integers, got {invalid_pages!r}",
+                statement_index=statement_index,
+            )
+        if tuple(sorted(set(pages))) != tuple(pages):
+            _issue(
+                report,
+                "invalid_statement_pages",
+                "statement pages must be unique and ascending",
+                statement_index=statement_index,
+            )
+        if page_count is not None and any(page > page_count for page in pages):
+            _issue(
+                report,
+                "statement_page_out_of_range",
+                f"statement page exceeds source page count {page_count}",
+                statement_index=statement_index,
+            )
+        if statement.page_assignment_method not in {
+            "parser_explicit",
+            "single_statement_source",
+        }:
+            _issue(
+                report,
+                "missing_statement_page_method",
+                "statement page membership has no supported assignment method",
+                statement_index=statement_index,
+            )
     if not statement.account.account_number.strip():
         _issue(
             report,
@@ -442,6 +489,7 @@ def _validate_statement(
             transaction.txn_type in POSITION_AFFECTING_TYPES
             and transaction.quantity is not None
             and transaction.instrument is None
+            and transaction.resolution_method != "unresolved_printed_identity"
         ):
             _issue(
                 report,
@@ -751,6 +799,73 @@ def _validate_statement(
             row_kind=row_kind,
             row_index=row_index,
         )
+        blocking_issues = [
+            issue for issue in snapshot_set.issues if issue.blocks_completeness
+        ]
+        if snapshot_set.completeness == "complete" and blocking_issues:
+            _issue(
+                report,
+                "complete_scope_has_blocking_issue",
+                "complete snapshot scope cannot have a blocking extraction issue",
+                statement_index=statement_index,
+                row_kind=row_kind,
+                row_index=row_index,
+            )
+        if snapshot_set.completeness in {"partial", "unknown"} and not blocking_issues:
+            _issue(
+                report,
+                "incomplete_scope_without_issue",
+                "partial/unknown snapshot scope requires a blocking extraction issue",
+                statement_index=statement_index,
+                row_kind=row_kind,
+                row_index=row_index,
+            )
+        for issue_index, issue in enumerate(snapshot_set.issues):
+            if not issue.issue_code.strip():
+                _issue(
+                    report,
+                    "empty_scope_issue_code",
+                    "snapshot scope issue code is empty",
+                    statement_index=statement_index,
+                    row_kind="scope_issue",
+                    row_index=issue_index,
+                )
+            if issue.severity not in {"info", "warning", "error"}:
+                _issue(
+                    report,
+                    "invalid_scope_issue_severity",
+                    f"unsupported scope issue severity: {issue.severity!r}",
+                    statement_index=statement_index,
+                    row_kind="scope_issue",
+                    row_index=issue_index,
+                )
+            if not isinstance(issue.detail, dict):
+                _issue(
+                    report,
+                    "invalid_scope_issue_detail",
+                    "snapshot scope issue detail must be an object",
+                    statement_index=statement_index,
+                    row_kind="scope_issue",
+                    row_index=issue_index,
+                )
+            _source_span(
+                report,
+                issue.source_span,
+                statement_index=statement_index,
+                row_kind="scope_issue",
+                row_index=issue_index,
+            )
+            if issue.quarantine is not None and not any(
+                item is issue.quarantine for item in statement.quarantine
+            ):
+                _issue(
+                    report,
+                    "scope_issue_quarantine_mismatch",
+                    "snapshot scope issue references quarantine outside its statement",
+                    statement_index=statement_index,
+                    row_kind="scope_issue",
+                    row_index=issue_index,
+                )
 
     actual_scopes = {
         (position.currency, "positions", position.scope_key)
@@ -828,8 +943,46 @@ def _validate_statement(
             row_index=row_index,
         )
 
+    if pages:
+        page_set = set(pages)
+        spans = [
+            transaction.source_span for transaction in statement.transactions
+        ] + [
+            position.source_span for position in statement.positions
+        ] + [
+            cash.source_span for cash in statement.cash_balances
+        ] + [
+            snapshot.source_span for snapshot in statement.snapshot_sets
+        ] + [
+            issue.source_span
+            for snapshot in statement.snapshot_sets
+            for issue in snapshot.issues
+        ] + [
+            item.source_span
+            for item in statement.quarantine
+            if isinstance(item, ParsedQuarantine)
+        ]
+        outside = sorted({
+            span.page_number
+            for span in spans
+            if span is not None
+            and span.page_number is not None
+            and span.page_number not in page_set
+        })
+        if outside:
+            _issue(
+                report,
+                "source_span_outside_statement_pages",
+                f"source evidence pages are outside statement membership: {outside}",
+                statement_index=statement_index,
+            )
 
-def validate_parse_result(result: ParseResult) -> ValidationReport:
+
+def validate_parse_result(
+    result: ParseResult,
+    *,
+    page_count: int | None = None,
+) -> ValidationReport:
     """Validate one complete parser result before persistence."""
     report = ValidationReport()
     if not result.parser_name.strip():
@@ -851,5 +1004,11 @@ def validate_parse_result(result: ParseResult) -> ValidationReport:
             )
         else:
             seen[key] = statement_index
-        _validate_statement(report, statement, statement_index)
+        _validate_statement(
+            report,
+            statement,
+            statement_index,
+            page_count=page_count,
+            require_pages=page_count is not None,
+        )
     return report

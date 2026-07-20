@@ -17,7 +17,7 @@ from ..identity import (
 from ..quantity import normalized_position_delta
 
 _SCHEMA = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 def connect(path: Path | str = SQLITE_PATH) -> sqlite3.Connection:
@@ -941,6 +941,8 @@ def _migrate_existing_schema(conn: sqlite3.Connection) -> None:
     for definition in ("opened_on TEXT", "closed_on TEXT", "notes TEXT"):
         _add_column(conn, "accounts", definition)
     _add_column(conn, "instruments", "security_id INTEGER REFERENCES securities(security_id)")
+    _add_column(conn, "reconciliation_results", "check_type TEXT")
+    _add_column(conn, "reconciliation_results", "reason_code TEXT")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_instruments_security ON instruments(security_id)"
     )
@@ -1406,6 +1408,76 @@ def upsert_snapshot_set(
                 evidence_id,
                 reported_total,
                 validation_status,
+            ),
+        ).fetchone()[0]
+    )
+
+
+def replace_statement_pages(
+    conn: sqlite3.Connection,
+    *,
+    statement_id: int,
+    page_numbers: list[int] | tuple[int, ...] | set[int],
+    assignment_method: str,
+) -> None:
+    if assignment_method not in {"parser_explicit", "single_statement_source"}:
+        raise ValueError(f"unsupported statement page assignment method: {assignment_method}")
+    pages = sorted({int(page_number) for page_number in page_numbers})
+    if any(page_number < 1 for page_number in pages):
+        raise ValueError("statement page numbers must be positive")
+    conn.execute("DELETE FROM statement_pages WHERE statement_id = ?", (statement_id,))
+    conn.executemany(
+        """
+        INSERT INTO statement_pages(statement_id, page_number, assignment_method)
+        VALUES (?, ?, ?)
+        """,
+        [
+            (statement_id, page_number, assignment_method)
+            for page_number in pages
+        ],
+    )
+
+
+def upsert_snapshot_scope_issue(
+    conn: sqlite3.Connection,
+    *,
+    issue_key: str,
+    snapshot_set_id: int,
+    issue_code: str,
+    severity: str,
+    detail: dict[str, object] | None = None,
+    blocks_completeness: bool = True,
+    evidence_id: int | None = None,
+    quarantine_id: int | None = None,
+) -> int:
+    if severity not in {"info", "warning", "error"}:
+        raise ValueError(f"unsupported scope issue severity: {severity}")
+    return int(
+        conn.execute(
+            """
+            INSERT INTO snapshot_scope_issues(
+                issue_key, snapshot_set_id, issue_code, severity, detail_json,
+                blocks_completeness, evidence_id, quarantine_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(issue_key) DO UPDATE SET
+                snapshot_set_id = excluded.snapshot_set_id,
+                issue_code = excluded.issue_code,
+                severity = excluded.severity,
+                detail_json = excluded.detail_json,
+                blocks_completeness = excluded.blocks_completeness,
+                evidence_id = excluded.evidence_id,
+                quarantine_id = excluded.quarantine_id
+            RETURNING scope_issue_id
+            """,
+            (
+                issue_key,
+                snapshot_set_id,
+                issue_code,
+                severity,
+                json.dumps(detail, sort_keys=True) if detail is not None else None,
+                int(blocks_completeness),
+                evidence_id,
+                quarantine_id,
             ),
         ).fetchone()[0]
     )

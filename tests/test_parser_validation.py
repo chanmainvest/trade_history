@@ -9,10 +9,12 @@ from ledger.parsers.types import (
     ParsedCashBalance,
     ParsedInstrument,
     ParsedPosition,
+    ParsedScopeIssue,
     ParsedSnapshotSet,
     ParsedStatement,
     ParsedTxn,
     ParseResult,
+    SourceSpan,
     TxnType,
 )
 from ledger.parsers.validation import validate_parse_result
@@ -114,6 +116,21 @@ def test_out_of_period_date_and_noncanonical_type_are_fatal():
     }
 
 
+def test_explicit_staged_unresolved_movement_can_reach_name_reconciliation():
+    result = _result()
+    transaction = result.statements[0].transactions[0]
+    transaction.instrument = None
+    transaction.resolution_method = "unresolved_printed_identity"
+    transaction.resolution_confidence = 0.0
+
+    report = validate_parse_result(result)
+
+    assert "position_movement_without_instrument" not in {
+        issue.code for issue in report.errors
+    }
+    assert report.is_valid
+
+
 def test_option_identity_and_currency_mismatch_are_fatal():
     result = _result()
     transaction = result.statements[0].transactions[0]
@@ -174,3 +191,50 @@ def test_parser_reported_errors_are_fatal():
     report = validate_parse_result(result)
     assert not report.is_valid
     assert any(issue.code == "parser_reported_error" for issue in report.errors)
+
+
+def test_physical_page_membership_is_required_when_source_page_count_is_known():
+    result = _result()
+
+    report = validate_parse_result(result, page_count=2)
+
+    assert {issue.code for issue in report.errors} == {"missing_statement_pages"}
+
+
+def test_source_evidence_must_belong_to_the_statement_pages():
+    result = _result()
+    statement = result.statements[0]
+    statement.page_numbers = (1,)
+    statement.page_assignment_method = "parser_explicit"
+    statement.transactions[0].source_span = SourceSpan(
+        raw_text=statement.transactions[0].raw_line or "",
+        page_number=2,
+    )
+
+    report = validate_parse_result(result, page_count=2)
+
+    assert "source_span_outside_statement_pages" in {
+        issue.code for issue in report.errors
+    }
+
+
+def test_incomplete_scope_requires_structured_blocking_issue():
+    result = _result()
+    statement = result.statements[0]
+    statement.snapshot_sets = [
+        ParsedSnapshotSet("CAD", "positions", "unknown"),
+        ParsedSnapshotSet("CAD", "cash", "complete"),
+    ]
+
+    report = validate_parse_result(result)
+    assert "incomplete_scope_without_issue" in {
+        issue.code for issue in report.errors
+    }
+
+    statement.snapshot_sets[0].issues.append(ParsedScopeIssue(
+        issue_code="section_not_fully_recognized",
+        severity="error",
+        detail={"reason": "synthetic fixture"},
+        blocks_completeness=True,
+    ))
+    assert validate_parse_result(result).is_valid
