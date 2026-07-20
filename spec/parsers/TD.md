@@ -1,7 +1,7 @@
 # TD WebBroker parser
 
 Implementation: `src/ledger/parsers/td.py`, parser name `td`, current version
-`2.5.1`.
+`2.6.0`.
 
 ## Recognition and account shape
 
@@ -62,6 +62,9 @@ scope.
 - Recognized holdings/cash sections declare explicit scope completeness; cash
   requires a valid printed closing balance. Parsed rows and quarantines receive
   page/line source spans, with coordinates/words when available.
+- Repeated account/currency fragments accumulate physical pages and cash state.
+  Incomplete scopes emit structured blockers linked to the precise quarantine
+  and evidence rows.
 
 ## Remaining limits
 

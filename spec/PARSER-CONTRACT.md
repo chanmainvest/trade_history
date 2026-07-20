@@ -22,7 +22,8 @@ objects, string errors, and a `parsed`/`skipped` status. A skipped result has a
 reason but no fatal parser error and is never activated. A statement contains
 account, period, type, transactions, positions, cash balances,
 annual-performance rows, quarantine
-items, and optional `ParsedSnapshotSet` declarations. Legacy `(raw_line,
+items, explicit physical `page_numbers`, and optional `ParsedSnapshotSet`
+declarations. Legacy `(raw_line,
 reason)` quarantine tuples remain accepted during the parser migration.
 
 Exact fields and the `TxnType` literal vocabulary are defined in
@@ -30,12 +31,13 @@ Exact fields and the `TxnType` literal vocabulary are defined in
 contract on the complete `ParseResult` before staged ingestion writes any
 statement children.
 
-The active parser contract is version `5`. It retains v3's
+The active parser contract is version `6`. It retains v3's
 `ParsedTxn.related_instrument` and `corporate_action_ratio` support for an
 explicitly printed corporate-action replacement, and changes evidence identity
 so replaceable geometry cannot alter semantic rows. Resolver-only listing
 metadata (issuer/security keys, journalability, and provider symbol) is carried
 on `ParsedInstrument` after parsing; institution parsers remain network-free.
+Version 6 adds statement page ownership and structured scope-blocking issues.
 
 ## Required semantics
 
@@ -43,13 +45,20 @@ on `ParsedInstrument` after parsing; institution parsers remain network-free.
 - Every statement has a defensible account and ISO period.
 - Every monetary/position row carries native currency.
 - Every recognized row preserves the printed description/raw evidence.
-- A position-affecting transaction has an instrument or is quarantined.
+- A position-affecting transaction has an instrument or is quarantined. The
+  staged resolver may temporarily clear an uncertain printed name only when it
+  marks the row `unresolved_printed_identity`; the later holdings-name
+  reconciliation must resolve it uniquely or leave it visibly unresolved.
 - An option retains root, expiry, strike, call/put, currency, and multiplier.
 - Missing or invalid numeric text is `None`/quarantine, never zero by fallback.
 - Transaction signs represent the printed/economic event consistently; no
   consumer should need institution-specific sign guesses.
 - Output statement identities are unique within a source.
+- Every persisted statement owns an ordered, in-range set of physical PDF
+  pages. Multi-statement sources require parser-explicit membership.
 - A parser declares the scope and completeness of every holdings/cash section.
+- Every `partial`/`unknown` scope includes a blocking `ParsedScopeIssue`; a
+  `complete` scope cannot include one.
 - A parser preserves its printed instrument identity; it does not need to guess
   a public ticker from an uncertain free-form name.
 - A compact company/fund name is not a ticker merely because it contains only
@@ -82,7 +91,9 @@ underdetermined movement and makes reconciliation incomplete.
 
 `SourceSpan` can carry raw text, page/line, bounding box, words, and parser
 rule. Transactions, positions, cash balances, snapshot sets, and the richer
-quarantine type can carry one. Normal ingest uses raw text plus deterministic
+quarantine type can carry one. `ParsedScopeIssue` carries a stable code,
+severity, structured detail, optional evidence, and an optional reference to
+the quarantine item that caused it. Normal ingest uses raw text plus deterministic
 page/line hints. RBC additionally receives transient page words to interpret
 its financial debit/credit columns; persisted Verify geometry remains owned by
 the independent enrichment pass. The writer assigns every
@@ -94,7 +105,9 @@ source line(s).
 The validator reports missing cash evidence and undeclared row scopes as
 explicit warnings. It treats malformed dates/currencies/numerics, invalid
 transaction vocabulary, incomplete options, duplicate statement identities,
-invalid snapshot declarations, and parser-reported errors as fatal.
+invalid snapshot declarations, missing/invalid page ownership, source spans
+outside their statement pages, contradictory scope issues, and parser-reported
+errors as fatal.
 
 `PdfText` retains raw page text and page dimensions. It carries
 `PdfWord`/`PdfLine` layout rows when extraction explicitly sets
@@ -105,7 +118,8 @@ fallback receive deterministic page/line evidence but no invented box or word
 coordinates. See [INGESTION.md](INGESTION.md) for the replaceable enrichment
 pass.
 
-The four bank parsers are at layout/state-machine version 2. They attach spans
+The four bank parsers preserve page membership while splitting page-indexed
+text and constrain fallback source lookup to those pages. They attach spans
 to transactions, positions, cash, and quarantine rows, and declare a scope
 `complete` only after recognizing the full relevant section (and, for cash, a
 valid printed closing balance). An unrecognized or incomplete section remains

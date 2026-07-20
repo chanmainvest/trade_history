@@ -4,7 +4,7 @@ This document describes the schema currently implemented. Exact SQLite DDL is
 owned by `src/ledger/db/schema.sql`; exact DuckDB DDL is the `DDL` string in
 `src/ledger/db/duckdb_store.py`. Update code and this spec together.
 
-## SQLite ledger (schema version 9)
+## SQLite ledger (schema version 10)
 
 SQLite has no dedicated date, datetime, or enum storage class. Business dates
 therefore remain canonical `YYYY-MM-DD` `TEXT`, and audit timestamps use one
@@ -19,11 +19,11 @@ the row's native `currency`.
 | Brokers | `institutions`, `accounts` | institution code; `(institution_id, account_number)` |
 | Transfers | `account_links` | automatically paired account-to-account transfers |
 | Securities | `security_issuers`, `securities`, `instruments`, `instrument_aliases`, `instrument_resolution_candidates`, `instrument_market_symbols`, `instrument_journal_pairs`, `instrument_identifier_lookups`, ticker-change tables | issuer/share-class/listing identities, broker aliases, provider symbols, explicit journal pairs, and dated ticker lineages |
-| Source | `source_files`, `ingestion_runs`, `statements` | source metadata, immutable attempts, and account-period output |
+| Source | `source_files`, `ingestion_runs`, `statements`, `statement_pages` | source metadata, immutable attempts, account-period output, and explicit physical-page ownership |
 | Evidence | `source_evidence` | deterministic semantic source-row provenance without exposing it in public audit logs |
 | Geometry | `source_pages`, `source_lines`, `source_evidence_geometry`, `source_evidence_lines` | rebuildable PDF coordinates and evidence-to-line matches |
 | Ledger | `transactions`, `quarantine_transactions` | reported rows plus normalized deltas and evidence links |
-| Checkpoints | `snapshot_sets`, `position_snapshots`, `cash_balances` | independently complete currency/section checkpoints |
+| Checkpoints | `snapshot_sets`, `snapshot_scope_issues`, `position_snapshots`, `cash_balances` | independently complete currency/section checkpoints and structured blockers |
 | Pre-history | `initial_positions`, `initial_cash` | user-curated or tagged inferred anchors |
 | Reports | `annual_performance_reports` | annual statement totals/returns, not movements |
 | Reconciliation | `position_transaction_links`, `reconciliation_results`, `reconciliation_components` | movement attribution plus generated, source-traceable checkpoint equations |
@@ -96,6 +96,10 @@ canonical target references can be mapped.
 `(source_file_id, account_id, period_start, period_end, statement_type)` and
 has a deterministic `sk1` `statement_key`. A statement belongs to an
 `ingestion_run`; source metadata points at at most one active successful run.
+`statement_pages` records the ordered physical PDF pages owned by that logical
+statement. Multi-statement PDFs require parser-explicit membership; a source
+known to contain one statement may explicitly claim every page. Membership may
+overlap but is never inferred from emitted row bounds.
 
 The ingest pipeline creates a `validated` run, writes every child inside one
 source savepoint, writes its deterministic `content_counts_json` and
@@ -120,7 +124,9 @@ status, and the lines linked to each evidence row. Geometry is replaceable and
 is excluded from the semantic ingestion content hash. Repeated text without a
 unique persisted hint is `ambiguous`, not assigned by row order. Legacy
 migrated cash evidence explicitly has no raw source text rather than a
-fabricated line.
+fabricated line. Geometry matching is constrained to `statement_pages`.
+Unique token matches persist word-index ranges, while opening/closing cash
+evidence can link a unique ordered, non-contiguous line sequence.
 
 `sha256`, `source_sha256`, and content/line hashes stay lowercase 64-character
 hex `TEXT`: this is readable, interoperable with Python tooling, and now
@@ -152,7 +158,7 @@ supporting position row. The description and reported numeric fields remain
 unchanged. Existing transaction and checkpoint evidence is sufficient for this
 derivation, while `instrument_aliases` remains reserved for reviewed mappings.
 
-Parser-contract v5 includes v3's `related_instrument` and
+Parser-contract v6 includes v3's `related_instrument` and
 `corporate_action_ratio` support and makes semantic evidence identity
 independent of replaceable geometry. It also carries resolver-assigned
 issuer/security/provider-listing metadata without making parsers network-aware.
@@ -167,6 +173,9 @@ Both must have the same asset type/native currency and different symbols.
 `complete`, `partial`, `absent`, or `unknown` completeness. Position snapshots
 are unique within `(snapshot_set_id, instrument_id)` and cash balances within a
 cash snapshot set. `can_clear_omitted` is true only for a complete set.
+Every `partial` or `unknown` parser scope has at least one blocking
+`snapshot_scope_issues` row with a stable issue code and optional links to its
+evidence/quarantine row. A complete scope cannot have a blocking issue.
 
 The canonical holdings service uses `snapshot_sets` as read-only anchors for
 Monthly, Performance, and Visualisations. It clears omitted rows only from a
@@ -181,7 +190,9 @@ shadow rebuild.
 
 `reconciliation_results` stores a position, cash, statement-total, or transfer
 equation with checkpoints, deltas, expected/reported close, residual,
-tolerance, status, and reason. `reconciliation_components` identifies the
+tolerance, status, and reason. `check_type` identifies the equation contract;
+`reason_code` identifies the missing input or failed condition without parsing
+free text. `reconciliation_components` identifies the
 contributing transaction rows and their signed contribution.
 
 `rebuild_reconciliation_results()` writes only generated keys prefixed

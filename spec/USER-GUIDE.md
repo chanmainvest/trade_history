@@ -242,9 +242,11 @@ database, across all accounts in the active portfolio.
 - Columns are sortable; institution and account are visible, while the active
   portfolio is controlled by the top-bar dropdown instead of a repeated table
   column. Ticker symbols link to Research.
-- When source icons are enabled, each sourced row opens Verify extraction on
-  the exact position/cash row. Reconstructed rows link to their checkpoint and
-  say so in the tooltip.
+- When source icons are enabled, an icon appears only when the server has an
+  exact/unique persisted rectangle. Reported rows link to their exact
+  position/cash evidence. Reconstructed rows retain explicit checkpoint plus
+  movement provenance rather than claiming the checkpoint quantity is the
+  calculated current quantity.
 - Every current holding shows its checkpoint date and whether it is
   **reported**, **reconstructed**, or **incomplete**. The quality cell also
   shows its reconciliation result and warns about incomplete scopes,
@@ -325,19 +327,19 @@ account filters inside the tab:
 Visually double-check that the parser extracted each statement correctly.
 The screen has two sides:
 
-- **Left** renders the actual PDF (via PDF.js), with a box drawn over every
-  text line that a parsed item came from. Boxes are colored by state: green
-  = a matched line and amber = the currently selected exact item.
-- **Right** begins with a quality summary: active parser/run versions and
-  status, completeness of every currency/section scope, and the position,
-  cash, and statement-total reconciliation outcomes. It then lists parsed
-  Transactions, Positions, Cash, Summary totals, and Quarantine rows.
+- **Left** renders only the original physical PDF pages owned by the selected
+  logical statement (via PDF.js), with evidence-specific rectangles. Green is
+  matched evidence and amber is the selected exact item.
+- **Right** begins with one concise status, then Transactions, Positions, Cash,
+  and Summary totals. Extraction issues, reconciliation equations, parser
+  diagnostics, and Quarantine rows are below the financial rows.
 
-Click a box on the left to highlight its item on the right; click an item on
-the right to highlight its box(es) on the left and scroll the PDF to the first
-match. Boxes come from persisted exact evidence links, not request-time fuzzy
-text matching. Items with ambiguous, unmatched, or unavailable geometry are
-dimmed and show that reason; they never receive a guessed box.
+Click a box on the left to reveal its item on the right without moving the PDF
+pane. Click an item on the right to highlight its box(es) and scroll only the
+PDF pane to the first match. A source deep link selects its requested statement
+and row before the newest-statement default runs. Boxes come from persisted
+exact evidence links, not request-time fuzzy matching. Items with ambiguous,
+unmatched, or unavailable geometry are dimmed and never receive a guessed box.
 
 Pick which statement to view with the dropdown filters — **Date**,
 **Institution**, and **Account** — which narrow the statement list. The list

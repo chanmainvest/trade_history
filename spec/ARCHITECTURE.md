@@ -101,8 +101,9 @@ as completed behavior.
 - Monthly, Performance, and Visualisations consume that same holdings service;
   Research stitches each dated ticker lineage across SQLite trades and DuckDB
   prices/financials.
-- Verify serves the original PDF and reads persisted exact evidence-to-line
-  geometry. It never fuzzy-matches financial rows during an API request.
+- Verify serves the immutable original PDF, renders only statement-owned
+  physical pages, and reads persisted evidence-specific geometry. It never
+  fuzzy-matches financial rows during an API request.
 
 The GUI renders holdings quality/reconciliation warnings; see
 [RECONCILIATION.md](RECONCILIATION.md).

@@ -37,8 +37,8 @@ discover path
   -> regenerate derived ingestion audit indexes
 ```
 
-The registered parsers are CIBC, HSBC, RBC, and TD. CIBC reports `2.5.0`, RBC
-and TD report `2.5.1`, and HSBC reports `2.4.0`. Parser, contract, schema, and resolver changes
+The registered parsers are CIBC, HSBC, RBC, and TD. CIBC, RBC, and TD report
+`2.6.0`; HSBC reports `2.5.0`. Parser, contract, schema, and resolver changes
 intentionally invalidate older active cache entries so a reviewed re-ingest
 exercises the current extraction contract.
 
@@ -48,8 +48,11 @@ After semantic rows have been reviewed and activated,
 `ledger ingest enrich-layout` reopens immutable PDFs with word geometry
 enabled. It verifies each PDF's SHA-256, replaces only derived geometry for the
 active run, and links stored semantic evidence to exact PDF lines. Matching
-accepts a unique persisted page/line hint, a unique exact line sequence, or one
-unique contiguous token sequence. Repeated candidates are stored as
+first restricts candidates to the owning statement's explicit physical pages.
+It accepts a unique persisted page hint, a compatible page/line hint, a unique
+exact line sequence, a unique ordered non-contiguous sequence (for example cash
+opening/closing lines), or one unique contiguous token sequence. Token matches
+persist the supporting word slice. Repeated candidates are stored as
 `ambiguous`; unmatched text and PDFs without coordinate lines remain explicit
 statuses. It never changes a transaction, amount, quantity, instrument, scope,
 or semantic evidence key.

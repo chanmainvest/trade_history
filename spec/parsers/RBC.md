@@ -1,7 +1,7 @@
 # RBC parser
 
 Implementation: `src/ledger/parsers/rbc.py`, parser name `rbc`, current
-version `2.5.1`.
+version `2.6.0`.
 
 ## Recognition and account shape
 
@@ -48,6 +48,8 @@ overwrite the first currency while writing the second.
   a cash scope is complete only with a valid printed closing balance.
 - Parsed transactions, positions, cash, and quarantines receive source spans,
   including coordinate/word evidence when extraction exposes it.
+- Currency blocks retain their physical page membership, and every incomplete
+  scope carries a structured evidence-linked blocker.
 - Explicit name/symbol/ticker-change activity is retained, but a relationship
   is emitted only when both old and new symbols are printed.
 

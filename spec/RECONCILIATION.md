@@ -142,6 +142,11 @@ Position tolerance is `1e-8`; cash and statement-total tolerance is one cent.
 These are rounding tolerances, not a mechanism for absorbing missing rows.
 `unexplained_residual` rows retain a reason with the residual and tolerance;
 incomplete rows retain the missing-input reason.
+Each generated result also stores a stable `check_type` (for example
+`position_rollforward`, `cash_activity`, or `cash_continuity`) and a
+machine-readable `reason_code`. The UI groups scope-wide blockers by those
+fields while keeping instrument equations/components available for audit; it
+does not parse the reconciliation key or free-text reason to infer semantics.
 
 ## `ingest reconcile` and rebuild behavior
 
@@ -241,6 +246,11 @@ market price exists, the service may use a clearly marked stale checkpoint
 price/value; otherwise the holding is unpriced. A post-checkpoint position
 movement leaves cost basis and unrealized P/L unavailable rather than
 recomputing them from an old average cost.
+The `provenance` payload labels an exact checkpoint row separately from the
+post-checkpoint transaction refs that produced a reconstructed quantity. A
+single checkpoint ref is never described as the sole source of the later
+calculated quantity. Only refs with persisted exact/unique geometry are
+linkable.
 
 Performance evaluates the same service on each complete checkpoint date and
 optionally today. Forward fill is limited to 90 days after an account's latest

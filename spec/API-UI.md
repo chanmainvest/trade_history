@@ -30,9 +30,9 @@ reconciliation-rebuild endpoints in the current route set.
    fetched history before the visible period is clipped. Dated ticker lineages
    are stitched without using post-change prices under the old symbol.
 5. Visualisations: holdings treemap, correlation, and RRG.
-6. Verify extraction: PDF.js rendering with persisted `pdfplumber` line boxes,
-   parsed transaction/position/cash/summary/quarantine lists, scope
-   completeness, active parser/run metadata, and reconciliation outcomes.
+6. Verify extraction: PDF.js rendering with persisted evidence rectangles,
+   parsed transaction/position/cash/summary lists first, one concise status,
+   and detailed scope issues/reconciliation/quarantine/diagnostics below.
 7. Settings: named account portfolios.
 
 Global top-bar controls select portfolio, language, hidden-money mode, and
@@ -47,7 +47,9 @@ the fetched picker rows.
 
 `GET /statements/{id}/boxes` returns the active parser/run metadata, every
 currency/section/scope completeness declaration, persisted position/cash/total
-reconciliation result, and the parsed lists. It reads exact evidence-to-line
+reconciliation result, structured scope blockers, and the parsed lists. It
+returns only the physical page numbers explicitly owned by the logical
+statement and never copies sibling-statement quarantine rows. It reads exact evidence-to-line
 links produced by the separate layout-enrichment command; it does not fuzzy
 match text during an HTTP request. Each row reports its geometry status/method.
 Repeated text without a unique semantic page/line hint is visibly `ambiguous`;
@@ -56,9 +58,12 @@ than receiving a plausible wrong box. Legacy single-box evidence remains a
 persisted compatibility fallback. A legacy database without v6
 scope/reconciliation tables returns explicitly empty quality facts rather than
 treating those facts as complete.
-`/verify?statement=<id>&ref=<kind>:<id>` selects a persisted row and waits for
-its PDF page to render before scrolling. Only boxes containing that exact
-reference receive selected styling.
+`/verify?statement=<id>&ref=<kind>:<id>` is authoritative initial state and
+cannot be replaced by the newest-statement default. The UI waits for the target
+physical page/overlay before using pane-local scroll math. A right-row click
+scrolls only the PDF pane; a PDF-box click leaves that pane fixed and reveals
+the right row. Only boxes containing that exact reference receive selected
+styling.
 
 ## Configuration shape
 
@@ -93,7 +98,8 @@ financial periods prefer the newest applicable ticker. The UI displays the
 ticker history and current symbol.
 
 Each holdings row also returns checkpoint statement/scope identifiers, an
-optional exact `source_ref` (or checkpoint reference for reconstructed rows),
+optional exact `source_ref`, and a `provenance` object that distinguishes one
+reported row from a checkpoint plus contributing movements,
 the broker-facing `symbol` and distinct `market_symbol`,
 reported-versus-reconstructed state, reconciliation status/reason, price/date
 status, and quality warnings. Monthly renders checkpoint date, holding state,
@@ -108,6 +114,6 @@ and rate date.
 - Use CSS variables for theme colors and `plotlyTheme()` for charts.
 - Keep account filtering consistent with the active portfolio.
 - Source icons in Transactions and Monthly obey `show_source_links`; they deep
-  link to the persisted extraction row and are absent when no defensible source
-  reference exists.
+  link only when the server reports exact/unique geometry and are absent when
+  no defensible source reference exists. IDs alone never promise linkability.
 - A frontend change must pass `npm run build`.

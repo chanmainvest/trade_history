@@ -1,7 +1,7 @@
 # CIBC parser
 
 Implementation: `src/ledger/parsers/cibc.py`, parser name `cibc`, current
-version `2.5.0`.
+version `2.6.0`.
 
 ## Recognition and account shape
 
@@ -49,6 +49,8 @@ separate positions and cash snapshot scopes.
 - Parsed transactions, positions, cash, and quarantine rows receive
   page/line source spans, with bounding boxes/words when PDF extraction
   supplied them.
+- The statement explicitly owns its physical source pages; incomplete scopes
+  carry structured blocking issues linked to evidence/quarantine.
 
 ## Remaining limits
 

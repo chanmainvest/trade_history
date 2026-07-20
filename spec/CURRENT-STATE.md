@@ -16,8 +16,8 @@ a timestamped local backup.
 - Ingestion stages one validated PDF source in a savepoint and activates it
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.
-- CIBC reports parser version `2.5.0`, RBC and TD report `2.5.1`, and HSBC
-  reports `2.4.0`.
+- The current worktree/shadow uses CIBC/RBC/TD parser version `2.6.0` and HSBC
+  `2.5.0`.
   They retain semantic source page/line evidence, explicit snapshot scopes,
   and quarantine rather than fabricate unsupported values. Word/box geometry
   is rebuilt separately after semantic activation.
@@ -25,14 +25,15 @@ a timestamped local backup.
   holdings service. Monthly renders checkpoint/provenance, reported versus
   reconstructed/incomplete state, reconciliation, and stale/unpriced quality
   fields without mutating the ledger.
-- Verify extraction now reads active parser/run metadata, scope completeness,
-  position/cash/statement-total reconciliation results, and source-linked cash
-  and summary-total rows. Its unresolved/incomplete/unreconciled filters are
-  read-only. Legacy rows without v6 facts are shown as unavailable, not complete.
-- Schema v9 constrains new ledger currencies to CAD/USD, validates canonical
+- Verify extraction now renders statement-owned physical pages, uses
+  evidence-specific rectangles and bidirectional pane-local selection, places
+  financial rows first, and shows structured scope issues/reconciliation at
+  the bottom. Its unresolved/incomplete/unreconciled filters are read-only.
+- Schema v10 constrains new ledger currencies to CAD/USD, validates canonical
   business dates/UTC timestamps and SHA-256 text, and stores replaceable PDF
-  geometry separately from `ev2` semantic evidence. Verify reads persisted
-  exact links; ambiguous/unmatched rows remain visibly unlinked.
+  geometry separately from `ev2` semantic evidence. It adds explicit statement
+  pages, scope blockers, and structured reconciliation reasons. Verify reads
+  persisted exact links; ambiguous/unmatched rows remain visibly unlinked.
 - Transactions exposes initial-position anchors separately from broker events.
   Transactions and Monthly can deep-link exact source rows into Verify; the
   preference is controlled in Settings. Monthly no longer repeats a portfolio
@@ -130,6 +131,19 @@ a timestamped local backup.
   layout-enrichment pass persisted 2,896 pages, 141,250 lines, and 21,808 exact
   evidence links; 2,329 ambiguous and 1,481 unmatched links remain explicit.
   Remaining RBC/HSBC residuals still require source review.
+
+- On 2026-07-19, the schema-v10/parser-contract-v6 worktree produced two clean
+  shadow builds with the same content fingerprint and the unchanged 338-file
+  coverage: 548 statements and 4,236 transactions, with zero RBC/TD statement
+  deltas from the current real ledger. A disposable geometry pass covered 337
+  broker sources (the remaining source is an explicit tax-document skip),
+  2,896 pages, and 141,250 lines. It produced 24,374 exact, 1,349 ambiguous,
+  and 1,156 unmatched evidence matches. Hard audits found zero statements
+  without pages, zero incomplete scopes without blockers, zero complete scopes
+  with blockers, zero linkable evidence without rectangles, and zero displayed
+  evidence outside statement-owned pages. This new shadow remains unsigned and
+  was not cut over; the real profile still uses the prior signed July 19
+  database until human UI/PDF review approves a separate cutover.
 
 ## Listing/provider identity support (fixture validated 2026-07-18)
 
@@ -231,7 +245,7 @@ historical comparison with the rebuilt live counts above.
 
 ## Confirmed remaining correctness work
 
-1. **The live ledger now uses the rebuilt identity model.** Schema v9 and
+1. **The live ledger uses the prior rebuilt identity model.** Schema v9 and
    resolver v5 keep listing, security, issuer, provider symbol, ticker change,
    and journal-pair identities separate. Remaining unresolved candidates are
    review data, not invented financial-row tickers.
@@ -245,9 +259,10 @@ historical comparison with the rebuilt live counts above.
 4. **The holdings engine is shared and reads the rebuilt live data.**
    Monthly, Performance, and Visualisations now use canonical identity,
    complete scopes, normalized movements, and explicit stale/unpriced status.
-5. **Live semantic provenance and derived geometry are current.** Exact links
-   drive Verify highlighting. Ambiguous/unmatched links remain review states
-   and are never resolved by guessing.
+5. **Schema-v10 Verify provenance is validated in a non-live shadow.** Exact
+   links drive highlighting; ambiguous/unmatched links remain disabled review
+   states and are never resolved by guessing. Human PDF/UI review and guarded
+   cutover are still required before the live profile receives these changes.
 
 ## Operational and documentation limits
 
