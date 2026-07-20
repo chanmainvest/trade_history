@@ -588,6 +588,18 @@ h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
   line-height: 0;
 }
 .verify-pdf-page canvas { display: block; }
+.verify-physical-page {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 3;
+  padding: 2px 5px;
+  border-radius: 3px;
+  color: var(--fg-dim);
+  background: var(--panel);
+  font-size: 10px;
+  line-height: 1.2;
+}
 .verify-page-overlay {
   position: absolute;
   left: 0;
@@ -619,6 +631,25 @@ h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
 
 /* Right pane: parsed-item lists */
 .verify-items-pane { padding: 8px; }
+.verify-status-strip {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(43, 191, 115, 0.5);
+  border-radius: 5px;
+  color: var(--pos);
+  background: var(--pos-bg);
+  font-size: 12px;
+}
+.verify-status-strip.needs-review {
+  border-color: rgba(212, 168, 67, 0.55);
+  color: var(--warn);
+  background: rgba(212, 168, 67, 0.12);
+}
+.verify-diagnostics { margin-top: 10px; color: var(--fg-dim); font-size: 11px; }
+.verify-diagnostics summary { cursor: pointer; margin-bottom: 6px; }
 .quality-filter {
   display: inline-flex;
   align-items: center;

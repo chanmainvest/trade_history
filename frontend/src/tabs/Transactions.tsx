@@ -349,13 +349,9 @@ export default function Transactions() {
               <tr key={row.row_id}>
                 {showSourceLinks && (
                   <td>
-                    {row.statement_id !== null && row.transaction_id !== null ? (
+                    {row.source_ref?.linkable ? (
                       <SourceLink
-                        source={{
-                          statement_id: row.statement_id,
-                          kind: "transaction",
-                          id: row.transaction_id,
-                        }}
+                        source={row.source_ref}
                         title={t("source.open_transaction")}
                       />
                     ) : null}

@@ -6,7 +6,7 @@ import { useSearchParams } from "react-router-dom";
 import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
   api,
-  LineBox,
+  EvidenceBox,
   StatementBoxes,
   StatementQualityFlag,
   StatementReconciliation,
@@ -22,19 +22,37 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = PdfWorker;
 const RENDER_SCALE = 1.4;
 
 type SelectedKey = string;
+type SelectionOrigin = "deep_link" | "right_list" | "pdf_box" | "statement_change";
+type VerifySelection = {
+  key: SelectedKey | null;
+  origin: SelectionOrigin;
+  requestToken: number;
+};
+
 function refKey(kind: string, id: number): SelectedKey {
   return `${kind}:${id}`;
 }
 
-/** Map of selectedKey → the page index + top that holds its first matching box. */
+function requestedSelection(searchParams: URLSearchParams): {
+  statementId: number | null;
+  key: SelectedKey | null;
+} {
+  const statementId = Number(searchParams.get("statement"));
+  const key = searchParams.get("ref");
+  const validKey = key && /^(transaction|position|cash|summary|scope_issue|quarantine):\d+$/.test(key);
+  return {
+    statementId: Number.isInteger(statementId) && statementId > 0 ? statementId : null,
+    key: validKey ? key : null,
+  };
+}
+
+/** Map of selectedKey → the physical page + top that holds its first box. */
 function boxIndexForRefs(pages: StatementBoxes["pages"]): Map<SelectedKey, { page: number; top: number }> {
   const m = new Map<SelectedKey, { page: number; top: number }>();
   for (const page of pages) {
-    for (const line of page.lines) {
-      for (const ref of line.refs) {
-        const key = refKey(ref.kind, ref.id);
-        if (!m.has(key)) m.set(key, { page: page.page_number, top: line.bbox[1] });
-      }
+    for (const box of page.boxes) {
+      const key = refKey(box.ref.kind, box.ref.id);
+      if (!m.has(key)) m.set(key, { page: page.page_number, top: box.rect[1] });
     }
   }
   return m;
@@ -43,28 +61,31 @@ function boxIndexForRefs(pages: StatementBoxes["pages"]): Map<SelectedKey, { pag
 export default function Verify() {
   const { t } = useI18n();
   const [searchParams] = useSearchParams();
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [selectedKey, setSelectedKey] = useState<SelectedKey | null>(null);
+  const initialRequest = useMemo(() => requestedSelection(searchParams), []);
+  const [selectedId, setSelectedId] = useState<number | null>(initialRequest.statementId);
+  const [selection, setSelection] = useState<VerifySelection>({
+    key: initialRequest.key,
+    origin: initialRequest.key ? "deep_link" : "statement_change",
+    requestToken: initialRequest.key ? 1 : 0,
+  });
   const [dateFilter, setDateFilter] = useState("");
   const [bankFilter, setBankFilter] = useState("");
   const [acctFilter, setAcctFilter] = useState("");
   const [qualityFilters, setQualityFilters] = useState<StatementQualityFlag[]>([]);
 
   useEffect(() => {
-    const statementId = Number(searchParams.get("statement"));
-    const ref = searchParams.get("ref");
-    if (
-      Number.isInteger(statementId)
-      && statementId > 0
-      && ref
-      && /^(transaction|position|cash|summary|quarantine):\d+$/.test(ref)
-    ) {
+    const requested = requestedSelection(searchParams);
+    if (requested.statementId !== null && requested.key) {
       setDateFilter("");
       setBankFilter("");
       setAcctFilter("");
       setQualityFilters([]);
-      setSelectedId(statementId);
-      setSelectedKey(ref);
+      setSelectedId(requested.statementId);
+      setSelection((currentSelection) => ({
+        key: requested.key,
+        origin: "deep_link",
+        requestToken: currentSelection.requestToken + 1,
+      }));
     }
   }, [searchParams]);
 
@@ -110,6 +131,11 @@ export default function Verify() {
   useEffect(() => {
     if (selectedId === null && filtered.length > 0) {
       setSelectedId(filtered[0].statement_id);
+      setSelection((currentSelection) => ({
+        key: null,
+        origin: "statement_change",
+        requestToken: currentSelection.requestToken + 1,
+      }));
     }
   }, [filtered, selectedId]);
 
@@ -118,7 +144,11 @@ export default function Verify() {
   useEffect(() => {
     if (selectedId !== null && filtered.length > 0 && !filtered.some((r) => r.statement_id === selectedId)) {
       setSelectedId(filtered[0].statement_id);
-      setSelectedKey(null);
+      setSelection((currentSelection) => ({
+        key: null,
+        origin: "statement_change",
+        requestToken: currentSelection.requestToken + 1,
+      }));
     }
   }, [filtered, selectedId]);
 
@@ -131,13 +161,13 @@ export default function Verify() {
   function goPrev() {
     if (hasPrev) {
       setSelectedId(filtered[currentIndex + 1].statement_id);
-      setSelectedKey(null);
+      setSelection((currentSelection) => ({ key: null, origin: "statement_change", requestToken: currentSelection.requestToken + 1 }));
     }
   }
   function goNext() {
     if (hasNext) {
       setSelectedId(filtered[currentIndex - 1].statement_id);
-      setSelectedKey(null);
+      setSelection((currentSelection) => ({ key: null, origin: "statement_change", requestToken: currentSelection.requestToken + 1 }));
     }
   }
 
@@ -159,19 +189,19 @@ export default function Verify() {
       <h2>{t("nav.verify")}</h2>
       <div className="filters">
         <label>{t("f.date")}:&nbsp;
-          <select value={dateFilter} onChange={(e) => { setDateFilter(e.target.value); setSelectedKey(null); }}>
+          <select value={dateFilter} onChange={(e) => { setDateFilter(e.target.value); setSelection((currentSelection) => ({ key: null, origin: "statement_change", requestToken: currentSelection.requestToken + 1 })); }}>
             <option value="">{t("verify.all")}</option>
             {dateOpts.map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
         </label>
         <label>{t("f.institution")}:&nbsp;
-          <select value={bankFilter} onChange={(e) => { setBankFilter(e.target.value); setSelectedKey(null); }}>
+          <select value={bankFilter} onChange={(e) => { setBankFilter(e.target.value); setSelection((currentSelection) => ({ key: null, origin: "statement_change", requestToken: currentSelection.requestToken + 1 })); }}>
             <option value="">{t("verify.all")}</option>
             {bankOpts.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
           </select>
         </label>
         <label>{t("f.account")}:&nbsp;
-          <select value={acctFilter} onChange={(e) => { setAcctFilter(e.target.value); setSelectedKey(null); }}>
+          <select value={acctFilter} onChange={(e) => { setAcctFilter(e.target.value); setSelection((currentSelection) => ({ key: null, origin: "statement_change", requestToken: currentSelection.requestToken + 1 })); }}>
             <option value="">{t("verify.all")}</option>
             {acctOpts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
@@ -218,8 +248,12 @@ export default function Verify() {
       {current && (
         <VerifyPane
           statementId={current.statement_id}
-          selectedKey={selectedKey}
-          onSelect={setSelectedKey}
+          selection={selection}
+          onSelect={(key, origin) => setSelection((currentSelection) => ({
+            key,
+            origin,
+            requestToken: currentSelection.requestToken + 1,
+          }))}
         />
       )}
     </>
@@ -245,12 +279,12 @@ function ChevronRightIcon() {
 
 function VerifyPane({
   statementId,
-  selectedKey,
+  selection,
   onSelect,
 }: {
   statementId: number;
-  selectedKey: SelectedKey | null;
-  onSelect: (k: SelectedKey | null) => void;
+  selection: VerifySelection;
+  onSelect: (k: SelectedKey | null, origin: SelectionOrigin) => void;
 }) {
   const { t } = useI18n();
   const boxesQ = useQuery({
@@ -260,36 +294,56 @@ function VerifyPane({
 
   const pdfUrl = api.statementPdfUrl(statementId);
 
-  // Refs to each page container so we can scrollIntoView on select.
   const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const itemRefs = useRef<Record<SelectedKey, HTMLDivElement | null>>({});
   const pdfScrollRef = useRef<HTMLDivElement | null>(null);
-  const lastScrolledSelection = useRef("");
+  const itemsScrollRef = useRef<HTMLDivElement | null>(null);
+  const readyPages = useRef<Set<number>>(new Set());
   const [renderRevision, setRenderRevision] = useState(0);
 
   const data: StatementBoxes | undefined = boxesQ.data;
+  useEffect(() => {
+    readyPages.current.clear();
+    pageRefs.current = {};
+    itemRefs.current = {};
+  }, [statementId]);
   const firstBoxByRef = useMemo(
     () => (data ? boxIndexForRefs(data.pages) : new Map<SelectedKey, { page: number; top: number }>()),
     [data],
   );
 
-  // When the selected key changes, scroll the PDF to the first matching box.
+  const selectedKey = selection.key;
+
   useEffect(() => {
     if (!selectedKey || !data) return;
-    const selection = `${statementId}:${selectedKey}`;
-    if (lastScrolledSelection.current === selection) return;
-    const loc = firstBoxByRef.get(selectedKey);
-    if (!loc) return;
-    const el = pageRefs.current[loc.page];
-    if (el) {
-      lastScrolledSelection.current = selection;
-      const topPx = loc.top * RENDER_SCALE;
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-      // fine-tune so the box isn't flush against the top edge.
-      if (pdfScrollRef.current && topPx) {
-        pdfScrollRef.current.scrollBy({ top: topPx - 24, behavior: "smooth" });
+    if (selection.origin === "pdf_box") {
+      const item = itemRefs.current[selectedKey];
+      const pane = itemsScrollRef.current;
+      if (item && pane) {
+        const target = pane.scrollTop
+          + item.getBoundingClientRect().top
+          - pane.getBoundingClientRect().top
+          - 24;
+        pane.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
       }
+      return;
     }
-  }, [selectedKey, firstBoxByRef, data, renderRevision, statementId]);
+    const loc = firstBoxByRef.get(selectedKey);
+    if (!loc || !readyPages.current.has(loc.page)) return;
+    const el = pageRefs.current[loc.page];
+    const pane = pdfScrollRef.current;
+    if (el && pane) {
+      const target = pane.scrollTop
+        + el.getBoundingClientRect().top
+        - pane.getBoundingClientRect().top
+        + loc.top * RENDER_SCALE
+        - 24;
+      pane.scrollTo({
+        top: Math.max(0, target),
+        behavior: "smooth",
+      });
+    }
+  }, [selection, selectedKey, firstBoxByRef, data, renderRevision, statementId]);
 
   if (boxesQ.isLoading) return <p className="muted">{t("viz.loading")}</p>;
   if (boxesQ.error) {
@@ -297,12 +351,19 @@ function VerifyPane({
   }
   if (!data) return null;
 
-  // Index boxes by page for the per-page overlay.
-  const boxesByPage = new Map<number, LineBox[]>();
+  const boxesByPage = new Map<number, EvidenceBox[]>();
   for (const page of data.pages) {
-    const matched = page.lines.filter((ln) => ln.refs.length > 0);
-    if (matched.length) boxesByPage.set(page.page_number, matched);
+    if (page.boxes.length) boxesByPage.set(page.page_number, page.boxes);
   }
+
+  const requestedRefMissing = selectedKey !== null && ![
+    ...data.transactions.map((row) => refKey("transaction", row.transaction_id)),
+    ...data.positions.map((row) => refKey("position", row.snapshot_id)),
+    ...data.cash_balances.map((row) => refKey("cash", row.cash_balance_id)),
+    ...data.summary_totals.map((row) => refKey("summary", row.snapshot_set_id)),
+    ...data.scope_issues.map((row) => refKey("scope_issue", row.scope_issue_id)),
+    ...data.quarantine.map((row) => refKey("quarantine", row.quarantine_id)),
+  ].includes(selectedKey);
 
   return (
     <div className="verify-layout">
@@ -310,19 +371,25 @@ function VerifyPane({
         {data.pages.length ? (
           <PdfView
             url={pdfUrl}
-            pageCount={data.pages.length}
+            pages={data.pages}
             scale={RENDER_SCALE}
             boxesByPage={boxesByPage}
             selectedKey={selectedKey}
-            onSelect={onSelect}
+            onSelect={(key) => onSelect(key, "pdf_box")}
             pageRefs={pageRefs}
-            onPageRendered={() => setRenderRevision((revision) => revision + 1)}
+            onPageRendered={(pageNumber) => {
+              readyPages.current.add(pageNumber);
+              setRenderRevision((revision) => revision + 1);
+            }}
           />
         ) : <p className="muted">{t("verify.no_pdf")}</p>}
       </div>
 
-      <div className="verify-pane verify-items-pane">
-        <QualityPanel data={data} />
+      <div className="verify-pane verify-items-pane" ref={itemsScrollRef}>
+        <StatusStrip data={data} />
+        {requestedRefMissing && (
+          <p className="inline-status status-error">{t("verify.requested_ref_missing")}</p>
+        )}
         <ItemsGroup
           title={t("verify.transactions")}
           rows={data.transactions}
@@ -331,8 +398,9 @@ function VerifyPane({
           idOf={(r) => r.transaction_id}
           titleOf={(r) => r.description || ""}
           selectedKey={selectedKey}
-          onSelect={onSelect}
+          onSelect={(key) => onSelect(key, "right_list")}
           matchedKeys={firstBoxByRef}
+          itemRefs={itemRefs}
         />
         <ItemsGroup
           title={t("verify.positions")}
@@ -342,8 +410,9 @@ function VerifyPane({
           idOf={(r) => r.snapshot_id}
           titleOf={(r) => r.raw_line || ""}
           selectedKey={selectedKey}
-          onSelect={onSelect}
+          onSelect={(key) => onSelect(key, "right_list")}
           matchedKeys={firstBoxByRef}
+          itemRefs={itemRefs}
         />
         <ItemsGroup
           title={t("verify.cash")}
@@ -353,8 +422,9 @@ function VerifyPane({
           idOf={(r) => r.cash_balance_id}
           titleOf={(r) => r.raw_line || ""}
           selectedKey={selectedKey}
-          onSelect={onSelect}
+          onSelect={(key) => onSelect(key, "right_list")}
           matchedKeys={firstBoxByRef}
+          itemRefs={itemRefs}
         />
         <ItemsGroup
           title={t("verify.summary_totals")}
@@ -364,8 +434,22 @@ function VerifyPane({
           idOf={(r) => r.snapshot_set_id}
           titleOf={(r) => r.raw_line || ""}
           selectedKey={selectedKey}
-          onSelect={onSelect}
+          onSelect={(key) => onSelect(key, "right_list")}
           matchedKeys={firstBoxByRef}
+          itemRefs={itemRefs}
+        />
+        <QualityPanel data={data} />
+        <ItemsGroup
+          title={t("verify.scope_issues")}
+          rows={data.scope_issues}
+          render={(r) => `${scopeKindLabel(t, r.section_type)} · ${r.currency} · ${scopeIssueLabel(t, r.issue_code, r.detail)}`}
+          kind="scope_issue"
+          idOf={(r) => r.scope_issue_id}
+          titleOf={(r) => r.quarantine_reason || r.raw_text || ""}
+          selectedKey={selectedKey}
+          onSelect={(key) => onSelect(key, "right_list")}
+          matchedKeys={firstBoxByRef}
+          itemRefs={itemRefs}
         />
         <ItemsGroup
           title={t("verify.quarantine")}
@@ -375,8 +459,9 @@ function VerifyPane({
           idOf={(r) => r.quarantine_id}
           titleOf={(r) => r.raw_line || ""}
           selectedKey={selectedKey}
-          onSelect={onSelect}
+          onSelect={(key) => onSelect(key, "right_list")}
           matchedKeys={firstBoxByRef}
+          itemRefs={itemRefs}
         />
       </div>
     </div>
@@ -398,7 +483,7 @@ function fmt(n: number | null | undefined, dec = 2): string {
  */
 function PdfView({
   url,
-  pageCount,
+  pages,
   scale,
   boxesByPage,
   selectedKey,
@@ -407,13 +492,13 @@ function PdfView({
   onPageRendered,
 }: {
   url: string;
-  pageCount: number;
+  pages: StatementBoxes["pages"];
   scale: number;
-  boxesByPage: Map<number, LineBox[]>;
+  boxesByPage: Map<number, EvidenceBox[]>;
   selectedKey: SelectedKey | null;
   onSelect: (k: SelectedKey | null) => void;
   pageRefs: React.MutableRefObject<Record<number, HTMLDivElement | null>>;
-  onPageRendered: () => void;
+  onPageRendered: (pageNumber: number) => void;
 }) {
   const { t } = useI18n();
   const [doc, setDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
@@ -443,24 +528,26 @@ function PdfView({
 
   return (
     <div className="verify-pdf-pages">
-      {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
+      {pages.map((page) => (
         <PdfPage
-          key={n}
+          key={page.page_number}
           doc={doc}
-          pageNumber={n}
+          pageNumber={page.page_number}
+          width={page.width}
+          height={page.height}
           scale={scale}
-          boxes={boxesByPage.get(n) || []}
+          boxes={boxesByPage.get(page.page_number) || []}
           selectedKey={selectedKey}
           onSelect={onSelect}
-          pageRef={(el) => { pageRefs.current[n] = el; }}
+          pageRef={(el) => { pageRefs.current[page.page_number] = el; }}
           onRendered={() => {
-            setRenderedCount((c) => Math.max(c, n));
-            onPageRendered();
+            setRenderedCount((count) => count + 1);
+            onPageRendered(page.page_number);
           }}
         />
       ))}
-      {renderedCount < pageCount && (
-        <span className="muted verify-rendering">{t("verify.rendering")} {renderedCount}/{pageCount}</span>
+      {renderedCount < pages.length && (
+        <span className="muted verify-rendering">{t("verify.rendering")} {renderedCount}/{pages.length}</span>
       )}
     </div>
   );
@@ -469,6 +556,8 @@ function PdfView({
 function PdfPage({
   doc,
   pageNumber,
+  width,
+  height,
   scale,
   boxes,
   selectedKey,
@@ -478,8 +567,10 @@ function PdfPage({
 }: {
   doc: pdfjsLib.PDFDocumentProxy;
   pageNumber: number;
+  width: number;
+  height: number;
   scale: number;
-  boxes: LineBox[];
+  boxes: EvidenceBox[];
   selectedKey: SelectedKey | null;
   onSelect: (k: SelectedKey | null) => void;
   pageRef: (el: HTMLDivElement | null) => void;
@@ -521,10 +612,18 @@ function PdfPage({
   }, [doc, pageNumber, scale]);
 
   return (
-    <div className="verify-pdf-page" ref={pageRef} data-page={pageNumber}>
+    <div
+      className="verify-pdf-page"
+      ref={pageRef}
+      data-page={pageNumber}
+      style={{ width: width * scale, height: height * scale }}
+    >
       <canvas ref={canvasRef} />
-      {size && (
-        <div className="verify-page-overlay" style={{ width: size.w, height: size.h }}>
+      <span className="verify-physical-page">{pageNumber}</span>
+      <div
+        className="verify-page-overlay"
+        style={{ width: size?.w ?? width * scale, height: size?.h ?? height * scale }}
+      >
           {boxes.map((line, i) => (
             <BoxDiv
               key={i}
@@ -534,33 +633,31 @@ function PdfPage({
               onSelect={onSelect}
             />
           ))}
-        </div>
-      )}
+      </div>
     </div>
   );
 }
 
 function BoxDiv({
-  line,
+  line: box,
   scale,
   selectedKey,
   onSelect,
 }: {
-  line: LineBox;
+  line: EvidenceBox;
   scale: number;
   selectedKey: SelectedKey | null;
   onSelect: (k: SelectedKey | null) => void;
 }) {
-  const [x0, top, x1, bottom] = line.bbox;
-  const selected = line.refs.some((r) => selectedKey === refKey(r.kind, r.id));
+  const [x0, top, x1, bottom] = box.rect;
+  const key = refKey(box.ref.kind, box.ref.id);
+  const selected = selectedKey === key;
 
   const cls = ["verify-box"];
   if (selected) cls.push("selected");
 
   function onClick(e: React.MouseEvent) {
     e.stopPropagation();
-    const first = line.refs[0];
-    const key = refKey(first.kind, first.id);
     onSelect(selectedKey === key ? null : key);
   }
 
@@ -574,7 +671,7 @@ function BoxDiv({
         height: (bottom - top) * scale,
       }}
       onClick={onClick}
-      title={line.refs.map((r) => r.label).join(", ")}
+      title={box.ref.label}
     />
   );
 }
@@ -589,6 +686,7 @@ function ItemsGroup({
   selectedKey,
   onSelect,
   matchedKeys,
+  itemRefs,
 }: {
   title: string;
   rows: any[];
@@ -599,6 +697,7 @@ function ItemsGroup({
   selectedKey: SelectedKey | null;
   onSelect: (k: SelectedKey | null) => void;
   matchedKeys: Map<SelectedKey, { page: number; top: number }>;
+  itemRefs: React.MutableRefObject<Record<SelectedKey, HTMLDivElement | null>>;
 }) {
   const { t } = useI18n();
   return (
@@ -616,6 +715,7 @@ function ItemsGroup({
         return (
           <div
             key={key}
+            ref={(element) => { itemRefs.current[key] = element; }}
             className={cls.join(" ")}
             title={titleOf(r)}
             onClick={() => onSelect(isSelected ? null : key)}
@@ -669,6 +769,40 @@ function scopeKindLabel(t: (key: string) => string, kind: StatementScope["sectio
   return t(`verify.scope_kind.${kind}`);
 }
 
+function scopeIssueLabel(
+  t: (key: string) => string,
+  code: string,
+  detail: Record<string, unknown>,
+): string {
+  const key = `verify.scope_issue.${code}`;
+  const translated = t(key);
+  const label = translated === key ? code.replaceAll("_", " ") : translated;
+  const count = typeof detail.count === "number" ? ` (${detail.count})` : "";
+  return `${label}${count}`;
+}
+
+function StatusStrip({ data }: { data: StatementBoxes }) {
+  const { t } = useI18n();
+  const blocking = data.scope_issues.filter((issue) => issue.blocks_completeness);
+  const failedReconciliation = data.reconciliation_results.filter((row) =>
+    !["reconciled", "within_rounding", "not_applicable"].includes(row.status));
+  const needsReview = blocking.length > 0 || data.quarantine.length > 0 || failedReconciliation.length > 0;
+  return (
+    <section className={`verify-status-strip ${needsReview ? "needs-review" : "clear"}`}>
+      <strong>{needsReview ? t("verify.status_needs_review") : t("verify.status_clear")}</strong>
+      <span>
+        {blocking.length > 0
+          ? `${blocking.length} ${t("verify.status_scope_issues")}`
+          : data.quarantine.length > 0
+            ? `${data.quarantine.length} ${t("verify.status_quarantine")}`
+            : failedReconciliation.length > 0
+              ? `${failedReconciliation.length} ${t("verify.status_reconciliation")}`
+              : t("verify.status_no_blockers")}
+      </span>
+    </section>
+  );
+}
+
 function ScopeRows({ scopes }: { scopes: StatementScope[] }) {
   const { t } = useI18n();
   if (!scopes.length) return <p className="muted verify-quality-empty">{t("verify.no_scopes")}</p>;
@@ -676,7 +810,10 @@ function ScopeRows({ scopes }: { scopes: StatementScope[] }) {
     <div className="verify-quality-list">
       {scopes.map((scope) => (
         <div key={scope.snapshot_set_id} className={`verify-quality-row scope-${scope.completeness}`}>
-          <span>{scope.currency} · {scopeKindLabel(t, scope.section_type)} · {scope.scope_key}</span>
+          <span>
+            {scope.currency} · {scopeKindLabel(t, scope.section_type)}
+            {scope.scope_key !== "default" ? ` · ${scope.scope_key}` : ""}
+          </span>
           <span className={`quality-tag ${scope.completeness}`}>{completenessLabel(t, scope.completeness)}</span>
         </div>
       ))}
@@ -692,9 +829,11 @@ function ReconciliationRows({ rows }: { rows: StatementReconciliation[] }) {
       {rows.map((row) => (
         <div key={row.reconciliation_id} className={`verify-quality-row reconciliation-${row.status}`}>
           <span title={row.reason || ""}>
-            {reconciliationKindLabel(t, row.kind)} · {row.currency}
-            {row.scope_key ? ` · ${row.scope_key}` : ""}
+            {row.symbol || row.instrument_name || reconciliationKindLabel(t, row.kind)} · {row.currency}
+            {row.check_type ? ` · ${row.check_type.replaceAll("_", " ")}` : ""}
+            {row.scope_key && row.scope_key !== "default" ? ` · ${row.scope_key}` : ""}
             {row.residual !== null ? ` · ${t("verify.residual")} ${fmt(row.residual)}` : ""}
+            {row.reason ? ` — ${row.reason}` : ""}
           </span>
           <span className={`quality-tag reconciliation-${row.status}`}>{reconciliationStatusLabel(t, row.status)}</span>
         </div>
@@ -711,14 +850,6 @@ function QualityPanel({ data }: { data: StatementBoxes }) {
   return (
     <section className="verify-quality">
       <h3>{t("verify.quality")}</h3>
-      <div className="verify-quality-meta">
-        <span>{t("verify.parser")}: {source?.parser_name || t("verify.not_available")}</span>
-        <span>{t("verify.parser_version")}: {source?.parser_version || t("verify.not_available")}</span>
-        <span>{t("verify.contract_version")}: {source?.contract_version || t("verify.not_available")}</span>
-        <span>{t("verify.run_schema")}: {source?.run_schema_version ?? t("verify.not_available")}</span>
-        <span>{t("verify.active_run")}: {source?.active_run_status || t("verify.not_available")}</span>
-        <span>{t("verify.parse_status")}: {source?.parse_status || t("verify.not_available")}</span>
-      </div>
       <div className="verify-quality-summary">
         {quality.quality_flags.length ? quality.quality_flags.map((flag) => (
           <span key={flag} className={`quality-tag ${flag}`}>{qualityFlagLabel(t, flag)}</span>
@@ -734,6 +865,17 @@ function QualityPanel({ data }: { data: StatementBoxes }) {
       <ScopeRows scopes={data.scopes} />
       <h4>{t("verify.reconciliation")}</h4>
       <ReconciliationRows rows={data.reconciliation_results} />
+      <details className="verify-diagnostics">
+        <summary>{t("verify.diagnostics")}</summary>
+        <div className="verify-quality-meta">
+          <span>{t("verify.parser")}: {source?.parser_name || t("verify.not_available")}</span>
+          <span>{t("verify.parser_version")}: {source?.parser_version || t("verify.not_available")}</span>
+          <span>{t("verify.contract_version")}: {source?.contract_version || t("verify.not_available")}</span>
+          <span>{t("verify.run_schema")}: {source?.run_schema_version ?? t("verify.not_available")}</span>
+          <span>{t("verify.active_run")}: {source?.active_run_status || t("verify.not_available")}</span>
+          <span>{t("verify.parse_status")}: {source?.parse_status || t("verify.not_available")}</span>
+        </div>
+      </details>
     </section>
   );
 }

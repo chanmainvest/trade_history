@@ -267,7 +267,7 @@ export default function Monthly() {
                 <tr key={r.holding_key} className={rowClass}>
                   {showSourceLinks && (
                     <td>
-                      {r.source_ref ? (
+                      {r.source_ref?.linkable ? (
                         <SourceLink
                           source={r.source_ref}
                           title={r.source_ref.checkpoint

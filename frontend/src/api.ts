@@ -101,6 +101,7 @@ export type TxnRow = {
   option_expiry: string | null;
   option_strike: number | null;
   option_type: string | null;
+  source_ref: SourceRef | null;
 };
 
 export type Account = {
@@ -133,6 +134,11 @@ export type HoldingRow = {
   option_type: string | null;
   quantity: number;
   source_ref: SourceRef | null;
+  provenance: {
+    type: "reported_row" | "checkpoint_plus_movements" | "observed_incomplete" | "unavailable";
+    checkpoint: SourceRef | null;
+    movements: SourceRef[];
+  };
   avg_cost: number | null;
   book_value: number | null;
   market_price: number | null;
@@ -230,9 +236,12 @@ export type StatementRow = {
 
 export type SourceRef = {
   statement_id: number;
-  kind: "transaction" | "position" | "cash" | "summary" | "quarantine";
+  kind: "transaction" | "position" | "cash" | "summary" | "scope_issue" | "quarantine";
   id: number;
   checkpoint?: boolean;
+  geometry_status: string;
+  page_numbers: number[];
+  linkable: boolean;
 };
 
 export type StatementQualityFlag = "unresolved" | "incomplete" | "unreconciled";
@@ -263,6 +272,8 @@ export type StatementScope = {
 export type StatementReconciliation = {
   reconciliation_id: number;
   kind: "position" | "cash" | "statement_total" | "transfer";
+  check_type: string | null;
+  reason_code: string | null;
   currency: string;
   status: string;
   reason: string | null;
@@ -274,13 +285,19 @@ export type StatementReconciliation = {
   reported_close: number | null;
   snapshot_set_id: number | null;
   prior_snapshot_set_id: number | null;
+  prior_checkpoint: string | null;
+  current_checkpoint: string | null;
+  instrument_id: number | null;
+  symbol: string | null;
+  instrument_name: string | null;
+  component_count: number;
   section_type: string | null;
   scope_key: string | null;
 };
 
 /** A matched reference linking a PDF line box to a parsed item. */
 export type BoxRef = {
-  kind: "transaction" | "position" | "cash" | "summary" | "quarantine";
+  kind: "transaction" | "position" | "cash" | "summary" | "scope_issue" | "quarantine";
   id: number;
   label: string;
   match_status?: string;
@@ -317,12 +334,46 @@ export type StatementBoxes = {
     contract_version: string | null;
     run_schema_version: number | null;
   } | null;
-  pages: { page_number: number; width: number; height: number; lines: LineBox[] }[];
+  page_numbers: number[];
+  pages: {
+    page_number: number;
+    width: number;
+    height: number;
+    lines: LineBox[];
+    boxes: EvidenceBox[];
+  }[];
   transactions: any[];
   positions: any[];
   cash_balances: (any & { cash_balance_id: number; raw_line: string | null })[];
   summary_totals: StatementScope[];
   scopes: StatementScope[];
+  scope_issues: StatementScopeIssue[];
   reconciliation_results: StatementReconciliation[];
   quarantine: any[];
+};
+
+export type EvidenceBox = {
+  ref: BoxRef;
+  evidence_id: number;
+  rect: [number, number, number, number];
+  ordinal: number;
+  geometry_status: string;
+  match_method: string | null;
+  confidence: number | null;
+};
+
+export type StatementScopeIssue = {
+  scope_issue_id: number;
+  snapshot_set_id: number;
+  issue_code: string;
+  severity: string;
+  detail: Record<string, unknown>;
+  blocks_completeness: boolean;
+  evidence_id: number | null;
+  quarantine_id: number | null;
+  currency: string;
+  section_type: StatementScope["section_type"];
+  scope_key: string;
+  quarantine_reason: string | null;
+  raw_text: string | null;
 };
