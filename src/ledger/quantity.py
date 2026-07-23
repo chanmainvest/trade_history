@@ -58,6 +58,7 @@ POSITION_AFFECTING_TYPES = frozenset(
 )
 NON_CASH_TXN_TYPES = frozenset(
     {
+        "reinvest_dividend",
         "stock_split",
         "stock_split_credit",
         "stock_split_debit",

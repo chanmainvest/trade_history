@@ -39,6 +39,7 @@ RESOLVER_VERSION = "identity-resolver-v5"
 _EXPLICIT_SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,8}$")
 _UNRESOLVED_SYMBOLS = {"", "UNKNOWN", "N/A", "NONE"}
 _NAME_TOKEN_SUFFIXES = ("INC", "LTD", "CORP", "FUND", "TRUST", "ETF")
+_PRINTED_FUND_CODE = re.compile(r"(?:RBF|TDB)\d{3,4}[A-Z]?")
 
 
 def _normalized(value: str | None) -> str:
@@ -74,10 +75,14 @@ def _looks_explicit(instrument: ParsedInstrument) -> bool:
     symbol = (instrument.symbol or "").upper()
     if symbol in _UNRESOLVED_SYMBOLS or "_" in symbol:
         return False
-    # Mutual-fund rows commonly use a synthetic printed name in this field;
-    # only a reviewed identifier should turn one into a public fund code.
+    # Mutual-fund rows commonly use a synthetic printed name in this field.
+    # Retain only a strict broker fund code explicitly marked by the parser;
+    # this is a broker identifier, not a claim that it is a provider ticker.
     if instrument.asset_type == "mutual_fund":
-        return False
+        return (
+            instrument.resolution_method == "printed_fund_code"
+            and _PRINTED_FUND_CODE.fullmatch(symbol) is not None
+        )
     compact_symbol = compact_identity(symbol)
     compact_name = compact_identity(instrument.name)
     if compact_name == compact_symbol and compact_symbol.endswith(_NAME_TOKEN_SUFFIXES):
@@ -387,6 +392,8 @@ def _resolve_instrument(
             if instrument.resolution_method == "printed_ticker_change"
             else "printed_option_contract"
             if instrument.asset_type == "option"
+            else "printed_fund_code"
+            if instrument.resolution_method == "printed_fund_code"
             else "printed_symbol"
         )
         _set_resolution(instrument, method, 1.0)

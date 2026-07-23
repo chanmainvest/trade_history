@@ -625,10 +625,11 @@ def test_statement_total_and_incomplete_scope_results_are_explicit(tmp_path):
             """
             INSERT INTO snapshot_sets(
                 statement_id, account_id, as_of_date, currency, section_type,
-                scope_key, completeness, reported_total, validation_status
+                scope_key, completeness, opening_total, reported_change,
+                reported_total, validation_status
             )
             SELECT statement_id, account_id, period_end, 'CAD', 'summary',
-                   'default', 'complete', 120, 'valid'
+                   'default', 'complete', 100, 20, 120, 'valid'
               FROM statements
              WHERE statement_id = ?
             RETURNING snapshot_set_id
@@ -646,7 +647,7 @@ def test_statement_total_and_incomplete_scope_results_are_explicit(tmp_path):
 
     summary = rebuild_reconciliation_results(db_path)
 
-    assert summary["statement_totals"]["reconciled"] == 2
+    assert summary["statement_totals"]["reconciled"] == 3
     assert summary["positions"]["incomplete_input"] == 2
     with sqlite_db.session(db_path) as conn:
         total = conn.execute(
@@ -665,6 +666,15 @@ def test_statement_total_and_incomplete_scope_results_are_explicit(tmp_path):
             """,
             (summary_scope,),
         ).fetchone()
+        statement_change = conn.execute(
+            """
+            SELECT opening_value, summed_deltas, expected_close, reported_close,
+                   residual, status
+              FROM reconciliation_results
+             WHERE check_type = 'statement_change' AND snapshot_set_id = ?
+            """,
+            (summary_scope,),
+        ).fetchone()
         incomplete = conn.execute(
             """
             SELECT status, reason
@@ -676,6 +686,7 @@ def test_statement_total_and_incomplete_scope_results_are_explicit(tmp_path):
 
     assert tuple(total) == (100.0, 100.0, 0.0, "reconciled")
     assert tuple(portfolio_total) == (120.0, 120.0, 0.0, "reconciled")
+    assert tuple(statement_change) == (100.0, 20.0, 120.0, 120.0, 0.0, "reconciled")
     assert incomplete["status"] == "incomplete_input"
     assert incomplete["reason"] == "current position scope is not complete"
 

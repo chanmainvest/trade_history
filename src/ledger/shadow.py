@@ -1323,7 +1323,9 @@ def _content_hash(path: Path | str) -> str:
             "snapshot_sets": """
                 SELECT statement.statement_key, snapshot.as_of_date, snapshot.currency,
                        snapshot.section_type, snapshot.scope_key, snapshot.completeness,
-                       snapshot.reported_total, snapshot.validation_status, evidence.evidence_key
+                       snapshot.opening_total, snapshot.reported_change,
+                       snapshot.reported_total, snapshot.validation_status,
+                       evidence.evidence_key
                   FROM snapshot_sets snapshot
                   JOIN statements statement ON statement.statement_id = snapshot.statement_id
                   LEFT JOIN source_evidence evidence ON evidence.evidence_id = snapshot.evidence_id

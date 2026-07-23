@@ -330,9 +330,11 @@ The screen has two sides:
 - **Left** renders only the original physical PDF pages owned by the selected
   logical statement (via PDF.js), with evidence-specific rectangles. Green is
   matched evidence and amber is the selected exact item.
-- **Right** begins with one concise status, then Transactions, Positions, Cash,
-  and Summary totals. Extraction issues, reconciliation equations, parser
-  diagnostics, and Quarantine rows are below the financial rows.
+- **Right** begins with one concise status, then groups Transactions, Positions,
+  Cash, and Summary totals by native currency. Cash shows opening and closing
+  separately; statement totals show printed opening, change, and closing when
+  the broker supplies them. Extraction issues, reconciliation equations,
+  parser diagnostics, and Quarantine rows are below the financial rows.
 
 Click a box on the left to reveal its item on the right without moving the PDF
 pane. Click an item on the right to highlight its box(es) and scroll only the

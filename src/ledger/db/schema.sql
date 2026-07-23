@@ -400,6 +400,8 @@ CREATE TABLE IF NOT EXISTS snapshot_sets (
     can_clear_omitted INTEGER GENERATED ALWAYS AS
                        (CASE WHEN completeness = 'complete' THEN 1 ELSE 0 END) STORED,
     evidence_id      INTEGER REFERENCES source_evidence(evidence_id),
+    opening_total    REAL,
+    reported_change  REAL,
     reported_total   REAL,
     validation_status TEXT NOT NULL DEFAULT 'unvalidated' CHECK (validation_status IN
                        ('unvalidated','valid','warning','invalid')),
@@ -689,7 +691,8 @@ CREATE TABLE IF NOT EXISTS reconciliation_results (
                        ('position','cash','statement_total','transfer')),
     check_type       TEXT CHECK (check_type IS NULL OR check_type IN
                        ('position_rollforward','cash_activity','cash_continuity',
-                        'position_total','cash_total','portfolio_total','transfer_pair')),
+                        'position_total','cash_total','portfolio_total','statement_change',
+                        'transfer_pair')),
     reason_code      TEXT,
     account_id       INTEGER NOT NULL REFERENCES accounts(account_id),
     statement_id     INTEGER REFERENCES statements(statement_id) ON DELETE CASCADE,
@@ -738,4 +741,4 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value            TEXT NOT NULL
 );
 
-INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '10');
+INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '11');

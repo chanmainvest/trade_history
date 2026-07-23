@@ -65,6 +65,12 @@ scrolls only the PDF pane; a PDF-box click leaves that pane fixed and reveals
 the right row. Only boxes containing that exact reference receive selected
 styling.
 
+Financial rows are grouped by native currency, then transactions, positions,
+cash, and statement totals. Cash shows opening and closing separately. Total
+rows show printed opening, change, and closing values when available; missing
+printed values remain blank. This keeps dual-currency RBC review within one
+currency block.
+
 ## Configuration shape
 
 ```json

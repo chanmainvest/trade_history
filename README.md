@@ -140,6 +140,8 @@ The current tabs are Transactions, Monthly, Performance, Research,
 Visualisations, Verify extraction, and Settings. Verify renders the original
 PDF pages owned by the selected logical statement beside parsed rows and
 highlights persisted evidence rectangles. Parsed financial rows come first;
+dual-currency statements group those rows by native currency, and printed
+opening/change/closing totals remain separate;
 structured scope blockers, reconciliation, quarantine, and diagnostics follow.
 Run `uv run ledger ingest enrich-layout` after semantic ingest to build those
 replaceable coordinates; ambiguous or unmatched evidence stays visibly

@@ -248,7 +248,7 @@ def test_init_db_migrates_v5_identity_runs_scopes_and_evidence(tmp_path):
     with sqlite_db.session(db_path) as conn:
         assert conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'schema_version'"
-        ).fetchone()[0] == "10"
+        ).fetchone()[0] == "11"
         assert conn.execute(
             "SELECT COUNT(*) FROM instrument_ticker_changes"
         ).fetchone()[0] == 0
@@ -305,6 +305,11 @@ def test_init_db_migrates_v5_identity_runs_scopes_and_evidence(tmp_path):
         assert {"check_type", "reason_code"}.issubset(
             {row["name"] for row in conn.execute("PRAGMA table_info(reconciliation_results)")}
         )
+        reconciliation_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'reconciliation_results'"
+        ).fetchone()[0]
+        assert "statement_change" in reconciliation_sql
         for table in (
             "security_issuers",
             "securities",

@@ -160,6 +160,8 @@ class ParsedSnapshotSet:
     section_type: SnapshotSectionType
     completeness: SnapshotCompleteness
     scope_key: str = "default"
+    opening_total: float | None = None
+    reported_change: float | None = None
     reported_total: float | None = None
     validation_status: Literal["unvalidated", "valid", "warning", "invalid"] = (
         "unvalidated"

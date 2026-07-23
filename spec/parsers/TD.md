@@ -1,7 +1,7 @@
 # TD WebBroker parser
 
 Implementation: `src/ledger/parsers/td.py`, parser name `td`, current version
-`2.6.0`.
+`2.7.0`.
 
 ## Recognition and account shape
 
@@ -65,6 +65,16 @@ scope.
 - Repeated account/currency fragments accumulate physical pages and cash state.
   Incomplete scopes emit structured blockers linked to the precise quarantine
   and evidence rows.
+- Disclosure pages and pages explicitly headed for the other currency account
+  are excluded from sub-statement page ownership.
+- One-line holdings retain one evidence line; wrapped holdings and adjusted
+  option contracts retain both printed lines for geometry.
+- Account Summary opening/change/ending values plus closing equity and cash
+  totals populate snapshot sets. Unprinted securities opening values are not
+  inferred.
+- Strict printed `TDB####`/`TDB####X` mutual-fund codes remain broker
+  identifiers, so a complete holdings table is not discarded as a free-form
+  unresolved name.
 
 ## Remaining limits
 

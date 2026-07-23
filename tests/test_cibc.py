@@ -122,6 +122,16 @@ def test_cibc_tax_documents_are_explicitly_skipped_not_invalid():
     assert result.statements == []
 
 
+def test_cibc_disclosure_only_page_is_not_part_of_statement():
+    pdf = load_fixture("cibc/monthly_dual_currency.txt")
+    pdf.pages.append("Disclosures — continued\nGeneral account information only")
+    pdf.page_count += 1
+
+    result = CIBCParser().parse(pdf)
+
+    assert result.statements[0].page_numbers == (1,)
+
+
 def test_cibc_eft_contribution_and_unlabelled_cash_adjustment():
     pdf = load_fixture("cibc/monthly_dual_currency.txt")
     pdf.pages = [

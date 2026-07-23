@@ -47,9 +47,11 @@ from .types import (
     ParsedPosition,
     ParsedQuarantine,
     ParsedScopeIssue,
+    ParsedSnapshotSet,
     ParsedStatement,
     ParsedTxn,
     ParseResult,
+    SourceSpan,
 )
 
 _MON = {
@@ -164,6 +166,7 @@ ACT_VERBS = {
     "CIL": "distribution",
     "Capital Gains": "distribution",
     "Stock split": "stock_split",
+    "Reverse Split": "stock_split",
     "Stock dividend": "dividend",
 }
 
@@ -219,6 +222,72 @@ class _ScopeState:
     cash: _CashState = field(default_factory=_CashState)
     position_issues: list[ParsedScopeIssue] = field(default_factory=list)
     cash_issues: list[ParsedScopeIssue] = field(default_factory=list)
+    opening_total: float | None = None
+    reported_change: float | None = None
+    closing_total: float | None = None
+    positions_total: float | None = None
+    cash_total: float | None = None
+    summary_lines: list[str] = field(default_factory=list)
+    positions_total_line: str | None = None
+    cash_total_line: str | None = None
+
+
+def _is_td_disclosure_page(_page_number: int, page: str) -> bool:
+    return re.search(r"(?im)^\s*disclosures\s*$", page) is None
+
+
+def _owned_sub_pages(pdf: PdfText, pages: tuple[int, ...], currency: str) -> tuple[int, ...]:
+    expected = "CDN" if currency == "CAD" else "US"
+    owned: list[int] = []
+    for page_number in pages:
+        page = pdf.pages[page_number - 1]
+        if not _is_td_disclosure_page(page_number, page):
+            continue
+        printed_types = set(RE_ACCT_TYPE.findall(page))
+        if printed_types and expected not in printed_types:
+            continue
+        owned.append(page_number)
+    return tuple(owned)
+
+
+def _reported_value(
+    text: str,
+    label: str,
+    *,
+    value_index: int = 0,
+) -> tuple[float | None, str | None]:
+    pattern = re.compile(
+        rf"^\s*{label}\s+.*\d.*$",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    match = pattern.search(text)
+    if not match:
+        return None, None
+    values = re.findall(r"\$?\(?-?[\d,]+(?:\.\d+)?\)?-?", match.group(0))
+    if value_index >= len(values):
+        return None, match.group(0).strip()
+    return parse_money(values[value_index]), match.group(0).strip()
+
+
+def _capture_reported_totals(text: str, state: _ScopeState) -> None:
+    fields = (
+        ("opening_total", r"Beginning balance", 0),
+        ("reported_change", r"Change in your account", 0),
+        ("closing_total", r"Ending balance", 0),
+        ("positions_total", r"Total equities", 1),
+        ("cash_total", r"Cash", 0),
+    )
+    for field_name, label, value_index in fields:
+        value, raw_line = _reported_value(text, label, value_index=value_index)
+        if value is None:
+            continue
+        setattr(state, field_name, value)
+        if field_name == "positions_total":
+            state.positions_total_line = raw_line
+        elif field_name == "cash_total":
+            state.cash_total_line = raw_line
+        elif raw_line and raw_line not in state.summary_lines:
+            state.summary_lines.append(raw_line)
 
 
 def _is_summary(relpath: str) -> bool:
@@ -544,6 +613,14 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
            or sl.startswith("description") or sl.startswith("quantity") \
            or sl.startswith("holdings in"):
             continue
+        if (
+            sl.startswith("member - canadian investor protection fund")
+            or sl.startswith("account number:")
+            or sl.startswith("your investment account statement:")
+            or re.fullmatch(r"on [a-z]{3,9} \d{1,2}, \d{4}", sl)
+            or re.fullmatch(r"page \d+ of \d+", sl)
+        ):
+            continue
         if sl.startswith("definitions") or sl.startswith("an explanation"):
             break
 
@@ -634,6 +711,76 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
             holdings_complete = False
             continue
 
+        adjusted_option_head = re.match(
+            r"^(CALL|PUT)\s*[- ]\s*(?:-)?100\s+(.*)$",
+            s,
+        )
+        if adjusted_option_head:
+            cp, num_part = adjusted_option_head.groups()
+            j = i
+            contract_line = ""
+            contract = None
+            while j < len(lines) and j < i + 5:
+                candidate = lines[j].strip()
+                if not candidate or _is_option_interstitial(candidate):
+                    j += 1
+                    continue
+                contract_line = candidate
+                combined = f"{s} {candidate}"
+                contract = re.search(
+                    r"([A-Z0-9][A-Z0-9.+$]{0,10})'(\d{2})(?:-US)?\s*"
+                    r"(\d{0,2})([A-Z]{2})@(\d+(?:\.\d+)?)",
+                    combined,
+                )
+                if contract is None:
+                    head_contract = re.search(
+                        r"([A-Z0-9][A-Z0-9.+$]{0,10})'(\d{2})(?:-US)?",
+                        s,
+                    )
+                    tail_contract = RE_OPT_TAIL.match(candidate)
+                    if head_contract and tail_contract:
+                        root, yy = head_contract.groups()
+                        dd, mon, strike = tail_contract.groups()
+                        contract = (root, yy, dd, mon, strike)
+                break
+            if contract:
+                root, yy, dd, mon, strike = (
+                    contract.groups() if hasattr(contract, "groups") else contract
+                )
+                numeric_part = re.sub(
+                    r"[A-Z0-9][A-Z0-9.+$]{0,10}'\d{2}(?:-US)?",
+                    " ",
+                    num_part,
+                    count=1,
+                )
+                nums = re.findall(r"-?[\d,]+(?:\.\d+)?", numeric_part)
+                quantity = parse_money(nums[0]) if nums else None
+                if quantity is not None:
+                    stmt.positions.append(ParsedPosition(
+                        instrument=ParsedInstrument(
+                            asset_type="option", symbol=root, currency=currency,
+                            option_root=root, option_expiry=_option_expiry(yy, dd, mon),
+                            option_strike=float(strike), option_type=cp,
+                            option_multiplier=100,
+                        ),
+                        quantity=quantity,
+                        avg_cost=None,
+                        book_value=parse_money(nums[2]) if len(nums) > 2 else None,
+                        market_price=parse_money(nums[1]) if len(nums) > 1 else None,
+                        market_value=parse_money(nums[3]) if len(nums) > 3 else None,
+                        unrealized_pnl=None,
+                        currency=currency,
+                        raw_line="\n".join((ln, contract_line)),
+                    ))
+                    i = j + 1
+                    continue
+            stmt.quarantine.append(ParsedQuarantine(
+                raw_line=ln,
+                reason="option holding without complete printed contract",
+            ))
+            holdings_complete = False
+            continue
+
         m = RE_HOLDING_LINE.match(s)
         if not m:
             if section is not None and re.search(r"\d", s):
@@ -648,6 +795,7 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
         if sym_match:
             symbol = sym_match.group(1)
             name = name_part[:sym_match.start()].strip()
+            evidence_lines = [ln]
         else:
             j = i
             extra = ""
@@ -676,6 +824,7 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
                 ))
                 continue
             name = (name_part + " " + extra).strip()
+            evidence_lines = [ln, *lines[i:consumed]]
             i = consumed
 
         if section == "cash":
@@ -692,12 +841,23 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
         instr = ParsedInstrument(
             asset_type=atype, symbol=symbol, currency=currency,
             name=name[:120],
+            resolution_method=(
+                "printed_fund_code"
+                if atype == "mutual_fund" and re.fullmatch(r"TDB\d{4}[A-Z]?", symbol)
+                else None
+            ),
+            resolution_confidence=(
+                1.0
+                if atype == "mutual_fund" and re.fullmatch(r"TDB\d{4}[A-Z]?", symbol)
+                else None
+            ),
         )
         stmt.positions.append(ParsedPosition(
             instrument=instr, quantity=quantity,
             avg_cost=None, book_value=parse_money(book_s),
             market_price=parse_money(price_s), market_value=parse_money(mv_s),
-            unrealized_pnl=None, currency=currency, raw_line=ln,
+            unrealized_pnl=None, currency=currency,
+            raw_line="\n".join(evidence_lines),
         ))
     return saw_holdings and holdings_complete
 
@@ -1024,7 +1184,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
 # ---------------------------------------------------------------- Parser
 class TDParser:
     NAME = "td"
-    VERSION = "2.6.0"
+    VERSION = "2.7.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "TD Webbroker":
@@ -1034,7 +1194,7 @@ class TDParser:
 
     def parse(self, pdf: PdfText) -> ParseResult:
         result = ParseResult(parser_name=self.NAME, parser_version=self.VERSION)
-        page_index = PageTextIndex.from_pdf(pdf)
+        page_index = PageTextIndex.from_pdf(pdf, include_page=_is_td_disclosure_page)
         text = page_index.text
 
         if _is_summary(pdf.relpath):
@@ -1075,6 +1235,7 @@ class TDParser:
                 base_offset=chunk_start,
                 page_index=page_index,
             ):
+                sub.page_numbers = _owned_sub_pages(pdf, sub.page_numbers, sub.currency)
                 key = (ps, pe, sub.account_number, sub.currency)
                 stmt = statements.get(key)
                 if stmt is None:
@@ -1094,6 +1255,7 @@ class TDParser:
                         sorted(set(stmt.page_numbers) | set(sub.page_numbers))
                     )
                 state = scope_state[key]
+                _capture_reported_totals(sub.text, state)
                 hm = re.search(r"Holdings in your account|^Holdings\b", sub.text, re.MULTILINE)
                 am = re.search(
                     r"Activity in your account this period|^Activities\b",
@@ -1191,6 +1353,37 @@ class TDParser:
                 position_issues={currency: state.position_issues},
                 cash_issues={currency: state.cash_issues},
             )
+            for scope in stmt.snapshot_sets:
+                if scope.currency != currency:
+                    continue
+                if scope.section_type == "positions" and state.positions_total is not None:
+                    scope.reported_total = state.positions_total
+                    if state.positions_total_line:
+                        scope.source_span = SourceSpan(
+                            raw_text=state.positions_total_line,
+                            parser_rule="td:positions-total",
+                        )
+                elif scope.section_type == "cash" and state.cash_total is not None:
+                    scope.reported_total = state.cash_total
+                    if state.cash_total_line:
+                        scope.source_span = SourceSpan(
+                            raw_text=state.cash_total_line,
+                            parser_rule="td:cash-total",
+                        )
+            if state.closing_total is not None:
+                stmt.snapshot_sets.append(ParsedSnapshotSet(
+                    currency=currency,
+                    section_type="summary",
+                    completeness="complete",
+                    opening_total=state.opening_total,
+                    reported_change=state.reported_change,
+                    reported_total=state.closing_total,
+                    validation_status="valid",
+                    source_span=SourceSpan(
+                        raw_text="\n".join(state.summary_lines) or None,
+                        parser_rule="td:account-summary",
+                    ),
+                ))
             result.statements.append(stmt)
         quarantine_unsupported_rows(result)
         attach_source_spans(pdf, result, parser_name=self.NAME)

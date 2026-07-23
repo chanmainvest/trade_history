@@ -45,6 +45,8 @@ Version 6 adds statement page ownership and structured scope-blocking issues.
 - Every statement has a defensible account and ISO period.
 - Every monetary/position row carries native currency.
 - Every recognized row preserves the printed description/raw evidence.
+- A visual row spanning two physical lines preserves both lines in order, so
+  geometry can draw one rectangle per supporting line.
 - A position-affecting transaction has an instrument or is quarantined. The
   staged resolver may temporarily clear an uncertain printed name only when it
   marks the row `unresolved_printed_identity`; the later holdings-name
@@ -81,6 +83,9 @@ assignment/exercise/expiration, income/interest, transfers/journals,
 deposits/withdrawals, taxes/fees/FX/adjustments, reinvestment, splits, and
 corporate actions. Add a new value only with parser, quantity/cash semantics,
 schema/docs, API, and tests updated together.
+
+`reinvest_dividend` is a non-cash position movement: quantity increases by the
+printed units while `cash_delta` is zero. A cash dividend remains `dividend`.
 
 For `name_change`, the shared enrichment accepts explicit phrases such as
 `SYMBOL CHANGE FROM FB TO META`. It rejects company-name-only text and transfer

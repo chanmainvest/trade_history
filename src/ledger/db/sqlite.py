@@ -17,7 +17,7 @@ from ..identity import (
 from ..quantity import normalized_position_delta
 
 _SCHEMA = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 def connect(path: Path | str = SQLITE_PATH) -> sqlite3.Connection:
@@ -522,6 +522,8 @@ def _create_snapshot_sets_table(conn: sqlite3.Connection) -> None:
             can_clear_omitted INTEGER GENERATED ALWAYS AS
                 (CASE WHEN completeness = 'complete' THEN 1 ELSE 0 END) STORED,
             evidence_id INTEGER REFERENCES source_evidence(evidence_id),
+            opening_total REAL,
+            reported_change REAL,
             reported_total REAL,
             validation_status TEXT NOT NULL DEFAULT 'unvalidated' CHECK (validation_status IN
                 ('unvalidated','valid','warning','invalid')),
@@ -943,10 +945,107 @@ def _migrate_existing_schema(conn: sqlite3.Connection) -> None:
     _add_column(conn, "instruments", "security_id INTEGER REFERENCES securities(security_id)")
     _add_column(conn, "reconciliation_results", "check_type TEXT")
     _add_column(conn, "reconciliation_results", "reason_code TEXT")
+    _add_column(conn, "snapshot_sets", "opening_total REAL")
+    _add_column(conn, "snapshot_sets", "reported_change REAL")
+    _migrate_reconciliation_check_v11(conn)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_instruments_security ON instruments(security_id)"
     )
     _install_domain_triggers(conn)
+
+
+def _migrate_reconciliation_check_v11(conn: sqlite3.Connection) -> None:
+    """Add ``statement_change`` to the v10 check without losing audit rows."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reconciliation_results'"
+    ).fetchone()
+    if row is None or "statement_change" in (row["sql"] or ""):
+        return
+
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            CREATE TABLE reconciliation_results_v11 (
+                reconciliation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reconciliation_key TEXT NOT NULL UNIQUE,
+                ingestion_run_id INTEGER REFERENCES ingestion_runs(ingestion_run_id) ON DELETE CASCADE,
+                kind TEXT NOT NULL CHECK (kind IN ('position','cash','statement_total','transfer')),
+                check_type TEXT CHECK (check_type IS NULL OR check_type IN
+                    ('position_rollforward','cash_activity','cash_continuity',
+                     'position_total','cash_total','portfolio_total','statement_change',
+                     'transfer_pair')),
+                reason_code TEXT,
+                account_id INTEGER NOT NULL REFERENCES accounts(account_id),
+                statement_id INTEGER REFERENCES statements(statement_id) ON DELETE CASCADE,
+                snapshot_set_id INTEGER REFERENCES snapshot_sets(snapshot_set_id) ON DELETE CASCADE,
+                prior_snapshot_set_id INTEGER REFERENCES snapshot_sets(snapshot_set_id) ON DELETE SET NULL,
+                instrument_id INTEGER REFERENCES instruments(instrument_id),
+                currency TEXT NOT NULL REFERENCES currencies(code),
+                prior_checkpoint TEXT CHECK (prior_checkpoint IS NULL OR
+                    (length(prior_checkpoint) = 10 AND prior_checkpoint GLOB '????-??-??')),
+                current_checkpoint TEXT CHECK (current_checkpoint IS NULL OR
+                    (length(current_checkpoint) = 10 AND current_checkpoint GLOB '????-??-??')),
+                opening_value REAL,
+                summed_deltas REAL,
+                expected_close REAL,
+                reported_close REAL,
+                residual REAL,
+                tolerance REAL NOT NULL DEFAULT 0,
+                status TEXT NOT NULL CHECK (status IN
+                    ('reconciled','within_rounding','unexplained_residual',
+                     'incomplete_input','missing_prior_checkpoint',
+                     'ambiguous_transfer','not_applicable')),
+                reason TEXT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                    CHECK (length(created_at) = 20
+                           AND created_at GLOB '????-??-??T??:??:??Z')
+            )
+            """
+        )
+        columns = (
+            "reconciliation_id, reconciliation_key, ingestion_run_id, kind, check_type, "
+            "reason_code, account_id, statement_id, snapshot_set_id, prior_snapshot_set_id, "
+            "instrument_id, currency, prior_checkpoint, current_checkpoint, opening_value, "
+            "summed_deltas, expected_close, reported_close, residual, tolerance, status, "
+            "reason, created_at"
+        )
+        conn.execute(
+            f"INSERT INTO reconciliation_results_v11({columns}) "
+            f"SELECT {columns} FROM reconciliation_results"
+        )
+        conn.execute(
+            """
+            CREATE TABLE reconciliation_components_v11 (
+                reconciliation_id INTEGER NOT NULL
+                    REFERENCES reconciliation_results_v11(reconciliation_id) ON DELETE CASCADE,
+                transaction_id INTEGER NOT NULL
+                    REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+                delta REAL NOT NULL,
+                PRIMARY KEY(reconciliation_id, transaction_id)
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO reconciliation_components_v11 "
+            "SELECT reconciliation_id, transaction_id, delta FROM reconciliation_components"
+        )
+        conn.execute("DROP TABLE reconciliation_components")
+        conn.execute("DROP TABLE reconciliation_results")
+        conn.execute("ALTER TABLE reconciliation_results_v11 RENAME TO reconciliation_results")
+        conn.execute("ALTER TABLE reconciliation_components_v11 RENAME TO reconciliation_components")
+        conn.execute(
+            "CREATE INDEX idx_reconciliation_scope "
+            "ON reconciliation_results(account_id, current_checkpoint, kind, status)"
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _install_domain_triggers(conn: sqlite3.Connection) -> None:
@@ -1378,6 +1477,8 @@ def upsert_snapshot_set(
     evidence_id: int | None,
     reported_total: float | None,
     validation_status: str,
+    opening_total: float | None = None,
+    reported_change: float | None = None,
 ) -> int:
     validate_iso_date(as_of_date)
     validate_ledger_currency(currency)
@@ -1386,13 +1487,16 @@ def upsert_snapshot_set(
             """
             INSERT INTO snapshot_sets(
                 statement_id, account_id, as_of_date, currency, section_type,
-                scope_key, completeness, evidence_id, reported_total,
+                scope_key, completeness, evidence_id, opening_total,
+                reported_change, reported_total,
                 validation_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(statement_id, currency, section_type, scope_key) DO UPDATE SET
                 as_of_date = excluded.as_of_date,
                 completeness = excluded.completeness,
                 evidence_id = excluded.evidence_id,
+                opening_total = excluded.opening_total,
+                reported_change = excluded.reported_change,
                 reported_total = excluded.reported_total,
                 validation_status = excluded.validation_status
             RETURNING snapshot_set_id
@@ -1406,6 +1510,8 @@ def upsert_snapshot_set(
                 scope_key,
                 completeness,
                 evidence_id,
+                opening_total,
+                reported_change,
                 reported_total,
                 validation_status,
             ),

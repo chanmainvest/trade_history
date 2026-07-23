@@ -124,6 +124,15 @@ components. Missing, incomplete, or unpriced components remain
 `incomplete_input`; the engine does not guess that a partial section is a full
 portfolio.
 
+When a summary scope also prints opening value and period change, a separate
+`statement_change` result verifies:
+
+```text
+reported_closing_portfolio = reported_opening_portfolio + reported_change
+```
+
+The component-total and change equations remain independently visible.
+
 ## Result status and tolerance
 
 `reconciliation_results` uses these statuses:

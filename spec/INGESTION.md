@@ -38,7 +38,7 @@ discover path
 ```
 
 The registered parsers are CIBC, HSBC, RBC, and TD. CIBC, RBC, and TD report
-`2.6.0`; HSBC reports `2.5.0`. Parser, contract, schema, and resolver changes
+`2.7.0`; HSBC reports `2.5.0`. Parser, contract, schema, and resolver changes
 intentionally invalidate older active cache entries so a reviewed re-ingest
 exercises the current extraction contract.
 
@@ -52,10 +52,17 @@ first restricts candidates to the owning statement's explicit physical pages.
 It accepts a unique persisted page hint, a compatible page/line hint, a unique
 exact line sequence, a unique ordered non-contiguous sequence (for example cash
 opening/closing lines), or one unique contiguous token sequence. Token matches
+first retain the narrowest overlapping line window, so a unique one-line row
+is not made ambiguous by wider windows containing that same row. Matches
 persist the supporting word slice. Repeated candidates are stored as
 `ambiguous`; unmatched text and PDFs without coordinate lines remain explicit
 statuses. It never changes a transaction, amount, quantity, instrument, scope,
 or semantic evidence key.
+
+When one semantic cash row is split into adjacent amount/label layout lines
+whose vertical boxes overlap, the matcher may align the uniquely reversed
+token order and retain both rectangles. This handles column extraction order
+without changing the semantic cash evidence.
 
 Use `--source-file-id ID` to rebuild one source. The command is intentionally
 CLI-only. A geometry failure rolls back that source's geometry savepoint and
@@ -131,7 +138,8 @@ these deterministic steps:
 2. resolve an exact institution/currency entry in the reviewed listing catalog;
 3. match an exact reviewed alias, previously resolved candidate, reviewed fund
    lookup, or uniquely known database listing;
-4. retain a genuinely ticker-shaped printed symbol;
+4. retain a genuinely ticker-shaped printed symbol or a parser-marked strict
+   broker fund code such as `RBF607`/`TDB3089C`;
 5. match one unambiguous exact identity in the same statement's holdings; or
 6. queue the public security name in `instrument_resolution_candidates` and
    mark the financial row `unresolved_printed_identity` with zero confidence.
@@ -145,6 +153,8 @@ null instrument; its printed-name token is never persisted as a ticker. An
 unresolved position is moved to quarantine and its complete scope is downgraded
 to `unknown`, because a checkpoint cannot safely identify that holding.
 Resolved instrument rows retain their identity provenance.
+An accepted fund code remains a broker identifier; it is not automatically a
+Yahoo/provider symbol.
 This ordering is material: resolving `PUT NTR ...` as the NTR equity would
 erase expiry/strike/type and create a false negative stock holding.
 `ledger ingest repair-symbols` remains a legacy/manual maintenance command for

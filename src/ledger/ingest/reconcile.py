@@ -1349,7 +1349,8 @@ def _reconcile_statement_totals(conn: sqlite3.Connection) -> dict[str, int]:
         f"""
         SELECT ss.snapshot_set_id, ss.statement_id, ss.account_id, ss.as_of_date,
                ss.currency, ss.section_type, ss.scope_key, ss.completeness,
-               ss.reported_total, s.ingestion_run_id
+               ss.opening_total, ss.reported_change, ss.reported_total,
+               s.ingestion_run_id
           FROM snapshot_sets ss
           JOIN statements s ON s.statement_id = ss.statement_id
          WHERE ss.reported_total IS NOT NULL
@@ -1468,7 +1469,11 @@ def _reconcile_statement_totals(conn: sqlite3.Connection) -> dict[str, int]:
             reconciliation_key=f"{RECONCILIATION_KEY_PREFIX}total:{scope['snapshot_set_id']}",
             ingestion_run_id=scope["ingestion_run_id"],
             kind="statement_total",
-            check_type="portfolio_total",
+            check_type={
+                "positions": "position_total",
+                "cash": "cash_total",
+                "summary": "portfolio_total",
+            }[scope["section_type"]],
             account_id=scope["account_id"],
             statement_id=scope["statement_id"],
             snapshot_set_id=scope["snapshot_set_id"],
@@ -1487,6 +1492,44 @@ def _reconcile_statement_totals(conn: sqlite3.Connection) -> dict[str, int]:
             reason=reason,
         )
         _add_result_metric(metrics, status)
+
+        if (
+            scope["section_type"] == "summary"
+            and scope["opening_total"] is not None
+            and scope["reported_change"] is not None
+        ):
+            opening = float(scope["opening_total"])
+            change = float(scope["reported_change"])
+            expected_from_change = opening + change
+            change_residual = reported_close - expected_from_change
+            change_status = _result_status(change_residual, CASH_TOLERANCE)
+            _write_reconciliation_result(
+                conn,
+                reconciliation_key=(
+                    f"{RECONCILIATION_KEY_PREFIX}statement-change:"
+                    f"{scope['snapshot_set_id']}"
+                ),
+                ingestion_run_id=scope["ingestion_run_id"],
+                kind="statement_total",
+                check_type="statement_change",
+                account_id=scope["account_id"],
+                statement_id=scope["statement_id"],
+                snapshot_set_id=scope["snapshot_set_id"],
+                prior_snapshot_set_id=None,
+                instrument_id=None,
+                currency=scope["currency"],
+                prior_checkpoint=None,
+                current_checkpoint=scope["as_of_date"],
+                opening_value=opening,
+                summed_deltas=change,
+                expected_close=expected_from_change,
+                reported_close=reported_close,
+                residual=change_residual,
+                tolerance=CASH_TOLERANCE,
+                status=change_status,
+                reason=_residual_reason(change_residual, CASH_TOLERANCE),
+            )
+            _add_result_metric(metrics, change_status)
     return dict(metrics)
 
 

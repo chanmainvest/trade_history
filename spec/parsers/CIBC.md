@@ -1,7 +1,7 @@
 # CIBC parser
 
 Implementation: `src/ledger/parsers/cibc.py`, parser name `cibc`, current
-version `2.6.0`.
+version `2.7.0`.
 
 ## Recognition and account shape
 
@@ -55,6 +55,8 @@ separate positions and cash snapshot scopes.
 ## Remaining limits
 
 - CIBC text can contain `ð`/dash artifacts and unusually wrapped descriptions.
+- Disclosure-only pages with no Account Activity or Portfolio Assets section
+  are excluded from parsing and statement page ownership.
 - A new debit/credit layout still needs a fixture or PDF spot-check before its
   event sign mapping is trusted.
 - Section completeness is evidence of a recognized printed section, not yet a

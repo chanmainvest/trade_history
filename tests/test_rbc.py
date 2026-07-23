@@ -1,4 +1,6 @@
 """Self-contained tests for the RBC parser."""
+from ledger.db import sqlite as sqlite_db
+from ledger.ingest.identity_resolution import resolve_parse_result
 from ledger.parsers.rbc import RBCParser
 from ledger.parsers.validation import validate_parse_result
 from ledger.pdf_text import PdfLine, PdfWord
@@ -83,6 +85,42 @@ def test_rbc_holdings_dividend_option_and_cash():
     assert exercise.instrument.symbol == "TRP"
     assert exercise.quantity == -20
     assert all(row.source_span for row in statement.transactions)
+
+
+def test_rbc_reinvested_fund_dividend_is_units_not_cash(tmp_path):
+    pdf = load_fixture("rbc/monthly_dual_currency.txt")
+    pdf.pages[0] = pdf.pages[0].replace(
+        "SYNTHETIC FUND SYNF 100 10.000 1,000.00 $1,000.00",
+        "SYNTHETIC FUND RBF123 100 10.000 1,000.00 $1,000.00",
+    ).replace(
+        "JAN. 05 DIVIDEND ALPHA CORP 50.00",
+        """JAN. 05 DIVIDEND SYNTHETIC FUND 2.500
+SR F (123)
+REINVEST @ $10.0000""",
+    )
+
+    result = RBCParser().parse(pdf)
+    row = next(
+        transaction
+        for transaction in result.statements[0].transactions
+        if transaction.txn_type == "reinvest_dividend"
+    )
+
+    assert row.instrument is not None
+    assert row.instrument.symbol == "RBF123"
+    assert row.quantity == 2.5
+    assert row.price == 10.0
+    assert row.net_amount == 0.0
+    assert row.cash_delta == 0.0
+    assert len(row.raw_line.splitlines()) == 3
+
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        resolve_parse_result(conn, institution_code="RBC_DI", result=result)
+    assert row.instrument is not None
+    assert row.instrument.symbol == "RBF123"
+    assert row.resolution_method == "printed_fund_code"
 
 
 def test_rbc_annual_performance_report():

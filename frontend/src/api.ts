@@ -265,6 +265,8 @@ export type StatementScope = {
   scope_key: string;
   completeness: "complete" | "partial" | "absent" | "unknown";
   validation_status: string;
+  opening_total: number | null;
+  reported_change: number | null;
   reported_total: number | null;
   raw_line: string | null;
 };

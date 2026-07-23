@@ -603,7 +603,8 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             scopes = [dict(r) for r in conn.execute(
                 f"""
                 SELECT ss.snapshot_set_id, ss.currency, ss.section_type, ss.scope_key,
-                       ss.completeness, ss.validation_status, ss.reported_total,
+                       ss.completeness, ss.validation_status, ss.opening_total,
+                       ss.reported_change, ss.reported_total,
                        {summary_raw_line} AS raw_line,
                        {summary_evidence_id} AS evidence_id
                   FROM snapshot_sets ss
@@ -615,7 +616,10 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             ).fetchall()]
             summary_totals = [
                 row for row in scopes
-                if row["section_type"] == "summary" and row["reported_total"] is not None
+                if any(
+                    row[field] is not None
+                    for field in ("opening_total", "reported_change", "reported_total")
+                )
             ]
 
         scope_issues: list[dict] = []

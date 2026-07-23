@@ -4,7 +4,7 @@ This document describes the schema currently implemented. Exact SQLite DDL is
 owned by `src/ledger/db/schema.sql`; exact DuckDB DDL is the `DDL` string in
 `src/ledger/db/duckdb_store.py`. Update code and this spec together.
 
-## SQLite ledger (schema version 10)
+## SQLite ledger (schema version 11)
 
 SQLite has no dedicated date, datetime, or enum storage class. Business dates
 therefore remain canonical `YYYY-MM-DD` `TEXT`, and audit timestamps use one
@@ -50,6 +50,10 @@ Schema v9 separates four concepts that must not be collapsed:
 4. `instrument_market_symbols` maps a listing to a provider-specific symbol
    such as Yahoo `BCE.TO` or `RCI-B.TO`. A broker symbol is never rewritten to
    Yahoo punctuation in the ledger.
+
+Strict printed mutual-fund codes (`RBF...`, `TDB...`) may identify a broker
+instrument without claiming the same string is a market-provider symbol.
+Provider mappings remain separate in `instrument_market_symbols`.
 
 Provider mappings begin as `candidate`. A successful non-empty Yahoo history
 fetch changes them to `verified`; empty/error responses are `failed` and retain
@@ -176,6 +180,11 @@ cash snapshot set. `can_clear_omitted` is true only for a complete set.
 Every `partial` or `unknown` parser scope has at least one blocking
 `snapshot_scope_issues` row with a stable issue code and optional links to its
 evidence/quarantine row. A complete scope cannot have a blocking issue.
+
+Version 11 also stores optional `opening_total` and `reported_change` beside
+the closing `reported_total`. These are printed statement facts, not inferred
+values. A broker that prints only a closing securities total leaves the
+securities opening/change fields null.
 
 The canonical holdings service uses `snapshot_sets` as read-only anchors for
 Monthly, Performance, and Visualisations. It clears omitted rows only from a

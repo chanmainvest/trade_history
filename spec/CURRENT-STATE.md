@@ -1,6 +1,6 @@
 # Current state
 
-Implementation review: **2026-07-19**. Parser v2 and the reconciliation engine
+Implementation review: **2026-07-20**. Parser v2 and the reconciliation engine
 were validated in fixtures, full-corpus shadow builds, and a reproducible
 two-build fingerprint comparison. The signed shadow was cut over to the real
 `data/ledger.sqlite` profile on 2026-07-19; the pre-cutover database remains as
@@ -16,7 +16,7 @@ a timestamped local backup.
 - Ingestion stages one validated PDF source in a savepoint and activates it
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.
-- The current worktree/shadow uses CIBC/RBC/TD parser version `2.6.0` and HSBC
+- The current worktree/shadow uses CIBC/RBC/TD parser version `2.7.0` and HSBC
   `2.5.0`.
   They retain semantic source page/line evidence, explicit snapshot scopes,
   and quarantine rather than fabricate unsupported values. Word/box geometry
@@ -29,10 +29,11 @@ a timestamped local backup.
   evidence-specific rectangles and bidirectional pane-local selection, places
   financial rows first, and shows structured scope issues/reconciliation at
   the bottom. Its unresolved/incomplete/unreconciled filters are read-only.
-- Schema v10 constrains new ledger currencies to CAD/USD, validates canonical
+- Schema v11 constrains new ledger currencies to CAD/USD, validates canonical
   business dates/UTC timestamps and SHA-256 text, and stores replaceable PDF
   geometry separately from `ev2` semantic evidence. It adds explicit statement
-  pages, scope blockers, and structured reconciliation reasons. Verify reads
+  pages, scope blockers, structured reconciliation reasons, and printed
+  opening/change/closing snapshot totals. Verify reads
   persisted exact links; ambiguous/unmatched rows remain visibly unlinked.
 - Transactions exposes initial-position anchors separately from broker events.
   Transactions and Monthly can deep-link exact source rows into Verify; the
@@ -71,6 +72,16 @@ a timestamped local backup.
   result.
 - The normal structural checks are run before a phase is completed: Python
   tests, Ruff, the frontend production build, and generated-docs build/check.
+- On 2026-07-20, a fresh schema-v11 shadow rebuilt the full unchanged PDF tree
+  with CIBC/RBC/TD `2.7.0`. A prior two-pass build passed its deterministic
+  content fingerprint; the final fund-code correction was then checked in a
+  fresh one-pass shadow. TD May 2026 owns CAD pages 2–4 and USD pages 6–9;
+  both position/cash/summary scopes are complete and all eight printed total
+  equations reconcile. NTR is +1,000 units and its one-line evidence maps
+  uniquely to physical page 3. The RBC April 2026 reinvestment persists as
+  +21.704 `RBF607` units at the printed price with zero cash effect. The CIBC
+  May disclosure page is excluded. Targeted TD layout enrichment produced 78
+  exact and 13 unique-token links with zero ambiguous/unmatched evidence.
 - On 2026-07-15, `ledger shadow build` parsed all 338 source PDFs twice into
   `data/ledger.vnext.sqlite`; both target content fingerprints matched and the
   before/after PDF manifest matched. The shadow contains 548 statements, 757

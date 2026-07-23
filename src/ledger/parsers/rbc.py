@@ -465,6 +465,16 @@ def _parse_asset_review(body: str, currency: str, stmt: ParsedStatement) -> bool
                  "etf" if "ETF" in name.upper() else "equity")
         instr = ParsedInstrument(
             asset_type=atype, symbol=sym, currency=currency, name=name.strip()[:120],
+            resolution_method=(
+                "printed_fund_code"
+                if atype == "mutual_fund" and re.fullmatch(r"RBF\d{3,4}[A-Z]?", sym)
+                else None
+            ),
+            resolution_confidence=(
+                1.0
+                if atype == "mutual_fund" and re.fullmatch(r"RBF\d{3,4}[A-Z]?", sym)
+                else None
+            ),
         )
         quantity = parse_money(qty_s)
         if quantity is None:
@@ -539,6 +549,43 @@ def _parse_activity(
             if stmt.transactions:
                 last = stmt.transactions[-1]
                 last.description = (last.description or "") + " | " + s
+                last.raw_line = "\n".join(part for part in (last.raw_line, ln) if part)
+                fund_code = re.search(r"\((\d{3,4})\)", s)
+                if fund_code and last.txn_type in {"dividend", "distribution"}:
+                    suffix = fund_code.group(1)
+                    holding = next(
+                        (
+                            position
+                            for position in stmt.positions
+                            if position.currency == currency
+                            and position.instrument.asset_type == "mutual_fund"
+                            and position.instrument.symbol.upper().endswith(suffix)
+                        ),
+                        None,
+                    )
+                    if holding is not None:
+                        last.instrument = holding.instrument
+                reinvest = re.search(
+                    r"\bREINVEST(?:ED)?\s*@\s*\$?([\d,]+(?:\.\d+)?)",
+                    s,
+                    re.IGNORECASE,
+                )
+                if reinvest and last.txn_type in {"dividend", "distribution"}:
+                    printed_numbers = re.findall(
+                        r"-?[\d,]+(?:\.\d+)?",
+                        last.raw_line.splitlines()[0],
+                    )
+                    quantity = parse_money(printed_numbers[-1]) if printed_numbers else None
+                    if quantity is not None:
+                        last.txn_type = "reinvest_dividend"
+                        last.quantity = abs(quantity)
+                        last.price = parse_money(reinvest.group(1))
+                        last.net_amount = 0.0
+                        last.cash_delta = 0.0
+                        if last.instrument is not None and "FUND" in (
+                            last.instrument.name or ""
+                        ).upper():
+                            last.instrument.asset_type = "mutual_fund"
             continue
         mon, dd, verb_part, rest = m.groups()
         mn = _MONTH_ABBR.get(mon.upper())
@@ -758,7 +805,7 @@ def _parse_activity(
 # ----------------------------------------------------------------- Parser
 class RBCParser:
     NAME = "rbc"
-    VERSION = "2.6.0"
+    VERSION = "2.7.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "RBC Invest Direct":

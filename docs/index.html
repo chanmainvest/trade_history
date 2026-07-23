@@ -373,9 +373,11 @@ The screen has two sides:</p>
 <li><strong>Left</strong> renders only the original physical PDF pages owned by the selected
   logical statement (via PDF.js), with evidence-specific rectangles. Green is
   matched evidence and amber is the selected exact item.</li>
-<li><strong>Right</strong> begins with one concise status, then Transactions, Positions, Cash,
-  and Summary totals. Extraction issues, reconciliation equations, parser
-  diagnostics, and Quarantine rows are below the financial rows.</li>
+<li><strong>Right</strong> begins with one concise status, then groups Transactions, Positions,
+  Cash, and Summary totals by native currency. Cash shows opening and closing
+  separately; statement totals show printed opening, change, and closing when
+  the broker supplies them. Extraction issues, reconciliation equations,
+  parser diagnostics, and Quarantine rows are below the financial rows.</li>
 </ul>
 <p>Click a box on the left to reveal its item on the right without moving the PDF
 pane. Click an item on the right to highlight its box(es) and scroll only the
@@ -651,7 +653,7 @@ the owner rather than copy it.</p>
 <div class="doc-section" id="current-state">
   <div class="section-banner">Current State</div>
   <h1 id="current-state">Current state</h1>
-<p>Implementation review: <strong>2026-07-19</strong>. Parser v2 and the reconciliation engine
+<p>Implementation review: <strong>2026-07-20</strong>. Parser v2 and the reconciliation engine
 were validated in fixtures, full-corpus shadow builds, and a reproducible
 two-build fingerprint comparison. The signed shadow was cut over to the real
 <code>data/ledger.sqlite</code> profile on 2026-07-19; the pre-cutover database remains as
@@ -666,7 +668,7 @@ a timestamped local backup.</p>
 <li>Ingestion stages one validated PDF source in a savepoint and activates it
   atomically. A failed parse, validation, staged write, or explicit skip keeps
   the prior active extraction.</li>
-<li>The current worktree/shadow uses CIBC/RBC/TD parser version <code>2.6.0</code> and HSBC
+<li>The current worktree/shadow uses CIBC/RBC/TD parser version <code>2.7.0</code> and HSBC
   <code>2.5.0</code>.
   They retain semantic source page/line evidence, explicit snapshot scopes,
   and quarantine rather than fabricate unsupported values. Word/box geometry
@@ -679,10 +681,11 @@ a timestamped local backup.</p>
   evidence-specific rectangles and bidirectional pane-local selection, places
   financial rows first, and shows structured scope issues/reconciliation at
   the bottom. Its unresolved/incomplete/unreconciled filters are read-only.</li>
-<li>Schema v10 constrains new ledger currencies to CAD/USD, validates canonical
+<li>Schema v11 constrains new ledger currencies to CAD/USD, validates canonical
   business dates/UTC timestamps and SHA-256 text, and stores replaceable PDF
   geometry separately from <code>ev2</code> semantic evidence. It adds explicit statement
-  pages, scope blockers, and structured reconciliation reasons. Verify reads
+  pages, scope blockers, structured reconciliation reasons, and printed
+  opening/change/closing snapshot totals. Verify reads
   persisted exact links; ambiguous/unmatched rows remain visibly unlinked.</li>
 <li>Transactions exposes initial-position anchors separately from broker events.
   Transactions and Monthly can deep-link exact source rows into Verify; the
@@ -721,6 +724,16 @@ a timestamped local backup.</p>
   result.</li>
 <li>The normal structural checks are run before a phase is completed: Python
   tests, Ruff, the frontend production build, and generated-docs build/check.</li>
+<li>On 2026-07-20, a fresh schema-v11 shadow rebuilt the full unchanged PDF tree
+  with CIBC/RBC/TD <code>2.7.0</code>. A prior two-pass build passed its deterministic
+  content fingerprint; the final fund-code correction was then checked in a
+  fresh one-pass shadow. TD May 2026 owns CAD pages 2–4 and USD pages 6–9;
+  both position/cash/summary scopes are complete and all eight printed total
+  equations reconcile. NTR is +1,000 units and its one-line evidence maps
+  uniquely to physical page 3. The RBC April 2026 reinvestment persists as
+  +21.704 <code>RBF607</code> units at the printed price with zero cash effect. The CIBC
+  May disclosure page is excluded. Targeted TD layout enrichment produced 78
+  exact and 13 unique-token links with zero ambiguous/unmatched evidence.</li>
 <li>On 2026-07-15, <code>ledger shadow build</code> parsed all 338 source PDFs twice into
   <code>data/ledger.vnext.sqlite</code>; both target content fingerprints matched and the
   before/after PDF manifest matched. The shadow contains 548 statements, 757
@@ -1091,7 +1104,7 @@ as completed behavior.</p>
 <p>This document describes the schema currently implemented. Exact SQLite DDL is
 owned by <code>src/ledger/db/schema.sql</code>; exact DuckDB DDL is the <code>DDL</code> string in
 <code>src/ledger/db/duckdb_store.py</code>. Update code and this spec together.</p>
-<h2 id="sqlite-ledger-schema-version-10">SQLite ledger (schema version 10)</h2>
+<h2 id="sqlite-ledger-schema-version-11">SQLite ledger (schema version 11)</h2>
 <p>SQLite has no dedicated date, datetime, or enum storage class. Business dates
 therefore remain canonical <code>YYYY-MM-DD</code> <code>TEXT</code>, and audit timestamps use one
 UTC representation: <code>YYYY-MM-DDTHH:MM:SSZ</code>. Current checks/triggers reject
@@ -1190,6 +1203,9 @@ nullable option columns.</p>
    such as Yahoo <code>BCE.TO</code> or <code>RCI-B.TO</code>. A broker symbol is never rewritten to
    Yahoo punctuation in the ledger.</li>
 </ol>
+<p>Strict printed mutual-fund codes (<code>RBF...</code>, <code>TDB...</code>) may identify a broker
+instrument without claiming the same string is a market-provider symbol.
+Provider mappings remain separate in <code>instrument_market_symbols</code>.</p>
 <p>Provider mappings begin as <code>candidate</code>. A successful non-empty Yahoo history
 fetch changes them to <code>verified</code>; empty/error responses are <code>failed</code> and retain
 the check status. Holdings and market refresh use the provider symbol as the
@@ -1298,6 +1314,10 @@ cash snapshot set. <code>can_clear_omitted</code> is true only for a complete se
 Every <code>partial</code> or <code>unknown</code> parser scope has at least one blocking
 <code>snapshot_scope_issues</code> row with a stable issue code and optional links to its
 evidence/quarantine row. A complete scope cannot have a blocking issue.</p>
+<p>Version 11 also stores optional <code>opening_total</code> and <code>reported_change</code> beside
+the closing <code>reported_total</code>. These are printed statement facts, not inferred
+values. A broker that prints only a closing securities total leaves the
+securities opening/change fields null.</p>
 <p>The canonical holdings service uses <code>snapshot_sets</code> as read-only anchors for
 Monthly, Performance, and Visualisations. It clears omitted rows only from a
 complete scope; a newer partial/unknown scope leaves the prior anchor intact
@@ -1433,7 +1453,7 @@ are derived artifacts.</p>
   -&gt; regenerate derived ingestion audit indexes
 </code></pre></div>
 <p>The registered parsers are CIBC, HSBC, RBC, and TD. CIBC, RBC, and TD report
-<code>2.6.0</code>; HSBC reports <code>2.5.0</code>. Parser, contract, schema, and resolver changes
+<code>2.7.0</code>; HSBC reports <code>2.5.0</code>. Parser, contract, schema, and resolver changes
 intentionally invalidate older active cache entries so a reviewed re-ingest
 exercises the current extraction contract.</p>
 <h2 id="independent-layout-enrichment">Independent layout enrichment</h2>
@@ -1445,10 +1465,16 @@ first restricts candidates to the owning statement's explicit physical pages.
 It accepts a unique persisted page hint, a compatible page/line hint, a unique
 exact line sequence, a unique ordered non-contiguous sequence (for example cash
 opening/closing lines), or one unique contiguous token sequence. Token matches
+first retain the narrowest overlapping line window, so a unique one-line row
+is not made ambiguous by wider windows containing that same row. Matches
 persist the supporting word slice. Repeated candidates are stored as
 <code>ambiguous</code>; unmatched text and PDFs without coordinate lines remain explicit
 statuses. It never changes a transaction, amount, quantity, instrument, scope,
 or semantic evidence key.</p>
+<p>When one semantic cash row is split into adjacent amount/label layout lines
+whose vertical boxes overlap, the matcher may align the uniquely reversed
+token order and retain both rectangles. This handles column extraction order
+without changing the semantic cash evidence.</p>
 <p>Use <code>--source-file-id ID</code> to rebuild one source. The command is intentionally
 CLI-only. A geometry failure rolls back that source's geometry savepoint and
 does not affect active semantic data.</p>
@@ -1512,7 +1538,8 @@ these deterministic steps:</p>
 <li>resolve an exact institution/currency entry in the reviewed listing catalog;</li>
 <li>match an exact reviewed alias, previously resolved candidate, reviewed fund
    lookup, or uniquely known database listing;</li>
-<li>retain a genuinely ticker-shaped printed symbol;</li>
+<li>retain a genuinely ticker-shaped printed symbol or a parser-marked strict
+   broker fund code such as <code>RBF607</code>/<code>TDB3089C</code>;</li>
 <li>match one unambiguous exact identity in the same statement's holdings; or</li>
 <li>queue the public security name in <code>instrument_resolution_candidates</code> and
    mark the financial row <code>unresolved_printed_identity</code> with zero confidence.</li>
@@ -1526,6 +1553,8 @@ null instrument; its printed-name token is never persisted as a ticker. An
 unresolved position is moved to quarantine and its complete scope is downgraded
 to <code>unknown</code>, because a checkpoint cannot safely identify that holding.
 Resolved instrument rows retain their identity provenance.
+An accepted fund code remains a broker identifier; it is not automatically a
+Yahoo/provider symbol.
 This ordering is material: resolving <code>PUT NTR ...</code> as the NTR equity would
 erase expiry/strike/type and create a false negative stock holding.
 <code>ledger ingest repair-symbols</code> remains a legacy/manual maintenance command for
@@ -1640,6 +1669,8 @@ Version 6 adds statement page ownership and structured scope-blocking issues.</p
 <li>Every statement has a defensible account and ISO period.</li>
 <li>Every monetary/position row carries native currency.</li>
 <li>Every recognized row preserves the printed description/raw evidence.</li>
+<li>A visual row spanning two physical lines preserves both lines in order, so
+  geometry can draw one rectangle per supporting line.</li>
 <li>A position-affecting transaction has an instrument or is quarantined. The
   staged resolver may temporarily clear an uncertain printed name only when it
   marks the row <code>unresolved_printed_identity</code>; the later holdings-name
@@ -1674,6 +1705,8 @@ assignment/exercise/expiration, income/interest, transfers/journals,
 deposits/withdrawals, taxes/fees/FX/adjustments, reinvestment, splits, and
 corporate actions. Add a new value only with parser, quantity/cash semantics,
 schema/docs, API, and tests updated together.</p>
+<p><code>reinvest_dividend</code> is a non-cash position movement: quantity increases by the
+printed units while <code>cash_delta</code> is zero. A cash dividend remains <code>dividend</code>.</p>
 <p>For <code>name_change</code>, the shared enrichment accepts explicit phrases such as
 <code>SYMBOL CHANGE FROM FB TO META</code>. It rejects company-name-only text and transfer
 direction words. A generic name change with no explicit pair remains an
@@ -1866,6 +1899,11 @@ reported portfolio total  ~= matching complete position scope + cash scope
 components. Missing, incomplete, or unpriced components remain
 <code>incomplete_input</code>; the engine does not guess that a partial section is a full
 portfolio.</p>
+<p>When a summary scope also prints opening value and period change, a separate
+<code>statement_change</code> result verifies:</p>
+<div class="highlight"><pre><span></span><code>reported_closing_portfolio = reported_opening_portfolio + reported_change
+</code></pre></div>
+<p>The component-total and change equations remain independently visible.</p>
 <h2 id="result-status-and-tolerance">Result status and tolerance</h2>
 <p><code>reconciliation_results</code> uses these statuses:</p>
 <ul>
@@ -2111,6 +2149,11 @@ physical page/overlay before using pane-local scroll math. A right-row click
 scrolls only the PDF pane; a PDF-box click leaves that pane fixed and reveals
 the right row. Only boxes containing that exact reference receive selected
 styling.</p>
+<p>Financial rows are grouped by native currency, then transactions, positions,
+cash, and statement totals. Cash shows opening and closing separately. Total
+rows show printed opening, change, and closing values when available; missing
+printed values remain blank. This keeps dual-currency RBC review within one
+currency block.</p>
 <h2 id="configuration-shape">Configuration shape</h2>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
 <span class="w">  </span><span class="nt">&quot;portfolios&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;all&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;All accounts&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;account_ids&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[]}],</span>
@@ -2397,7 +2440,7 @@ workflow is not a substitute for checking docs in a normal pull request.</p>
   <div class="section-banner">Parser: CIBC</div>
   <h1 id="cibc-parser">CIBC parser</h1>
 <p>Implementation: <code>src/ledger/parsers/cibc.py</code>, parser name <code>cibc</code>, current
-version <code>2.6.0</code>.</p>
+version <code>2.7.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>The parser handles the configured CIBC Imperial Service, Investor's Edge, and
 TFSA folders/text. It extracts <code>###-#####</code> account numbers from text or a
@@ -2447,6 +2490,8 @@ separate positions and cash snapshot scopes.</p>
 <h2 id="remaining-limits">Remaining limits</h2>
 <ul>
 <li>CIBC text can contain <code>ð</code>/dash artifacts and unusually wrapped descriptions.</li>
+<li>Disclosure-only pages with no Account Activity or Portfolio Assets section
+  are excluded from parsing and statement page ownership.</li>
 <li>A new debit/credit layout still needs a fixture or PDF spot-check before its
   event sign mapping is trusted.</li>
 <li>Section completeness is evidence of a recognized printed section, not yet a
@@ -2522,7 +2567,7 @@ continued account pages, cash, and source evidence. See
   <div class="section-banner">Parser: RBC</div>
   <h1 id="rbc-parser">RBC parser</h1>
 <p>Implementation: <code>src/ledger/parsers/rbc.py</code>, parser name <code>rbc</code>, current
-version <code>2.6.0</code>.</p>
+version <code>2.7.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>The parser handles monthly Direct Investing statements and annual investment
 performance reports. Monthly text is split at <code>CDN $</code> / <code>U.S. $</code> blocks; annual
@@ -2569,6 +2614,11 @@ overwrite the first currency while writing the second.</p>
   scope carries a structured evidence-linked blocker.</li>
 <li>Explicit name/symbol/ticker-change activity is retained, but a relationship
   is emitted only when both old and new symbols are printed.</li>
+<li>A dividend followed by a printed fund-series code and <code>REINVEST @</code> becomes
+  <code>reinvest_dividend</code>: printed units and price are retained against the matching
+  mutual-fund holding, with zero cash effect.</li>
+<li>Strict printed <code>RBF###</code>/<code>RBF####</code> codes remain broker identifiers, not
+  inferred market-provider tickers.</li>
 </ul>
 <h2 id="remaining-limits">Remaining limits</h2>
 <ul>
@@ -2589,7 +2639,7 @@ multi-page activity, option transactions, cash, and annual-performance parsing. 
   <div class="section-banner">Parser: TD</div>
   <h1 id="td-webbroker-parser">TD WebBroker parser</h1>
 <p>Implementation: <code>src/ledger/parsers/td.py</code>, parser name <code>td</code>, current version
-<code>2.6.0</code>.</p>
+<code>2.7.0</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>TD PDFs commonly contain separate <code>Direct Trading - CDN</code> and <code>Direct Trading
 - US</code> subaccounts. They remain distinct accounts/currencies. Annual
@@ -2649,6 +2699,16 @@ scope.</p>
 <li>Repeated account/currency fragments accumulate physical pages and cash state.
   Incomplete scopes emit structured blockers linked to the precise quarantine
   and evidence rows.</li>
+<li>Disclosure pages and pages explicitly headed for the other currency account
+  are excluded from sub-statement page ownership.</li>
+<li>One-line holdings retain one evidence line; wrapped holdings and adjusted
+  option contracts retain both printed lines for geometry.</li>
+<li>Account Summary opening/change/ending values plus closing equity and cash
+  totals populate snapshot sets. Unprinted securities opening values are not
+  inferred.</li>
+<li>Strict printed <code>TDB####</code>/<code>TDB####X</code> mutual-fund codes remain broker
+  identifiers, so a complete holdings table is not discarded as a free-form
+  unresolved name.</li>
 </ul>
 <h2 id="remaining-limits">Remaining limits</h2>
 <ul>

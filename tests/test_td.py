@@ -155,7 +155,7 @@ def test_td_repeated_account_fragments_merge_into_one_scope_per_currency():
     assert len(cad.positions) == 1
     assert len(cad.transactions) == 2
     assert len(cad.cash_balances) == 1
-    assert cad.page_numbers == (1, 2, 3)
+    assert cad.page_numbers == (1, 3)
     assert cad.cash_balances[0].opening_balance == 100.0
     assert cad.cash_balances[0].closing_balance == 115.0
     assert cad.transactions[-1].source_span and cad.transactions[-1].source_span.page_number == 3
@@ -168,6 +168,45 @@ def test_td_repeated_account_fragments_merge_into_one_scope_per_currency():
     }
     assert all(scope.issues == [] for scope in cad.snapshot_sets)
     assert validate_parse_result(result).is_valid
+
+
+def test_td_reported_balances_and_multiline_holdings_preserve_source_rows():
+    pdf = load_fixture("td/modern_monthly.txt")
+    pdf.pages[0] = pdf.pages[0].replace(
+        "Account type: Direct Trading - CDN",
+        """Account type: Direct Trading - CDN
+Beginning balance $1,000.00
+Change in your account $10.00
+Ending balance $1,010.00
+Cash 800.00 800.00 79.21%
+Total equities $200.00 $210.00 20.79%""",
+    )
+
+    result = TDParser().parse(pdf)
+    cad = next(row for row in result.statements if row.account.base_currency == "CAD")
+    totals = {scope.section_type: scope for scope in cad.snapshot_sets}
+
+    assert totals["positions"].reported_total == 210.0
+    assert totals["cash"].reported_total == 800.0
+    assert totals["summary"].opening_total == 1_000.0
+    assert totals["summary"].reported_change == 10.0
+    assert totals["summary"].reported_total == 1_010.0
+    usd = next(row for row in result.statements if row.account.base_currency == "USD")
+    velo = next(row for row in usd.positions if row.instrument.symbol == "VELO")
+    assert velo.raw_line.splitlines() == [
+        "VELO3D INC-NEW 2,000 SEG 25.000 50,000.00 50,000.00 0.00 10.00%",
+        "(VELO)",
+    ]
+
+
+def test_td_disclosure_pages_are_not_owned_by_financial_statements():
+    pdf = load_fixture("td/modern_monthly.txt")
+    pdf.pages.append("Account number: AB12CD\nAccount type: Direct Trading - US\nDisclosures")
+    pdf.page_count += 1
+
+    result = TDParser().parse(pdf)
+
+    assert all(pdf.page_count not in statement.page_numbers for statement in result.statements)
 
 
 def test_td_option_holding_skips_harmless_intervening_header_lines():

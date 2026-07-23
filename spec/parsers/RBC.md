@@ -1,7 +1,7 @@
 # RBC parser
 
 Implementation: `src/ledger/parsers/rbc.py`, parser name `rbc`, current
-version `2.6.0`.
+version `2.7.0`.
 
 ## Recognition and account shape
 
@@ -52,6 +52,11 @@ overwrite the first currency while writing the second.
   scope carries a structured evidence-linked blocker.
 - Explicit name/symbol/ticker-change activity is retained, but a relationship
   is emitted only when both old and new symbols are printed.
+- A dividend followed by a printed fund-series code and `REINVEST @` becomes
+  `reinvest_dividend`: printed units and price are retained against the matching
+  mutual-fund holding, with zero cash effect.
+- Strict printed `RBF###`/`RBF####` codes remain broker identifiers, not
+  inferred market-provider tickers.
 
 ## Remaining limits
 

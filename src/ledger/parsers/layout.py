@@ -39,12 +39,15 @@ class PageTextIndex:
         pdf: PdfText,
         *,
         transform: Callable[[str], str] | None = None,
+        include_page: Callable[[int, str], bool] | None = None,
     ) -> PageTextIndex:
         transform = transform or (lambda value: value)
         parts: list[str] = []
         ranges: list[tuple[int, int, int]] = []
         offset = 0
         for page_number, raw_page in enumerate(pdf.pages, start=1):
+            if include_page is not None and not include_page(page_number, raw_page):
+                continue
             page = transform(raw_page)
             if parts:
                 parts.append("\n")
@@ -120,7 +123,11 @@ class SourceLocator:
         # first defensible line rather than assigning a fuzzy coordinate.
         for index in range(start, len(self._lines)):
             line_text = normalize_layout_text(self._lines[index].text)
-            if line_text and (line_text in key or key in line_text):
+            if (
+                len(line_text) >= 12
+                and len(line_text.split()) >= 3
+                and (line_text in key or key in line_text)
+            ):
                 self._cursor[key] = index + 1
                 return self._lines[index]
         return None

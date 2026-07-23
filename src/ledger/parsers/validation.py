@@ -786,6 +786,22 @@ def _validate_statement(
             )
         _finite(
             report,
+            snapshot_set.opening_total,
+            field_name="opening_total",
+            statement_index=statement_index,
+            row_kind=row_kind,
+            row_index=row_index,
+        )
+        _finite(
+            report,
+            snapshot_set.reported_change,
+            field_name="reported_change",
+            statement_index=statement_index,
+            row_kind=row_kind,
+            row_index=row_index,
+        )
+        _finite(
+            report,
             snapshot_set.reported_total,
             field_name="reported_total",
             statement_index=statement_index,

@@ -118,6 +118,32 @@ def _match_evidence(
     # sequence within the statement's physical pages.
     ordered: list[tuple[int, ...]] = []
 
+    def fragment_candidates(start: int, part: str) -> list[tuple[int, ...]]:
+        candidates: list[tuple[int, ...]] = []
+        part_tokens = _tokens(part)
+        for index in range(start, len(lines)):
+            if lines[index].normalized == part and allowed((index,)):
+                candidates.append((index,))
+            if index + 1 >= len(lines):
+                continue
+            first = lines[index].line
+            second = lines[index + 1].line
+            same_visual_row = (
+                first.page_number == second.page_number
+                and first.top is not None
+                and first.bottom is not None
+                and second.top is not None
+                and second.bottom is not None
+                and max(first.top, second.top) <= min(first.bottom, second.bottom)
+            )
+            if (
+                same_visual_row
+                and allowed((index, index + 1))
+                and (*lines[index + 1].tokens, *lines[index].tokens) == part_tokens
+            ):
+                candidates.append((index, index + 1))
+        return candidates
+
     def extend(prefix: tuple[int, ...], part_index: int) -> None:
         if len(ordered) > 1:
             return
@@ -125,10 +151,8 @@ def _match_evidence(
             ordered.append(prefix)
             return
         start = prefix[-1] + 1 if prefix else 0
-        for index in range(start, len(lines)):
-            if lines[index].normalized != parts[part_index] or not allowed((index,)):
-                continue
-            extend((*prefix, index), part_index + 1)
+        for candidate in fragment_candidates(start, parts[part_index]):
+            extend((*prefix, *candidate), part_index + 1)
 
     if len(parts) > 1:
         extend((), 0)
@@ -176,6 +200,16 @@ def _match_evidence(
                     cursor += len(line.tokens)
                 token_candidates.append((indexes, tuple(token_ranges)))
                 break
+    if token_candidates:
+        # A unique one-line match is also contained by overlapping two- and
+        # three-line windows. Prefer the narrowest source span before deciding
+        # that the semantic text itself is repeated.
+        minimum_width = min(len(indexes) for indexes, _ranges in token_candidates)
+        token_candidates = [
+            candidate
+            for candidate in token_candidates
+            if len(candidate[0]) == minimum_width
+        ]
     if len(token_candidates) == 1:
         indexes, ranges = token_candidates[0]
         return _Match(

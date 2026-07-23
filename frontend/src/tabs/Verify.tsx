@@ -365,6 +365,13 @@ function VerifyPane({
     ...data.quarantine.map((row) => refKey("quarantine", row.quarantine_id)),
   ].includes(selectedKey);
 
+  const currencies = [...new Set([
+    ...data.transactions.map((row) => row.currency).filter(Boolean),
+    ...data.positions.map((row) => row.currency).filter(Boolean),
+    ...data.cash_balances.map((row) => row.currency).filter(Boolean),
+    ...data.summary_totals.map((row) => row.currency).filter(Boolean),
+  ] as string[])].sort();
+
   return (
     <div className="verify-layout">
       <div className="verify-pane verify-pdf-pane" ref={pdfScrollRef}>
@@ -390,54 +397,47 @@ function VerifyPane({
         {requestedRefMissing && (
           <p className="inline-status status-error">{t("verify.requested_ref_missing")}</p>
         )}
-        <ItemsGroup
-          title={t("verify.transactions")}
-          rows={data.transactions}
-          render={(r) => `${r.trade_date} ${r.txn_type} ${r.symbol || ""} ${fmt(r.net_amount)} ${r.currency || ""}`}
-          kind="transaction"
-          idOf={(r) => r.transaction_id}
-          titleOf={(r) => r.description || ""}
-          selectedKey={selectedKey}
-          onSelect={(key) => onSelect(key, "right_list")}
-          matchedKeys={firstBoxByRef}
-          itemRefs={itemRefs}
-        />
-        <ItemsGroup
-          title={t("verify.positions")}
-          rows={data.positions}
-          render={(r) => `${r.symbol || ""} ${fmt(r.quantity, 0)} ${fmt(r.market_value)} ${r.currency || ""}`}
-          kind="position"
-          idOf={(r) => r.snapshot_id}
-          titleOf={(r) => r.raw_line || ""}
-          selectedKey={selectedKey}
-          onSelect={(key) => onSelect(key, "right_list")}
-          matchedKeys={firstBoxByRef}
-          itemRefs={itemRefs}
-        />
-        <ItemsGroup
-          title={t("verify.cash")}
-          rows={data.cash_balances}
-          render={(r) => `${r.currency || ""} ${fmt(r.closing_balance)}`}
-          kind="cash"
-          idOf={(r) => r.cash_balance_id}
-          titleOf={(r) => r.raw_line || ""}
-          selectedKey={selectedKey}
-          onSelect={(key) => onSelect(key, "right_list")}
-          matchedKeys={firstBoxByRef}
-          itemRefs={itemRefs}
-        />
-        <ItemsGroup
-          title={t("verify.summary_totals")}
-          rows={data.summary_totals}
-          render={(r) => `${r.currency} ${r.scope_key} ${fmt(r.reported_total)}`}
-          kind="summary"
-          idOf={(r) => r.snapshot_set_id}
-          titleOf={(r) => r.raw_line || ""}
-          selectedKey={selectedKey}
-          onSelect={(key) => onSelect(key, "right_list")}
-          matchedKeys={firstBoxByRef}
-          itemRefs={itemRefs}
-        />
+        {currencies.map((currency) => (
+          <div className="verify-currency-group" key={currency}>
+            <h3>{currency}</h3>
+            <ItemsGroup
+              title={t("verify.transactions")}
+              rows={data.transactions.filter((row) => row.currency === currency)}
+              render={(r) => `${r.trade_date} ${r.txn_type} ${r.symbol || ""} ${fmt(r.net_amount)} ${r.currency || ""}`}
+              kind="transaction" idOf={(r) => r.transaction_id}
+              titleOf={(r) => r.description || ""} selectedKey={selectedKey}
+              onSelect={(key) => onSelect(key, "right_list")}
+              matchedKeys={firstBoxByRef} itemRefs={itemRefs}
+            />
+            <ItemsGroup
+              title={t("verify.positions")}
+              rows={data.positions.filter((row) => row.currency === currency)}
+              render={(r) => `${r.symbol || ""} ${fmt(r.quantity, 0)} ${fmt(r.market_value)} ${r.currency || ""}`}
+              kind="position" idOf={(r) => r.snapshot_id}
+              titleOf={(r) => r.raw_line || ""} selectedKey={selectedKey}
+              onSelect={(key) => onSelect(key, "right_list")}
+              matchedKeys={firstBoxByRef} itemRefs={itemRefs}
+            />
+            <ItemsGroup
+              title={t("verify.cash")}
+              rows={data.cash_balances.filter((row) => row.currency === currency)}
+              render={(r) => `${t("verify.opening")} ${fmt(r.opening_balance)} · ${t("verify.closing")} ${fmt(r.closing_balance)} ${r.currency || ""}`}
+              kind="cash" idOf={(r) => r.cash_balance_id}
+              titleOf={(r) => r.raw_line || ""} selectedKey={selectedKey}
+              onSelect={(key) => onSelect(key, "right_list")}
+              matchedKeys={firstBoxByRef} itemRefs={itemRefs}
+            />
+            <ItemsGroup
+              title={t("verify.summary_totals")}
+              rows={data.summary_totals.filter((row) => row.currency === currency)}
+              render={(r: StatementScope) => `${scopeKindLabel(t, r.section_type)} · ${t("verify.opening")} ${fmt(r.opening_total)} · ${t("verify.change")} ${fmt(r.reported_change)} · ${t("verify.closing")} ${fmt(r.reported_total)}`}
+              kind="summary" idOf={(r) => r.snapshot_set_id}
+              titleOf={(r) => r.raw_line || ""} selectedKey={selectedKey}
+              onSelect={(key) => onSelect(key, "right_list")}
+              matchedKeys={firstBoxByRef} itemRefs={itemRefs}
+            />
+          </div>
+        ))}
         <QualityPanel data={data} />
         <ItemsGroup
           title={t("verify.scope_issues")}

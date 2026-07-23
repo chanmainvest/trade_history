@@ -13,7 +13,13 @@ from ledger.api.routes.statements import _persisted_boxes
 from ledger.db import sqlite as sqlite_db
 from ledger.domains import utc_now_text
 from ledger.identity import canonical_evidence_key
-from ledger.ingest.layout_enrichment import _write_source_geometry
+from ledger.ingest.layout_enrichment import (
+    _match_evidence,
+    _StoredLine,
+    _tokens,
+    _write_source_geometry,
+)
+from ledger.parsers.layout import normalize_layout_text
 from ledger.pdf_text import PdfLine, PdfText, PdfWord
 
 from .db_fixtures import seed_source
@@ -253,6 +259,81 @@ def test_layout_enrichment_links_ordered_noncontiguous_cash_lines(tmp_path):
         "match_method": "ordered_noncontiguous_lines",
     }
     assert link_count == 2
+
+
+def test_layout_token_match_prefers_unique_narrowest_line_window():
+    texts = [
+        "BANK OF EXAMPLE 1,600 SEG 20.000 1.00 2.00 1.00 10.00%",
+        "NUTRIENT EXAMPLE (NTR ) 1,000 SEG 94.410 70,015.00 94,410.00 24,395.00 4.41%",
+    ]
+    lines = [
+        _StoredLine(
+            source_line_id=index,
+            line=PdfLine(
+                page_number=1,
+                line_number=index,
+                text=value,
+                x0=10,
+                top=20 * index,
+                x1=500,
+                bottom=20 * index + 10,
+            ),
+            normalized=normalize_layout_text(value),
+            tokens=_tokens(value),
+            token_words=tuple(range(len(_tokens(value)))),
+        )
+        for index, value in enumerate(texts, start=1)
+    ]
+
+    match = _match_evidence(
+        "NUTRIENT EXAMPLE (NTR) 1,000 SEG 94.410 70,015.00 94,410.00 24,395.00 4.41%",
+        lines,
+        page_hint=None,
+        line_hint=None,
+        allowed_pages=frozenset({1}),
+    )
+
+    assert match.status == "unique_tokens"
+    assert match.line_indexes == (1,)
+
+
+def test_layout_matches_one_semantic_cash_row_split_across_overlapping_lines():
+    texts = [
+        "Beginning cash balance 100.00",
+        "$125.00",
+        "May 31 Ending cash balance",
+    ]
+    tops = [10.0, 40.0, 41.0]
+    lines = [
+        _StoredLine(
+            source_line_id=index,
+            line=PdfLine(
+                page_number=1,
+                line_number=index,
+                text=value,
+                x0=10,
+                top=tops[index - 1],
+                x1=500,
+                bottom=tops[index - 1] + 10,
+            ),
+            normalized=normalize_layout_text(value),
+            tokens=_tokens(value),
+            token_words=tuple(range(len(_tokens(value)))),
+        )
+        for index, value in enumerate(texts, start=1)
+    ]
+
+    match = _match_evidence(
+        "Beginning cash balance 100.00\nMay 31 Ending cash balance $125.00",
+        lines,
+        page_hint=1,
+        line_hint=1,
+        allowed_pages=frozenset({1}),
+    )
+
+    assert match.status == "exact"
+    assert match.method == "ordered_noncontiguous_lines"
+    assert match.line_indexes == (0, 1, 2)
 
 
 def test_schema_v9_rejects_invalid_domains_and_uses_canonical_utc(tmp_path):

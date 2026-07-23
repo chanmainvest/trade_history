@@ -361,6 +361,8 @@ def _write_statement(
             scope_key=parsed_set.scope_key,
             completeness=parsed_set.completeness,
             evidence_id=evidence_id,
+            opening_total=parsed_set.opening_total,
+            reported_change=parsed_set.reported_change,
             reported_total=parsed_set.reported_total,
             validation_status=parsed_set.validation_status,
         )
