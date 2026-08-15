@@ -125,6 +125,18 @@ def _symbol_performance(symbols: list[str], as_of: str, period: str) -> dict[str
     return out
 
 
+def _price_data_through() -> str | None:
+    """Latest trade date present in daily_prices, for freshness badges."""
+    con = _duck()
+    try:
+        row = con.execute("SELECT MAX(trade_date) FROM daily_prices").fetchone()
+    except Exception:
+        return None
+    finally:
+        con.close()
+    return str(row[0]) if row and row[0] else None
+
+
 @router.get("/holdings_by_sector")
 def holdings_by_sector(
     month_end: Annotated[
@@ -163,7 +175,8 @@ def holdings_by_sector(
         r["industry"] = profile.get("industry")
         r["performance_pct"] = performance.get(r["market_symbol"])
     rows.sort(key=lambda r: (r["institution_code"], r["account_number"], r["symbol"], r["currency"]))
-    return {"as_of_date": as_of, "period": period, "rows": rows}
+    return {"as_of_date": as_of, "period": period,
+            "price_data_through": _price_data_through(), "rows": rows}
 
 
 @router.get("/correlation")

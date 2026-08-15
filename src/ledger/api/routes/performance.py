@@ -4,8 +4,10 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+import duckdb
 from fastapi import APIRouter, Query
 
+from ...config import DUCKDB_PATH
 from ...db import sqlite as sqlite_db
 from ...holdings import holding_dates, holdings_at
 
@@ -93,6 +95,24 @@ def _filter_rows(
     return out
 
 
+def _usd_cad_history() -> list[tuple[str, float]]:
+    """USD/CAD daily rates for presentation-only conversion of combined totals."""
+    try:
+        con = duckdb.connect(str(DUCKDB_PATH), read_only=True)
+    except Exception:
+        return []
+    try:
+        rows = con.execute(
+            "SELECT rate_date, rate FROM fx_rates "
+            "WHERE base = 'USD' AND quote = 'CAD' ORDER BY rate_date"
+        ).fetchall()
+    except Exception:
+        return []
+    finally:
+        con.close()
+    return [(str(row[0]), float(row[1])) for row in rows]
+
+
 @router.get("/total")
 def total(
     institution: str | None = Query(None),
@@ -115,6 +135,8 @@ def total(
             include_cash=include_cash,
         ),
         "forward_fill_max_days": FORWARD_FILL_MAX_DAYS if forward_fill else None,
+        # Presentation-only FX so clients can show a combined CAD total.
+        "usd_cad": _usd_cad_history(),
     }
 
 
