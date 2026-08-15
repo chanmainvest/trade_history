@@ -150,35 +150,59 @@ def _seed_market_data(duck_path) -> None:
     target = duckdb.connect(str(duck_path))
     try:
         if real_path.exists() and real_path.resolve() != duck_path.resolve():
-            escaped = str(real_path).replace("'", "''")
-            target.execute(f"ATTACH '{escaped}' AS real_market (READ_ONLY)")
-            ph = ",".join("?" * len(symbols))
-            table_columns = {
-                "daily_prices": "symbol, exchange, currency, trade_date, open, high, low, close, adj_close, volume",
-                "financials_quarterly": "symbol, period_end, fiscal_year, fiscal_q, revenue, gross_profit, operating_income, net_income, eps_basic, eps_diluted, ebitda, total_assets, total_liab, total_equity, cash_and_equiv, long_term_debt, op_cash_flow, free_cash_flow, shares_diluted",
-                "financials_annual": "symbol, period_end, fiscal_year, revenue, gross_profit, operating_income, net_income, eps_basic, eps_diluted, ebitda, total_assets, total_liab, total_equity, op_cash_flow, free_cash_flow, shares_diluted",
-                "dividends": "symbol, ex_date, amount, currency",
-                "splits": "symbol, split_date, ratio",
-                "earnings_events": "symbol, report_date, fiscal_year, fiscal_q, eps_est, eps_actual, surprise",
-            }
+            # Read the real market database through a separate read-only
+            # connection (DuckDB cannot bind the ATTACH path as a parameter).
+            # Every statement below is a fixed literal string.
+            real = duckdb.connect(str(real_path), read_only=True)
             try:
-                for table, columns in table_columns.items():
-                    target.execute(
-                        f"""
-                        INSERT OR REPLACE INTO {table} ({columns})
-                        SELECT {columns} FROM real_market.{table}
-                         WHERE symbol IN ({ph})
-                        """,
-                        symbols,
-                    )
+                df = real.execute("SELECT * FROM daily_prices").fetchdf()
+                df = df[df["symbol"].isin(symbols)]
+                target.register("seed_rows", df)
+                target.execute("INSERT OR REPLACE INTO daily_prices SELECT * FROM seed_rows")
+                target.unregister("seed_rows")
+
+                df = real.execute("SELECT * FROM financials_quarterly").fetchdf()
+                df = df[df["symbol"].isin(symbols)]
+                target.register("seed_rows", df)
                 target.execute(
-                    """
-                    INSERT OR REPLACE INTO fx_rates(base, quote, rate_date, rate)
-                    SELECT base, quote, rate_date, rate FROM real_market.fx_rates
-                    """
+                    "INSERT OR REPLACE INTO financials_quarterly SELECT * FROM seed_rows"
                 )
+                target.unregister("seed_rows")
+
+                df = real.execute("SELECT * FROM financials_annual").fetchdf()
+                df = df[df["symbol"].isin(symbols)]
+                target.register("seed_rows", df)
+                target.execute(
+                    "INSERT OR REPLACE INTO financials_annual SELECT * FROM seed_rows"
+                )
+                target.unregister("seed_rows")
+
+                df = real.execute("SELECT * FROM dividends").fetchdf()
+                df = df[df["symbol"].isin(symbols)]
+                target.register("seed_rows", df)
+                target.execute("INSERT OR REPLACE INTO dividends SELECT * FROM seed_rows")
+                target.unregister("seed_rows")
+
+                df = real.execute("SELECT * FROM splits").fetchdf()
+                df = df[df["symbol"].isin(symbols)]
+                target.register("seed_rows", df)
+                target.execute("INSERT OR REPLACE INTO splits SELECT * FROM seed_rows")
+                target.unregister("seed_rows")
+
+                df = real.execute("SELECT * FROM earnings_events").fetchdf()
+                df = df[df["symbol"].isin(symbols)]
+                target.register("seed_rows", df)
+                target.execute(
+                    "INSERT OR REPLACE INTO earnings_events SELECT * FROM seed_rows"
+                )
+                target.unregister("seed_rows")
+
+                fx = real.execute("SELECT * FROM fx_rates").fetchdf()
+                target.register("seed_rows", fx)
+                target.execute("INSERT OR REPLACE INTO fx_rates SELECT * FROM seed_rows")
+                target.unregister("seed_rows")
             finally:
-                target.execute("DETACH real_market")
+                real.close()
 
         # Add local profile metadata from the synthetic holdings so sector UI is useful.
         for _, sym, atype, _ccy, _shares, _price, sector in HOLDINGS:

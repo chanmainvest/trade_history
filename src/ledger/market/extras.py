@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import date, datetime, timedelta
 from functools import lru_cache
@@ -216,6 +217,30 @@ def _sec_headers() -> dict[str, str]:
     return {"User-Agent": ua, "Accept-Encoding": "gzip, deflate"}
 
 
+_SAFE_TABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _safe_table(name: str) -> str:
+    """DuckDB cannot bind table identifiers; validate before interpolation."""
+    if not _SAFE_TABLE_RE.fullmatch(name):
+        raise ValueError(f"refusing to interpolate unsafe table name: {name!r}")
+    return name
+
+
+# DuckDB cannot bind table identifiers in DML, so the financials refresh uses
+# fixed per-table statements selected by name instead of string interpolation.
+_FINANCIALS_SQL = {
+    "financials_quarterly": (
+        "DELETE FROM financials_quarterly WHERE symbol = ?",
+        "INSERT INTO financials_quarterly SELECT * FROM d",
+    ),
+    "financials_annual": (
+        "DELETE FROM financials_annual WHERE symbol = ?",
+        "INSERT INTO financials_annual SELECT * FROM d",
+    ),
+}
+
+
 @lru_cache(maxsize=1)
 def _sec_company_tickers() -> dict:
     import httpx
@@ -244,10 +269,17 @@ def _sec_companyfacts(symbol: str, freq: str) -> pd.DataFrame:
     import httpx
 
     cik = _sec_cik(symbol)
-    if not cik:
+    # The CIK comes from SEC's own ticker file; pin it to digits so a
+    # manipulated mapping cannot redirect the request path or host.
+    if not re.fullmatch(r"\d{1,10}", cik or ""):
         return pd.DataFrame()
-    url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-    r = httpx.get(url, headers=_sec_headers(), timeout=30)
+    with httpx.Client(
+        base_url="https://data.sec.gov",
+        headers=_sec_headers(),
+        timeout=30,
+        follow_redirects=False,
+    ) as client:
+        r = client.get("/api/xbrl/companyfacts/CIK" + cik + ".json")
     r.raise_for_status()
     facts = r.json().get("facts", {}).get("us-gaap", {})
     rows: dict[date, dict] = {}
@@ -333,9 +365,14 @@ def refresh_financials(*, sleep_s: float = 2.0) -> None:
                     if c not in df.columns:
                         df[c] = None
                 df = df[cols]
-                con.execute(f"DELETE FROM {table} WHERE symbol = ?", [sym])
-                con.register("d", df)
-                con.execute(f"INSERT INTO {table} SELECT * FROM d")
+                if table == "financials_quarterly":
+                    con.execute("DELETE FROM financials_quarterly WHERE symbol = ?", [sym])
+                    con.register("d", df)
+                    con.execute("INSERT INTO financials_quarterly SELECT * FROM d")
+                else:
+                    con.execute("DELETE FROM financials_annual WHERE symbol = ?", [sym])
+                    con.register("d", df)
+                    con.execute("INSERT INTO financials_annual SELECT * FROM d")
                 con.unregister("d")
                 _audit(jsonl, kind=label, symbol=sym, status="ok", rows=int(len(df)))
             time.sleep(sleep_s)

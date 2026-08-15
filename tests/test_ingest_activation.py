@@ -304,17 +304,23 @@ def test_forced_reingest_keeps_active_hash_counts_and_instruments_stable(tmp_pat
     db_path = tmp_path / "ledger.sqlite"
     sqlite_db.init_db(db_path)
     original = _result(_statement(symbol="ABC"))
+
+    def _row_counts(conn) -> dict:
+        return {
+            "statements": conn.execute("SELECT COUNT(*) FROM statements").fetchone()[0],
+            "transactions": conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
+            "position_snapshots": conn.execute(
+                "SELECT COUNT(*) FROM position_snapshots"
+            ).fetchone()[0],
+            "cash_balances": conn.execute("SELECT COUNT(*) FROM cash_balances").fetchone()[0],
+            "instruments": conn.execute("SELECT COUNT(*) FROM instruments").fetchone()[0],
+        }
+
     with sqlite_db.session(db_path) as conn:
         first = _activate(conn, deepcopy(original))
-        first_counts = {
-            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in ("statements", "transactions", "position_snapshots", "cash_balances", "instruments")
-        }
+        first_counts = _row_counts(conn)
         second = _activate(conn, deepcopy(original))
-        second_counts = {
-            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in ("statements", "transactions", "position_snapshots", "cash_balances", "instruments")
-        }
+        second_counts = _row_counts(conn)
         active_hash = conn.execute(
             "SELECT content_hash FROM ingestion_runs WHERE ingestion_run_id = ?",
             (second["ingestion_run_id"],),

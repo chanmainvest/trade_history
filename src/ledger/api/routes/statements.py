@@ -28,7 +28,9 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     ).fetchone()
     if exists is None:
         return set()
-    return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
+    return {
+        str(row["name"]) for row in conn.execute("SELECT name FROM pragma_table_info(?)", (table,))
+    }
 
 
 def _source_file_fields(conn: sqlite3.Connection, alias: str = "sf") -> tuple[str, str]:

@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -205,9 +206,22 @@ def create_server() -> Any:
         api_path = _normalize_api_path(path)
         if not _api_path_allowed(api_path):
             return {"ok": False, "error": "API path is not allowlisted", "path": api_path}
+        # The tool only ever talks to the local Ledger API; reject any base
+        # URL that is not plain http on a loopback host.
+        base = urlsplit(base_url)
+        allowed_hosts = {"localhost", "127.0.0.1", "::1"}
+        if (
+            base.scheme != "http"
+            or base.hostname not in allowed_hosts
+            or base.username
+            or base.password
+            or base.query
+            or base.fragment
+        ):
+            return {"ok": False, "error": "base_url must target the local API", "base_url": base_url}
         url = base_url.rstrip("/") + api_path
         try:
-            response = httpx.get(url, params=params or {}, timeout=timeout_seconds)
+            response = httpx.get(url, params=params or {}, timeout=timeout_seconds, follow_redirects=False)
         except httpx.HTTPError as exc:
             return {"ok": False, "url": url, "error": str(exc)}
         out: dict[str, Any] = {"ok": response.is_success, "status_code": response.status_code, "url": str(response.url)}

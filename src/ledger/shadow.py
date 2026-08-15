@@ -107,7 +107,10 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
 def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
     if not _table_exists(conn, table):
         return set()
-    return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
+    return {
+        str(row["name"])
+        for row in conn.execute("SELECT name FROM pragma_table_info(?)", (table,))
+    }
 
 
 def _row_value(row: sqlite3.Row, column: str, default=None):
@@ -1171,7 +1174,11 @@ def _table_counts(path: Path | str) -> dict[str, int]:
     )
     with _readonly_connection(path) as conn:
         return {
-            table: int(conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"])
+            table: int(
+                conn.execute(
+                    f"SELECT COUNT(*) AS n FROM {sqlite_db.safe_identifier(table)}"
+                ).fetchone()["n"]
+            )
             if _table_exists(conn, table)
             else 0
             for table in tables
@@ -1553,7 +1560,9 @@ def _coverage_summary(path: Path | str) -> dict[str, object]:
                 columns = _columns(conn, table)
                 if not {"statement_id", "currency"}.issubset(columns):
                     continue
-                for row in conn.execute(f"SELECT statement_id, currency FROM {table}"):
+                for row in conn.execute(
+                    f"SELECT statement_id, currency FROM {sqlite_db.safe_identifier(table)}"
+                ):
                     currencies_by_statement.setdefault(int(row["statement_id"]), set()).add(
                         str(row["currency"])
                     )
