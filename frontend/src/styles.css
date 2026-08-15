@@ -501,6 +501,39 @@ h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
   vertical-align: middle;
 }
 
+.snapshot-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.snapshot-group > span:first-child {
+  color: var(--fg-dim);
+}
+.snapshot-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.snapshot-picker select {
+  min-width: 168px;
+}
+.snapshot-compare-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-left: 1px solid var(--border, #333);
+  border-right: 1px solid var(--border, #333);
+}
+.snapshot-quick {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 4px;
+}
+.snapshot-quick button {
+  padding: 2px 7px;
+}
+
 .workflow-stack {
   display: flex;
   flex-direction: column;

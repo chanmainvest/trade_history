@@ -10,7 +10,7 @@ it updates preferences in JSON, not SQLite.
 |---|---|---|
 | root | `GET /health` | liveness and app identity |
 | `/transactions` | list (including read-only opening positions), accounts, referenced symbols, transaction types, latest date | Transactions/filter controls |
-| `/monthly` | `GET /snapshot`, `GET /diff` | canonical point-in-time holdings and comparison |
+| `/monthly` | `GET /dates`, `GET /snapshot`, `GET /diff` | canonical point-in-time holdings and comparison |
 | `/performance` | `GET /total`, `GET /cash` | canonical holdings value series and reported cash checkpoints |
 | `/research` | `GET /prices`, `/trades`, `/financials` | dated multi-ticker security research |
 | `/viz` | `GET /holdings_by_sector`, `/correlation`, `/rrg` | visual analytics |
@@ -24,7 +24,13 @@ reconciliation-rebuild endpoints in the current route set.
 
 1. Transactions: filterable ledger events and explicit opening positions.
 2. Monthly: snapshot/date comparison and native/converted totals; the active
-   portfolio comes from the top-bar selector.
+   portfolio comes from the top-bar selector. Snapshot dates are chosen from
+   `GET /monthly/dates` (dates that hold a complete checkpoint) via a
+   month-stepper picker — prev/next arrows plus a dropdown grouped by year —
+   never a free-form calendar. A Compare toggle reveals a second picker with
+   swap and quick ranges (1M/3M/6M/YTD/1Y snapped to the nearest available
+   date); the resolved checkpoint date is displayed when it differs from the
+   selection.
 3. Performance: native-currency value/cash history with bounded forward fill.
 4. Research: price, trade, and fundamental detail; moving averages use full
    fetched history before the visible period is clipped. Dated ticker lineages

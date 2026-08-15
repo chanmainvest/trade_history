@@ -7,6 +7,61 @@ import { usePortfolio } from "../portfolio";
 import { SmartSelect } from "../SmartSelect";
 import { useI18n } from "../i18n";
 
+type SnapshotLabel = { date: string; label: string; year: string };
+
+function snapshotLabel(iso: string, locale: string): SnapshotLabel {
+  const parsed = new Date(`${iso}T00:00:00`);
+  const monthYear = new Intl.DateTimeFormat(locale, { month: "short", year: "numeric" }).format(parsed);
+  return { date: iso, label: `${monthYear} · ${iso}`, year: iso.slice(0, 4) };
+}
+
+function SnapshotPicker({ value, dates, locale, onChange, title }: {
+  value: string;
+  dates: string[];
+  locale: string;
+  onChange: (iso: string) => void;
+  title: string;
+}) {
+  const { t } = useI18n();
+  const labels = useMemo(() => dates.map((d) => snapshotLabel(d, locale)), [dates, locale]);
+  const index = dates.indexOf(value);
+  const byYear = useMemo(() => {
+    const groups = new Map<string, SnapshotLabel[]>();
+    for (const label of labels) {
+      groups.set(label.year, [...(groups.get(label.year) || []), label]);
+    }
+    return Array.from(groups.entries());
+  }, [labels]);
+  return (
+    <span className="snapshot-picker">
+      <button type="button" title={t("monthly.prev_snapshot")} aria-label={t("monthly.prev_snapshot")}
+              disabled={index <= 0} onClick={() => onChange(dates[index - 1])}>◀</button>
+      <select value={index >= 0 ? value : ""} title={title}
+              onChange={(e) => onChange(e.target.value)}>
+        {index < 0 && value && <option value={value}>{value}</option>}
+        {byYear.map(([year, options]) => (
+          <optgroup key={year} label={year}>
+            {options.map((option) => <option key={option.date} value={option.date}>{option.label}</option>)}
+          </optgroup>
+        ))}
+      </select>
+      <button type="button" title={t("monthly.next_snapshot")} aria-label={t("monthly.next_snapshot")}
+              disabled={index < 0 || index >= dates.length - 1}
+              onClick={() => onChange(dates[index + 1])}>▶</button>
+    </span>
+  );
+}
+
+function monthsBefore(iso: string, months: number): string {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setMonth(d.getMonth() - months);
+  return d.toISOString().slice(0, 10);
+}
+
+function startOfYear(iso: string): string {
+  return `${iso.slice(0, 4)}-01-01`;
+}
+
 function fmtNum(n: number | null | undefined, dec = 2) {
   if (n === null || n === undefined) return "";
   return n.toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -78,17 +133,39 @@ type Col =
 
 export default function Monthly() {
   const { activeAccountIds, config } = usePortfolio();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const showSourceLinks = config?.show_source_links ?? true;
+  const locale = lang === "en" ? "en-CA" : lang;
 
+  const datesQ = useQuery({
+    queryKey: ["snap-dates", activeAccountIds],
+    queryFn: () => api.monthlyDates({
+      account_id: activeAccountIds.length > 0 ? activeAccountIds : undefined,
+    }),
+  });
+  const snapshotDates = useMemo(() => datesQ.data?.dates ?? [], [datesQ.data]);
   const latestQ = useQuery({ queryKey: ["latest-date"], queryFn: api.latestDate });
-  const latest = latestQ.data?.latest || "";
+  const latest = snapshotDates.length
+    ? snapshotDates[snapshotDates.length - 1]
+    : (latestQ.data?.latest || "");
 
-  // Default both dates to the most recent snapshot.
+  // B is the snapshot being viewed; A is the optional comparison point.
   const [b, setB] = useState<string>("");
   const [a, setA] = useState<string>("");
+  const [compare, setCompare] = useState(false);
   const effectiveB = b || latest;
-  const effectiveA = a || effectiveB;
+  const effectiveA = compare ? (a || effectiveB) : effectiveB;
+
+  const bIndex = snapshotDates.indexOf(effectiveB);
+  const prevOfB = bIndex > 0 ? snapshotDates[bIndex - 1] : "";
+
+  function snapAtOrBefore(iso: string): string {
+    const candidates = snapshotDates.filter((d) => d <= iso);
+    return candidates.length ? candidates[candidates.length - 1] : snapshotDates[0] || iso;
+  }
+  function setQuickRange(target: string) {
+    setA(snapAtOrBefore(target));
+  }
 
   const [instFilter, setInstFilter] = useState<string[]>([]);
   const [acctFilter, setAcctFilter] = useState<string[]>([]);
@@ -196,21 +273,54 @@ export default function Monthly() {
     <>
       <h2>{t("nav.monthly")}</h2>
       <div className="filters">
-        <label>{t("f.as_of")}:&nbsp;
-          <input type="date" value={effectiveB} onChange={(e) => setB(e.target.value)} />
+        <label className="snapshot-group">
+          <span>{t("monthly.snapshot")}</span>
+          <SnapshotPicker value={effectiveB} dates={snapshotDates} locale={locale}
+                          onChange={setB} title={t("monthly.snapshot")} />
         </label>
-        <label>{t("f.compare_to")}:&nbsp;
-          <input type="date" value={effectiveA} onChange={(e) => setA(e.target.value)} />
+        <label className="snapshot-compare-toggle">
+          <input type="checkbox" checked={compare}
+                 onChange={(e) => {
+                   setCompare(e.target.checked);
+                   if (e.target.checked && !a && prevOfB) setA(prevOfB);
+                 }} />
+          <span>{t("monthly.compare")}</span>
         </label>
-        <button type="button" onClick={() => setA(effectiveB)} disabled={!effectiveB || effectiveA === effectiveB}>
-          {t("monthly.sync_compare")}
-        </button>
+        {compare && (
+          <label className="snapshot-group">
+            <span>{t("monthly.compare_vs")}</span>
+            <SnapshotPicker value={effectiveA} dates={snapshotDates} locale={locale}
+                            onChange={setA} title={t("monthly.compare_vs")} />
+            <button type="button" title={t("monthly.swap")} aria-label={t("monthly.swap")}
+                    onClick={() => { const nextA = effectiveB; setB(effectiveA); setA(nextA); }}>
+              ⇄
+            </button>
+            {effectiveB && (
+              <span className="snapshot-quick">
+                {([["1M", monthsBefore(effectiveB, 1)],
+                   ["3M", monthsBefore(effectiveB, 3)],
+                   ["6M", monthsBefore(effectiveB, 6)],
+                   ["YTD", startOfYear(effectiveB)],
+                   ["1Y", monthsBefore(effectiveB, 12)]] as const).map(([label, target]) => (
+                  <button key={label} type="button"
+                          title={interpolate(t("monthly.quick_range"), { date: snapAtOrBefore(target) })}
+                          onClick={() => setQuickRange(target)}>{label}</button>
+                ))}
+              </span>
+            )}
+          </label>
+        )}
         <SmartSelect label={t("f.institution")} options={instOpts} value={instFilter} onChange={setInstFilter} />
         <SmartSelect label={t("f.account")} options={acctOpts} value={acctFilter} onChange={setAcctFilter} />
         <label><input type="checkbox" checked={hideZero}
                       onChange={(e) => setHideZero(e.target.checked)} />&nbsp;{t("monthly.hide_zero")}</label>
         <span className="muted">{filtered.length} {t("monthly.rows")}</span>
       </div>
+      {snapQ.data?.as_of_date && snapQ.data.as_of_date !== effectiveB && (
+        <p className="muted" style={{ margin: "0 0 8px" }}>
+          {interpolate(t("monthly.resolved_as_of"), { date: snapQ.data.as_of_date })}
+        </p>
+      )}
 
       <div className="card">
         <h3>{t("monthly.totals_as_of")} {effectiveB || `(${t("monthly.no_data")})`}</h3>

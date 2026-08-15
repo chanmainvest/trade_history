@@ -2083,7 +2083,7 @@ it updates preferences in JSON, not SQLite.</p>
 </tr>
 <tr>
 <td><code>/monthly</code></td>
-<td><code>GET /snapshot</code>, <code>GET /diff</code></td>
+<td><code>GET /dates</code>, <code>GET /snapshot</code>, <code>GET /diff</code></td>
 <td>canonical point-in-time holdings and comparison</td>
 </tr>
 <tr>
@@ -2119,7 +2119,13 @@ reconciliation-rebuild endpoints in the current route set.</p>
 <ol>
 <li>Transactions: filterable ledger events and explicit opening positions.</li>
 <li>Monthly: snapshot/date comparison and native/converted totals; the active
-   portfolio comes from the top-bar selector.</li>
+   portfolio comes from the top-bar selector. Snapshot dates are chosen from
+   <code>GET /monthly/dates</code> (dates that hold a complete checkpoint) via a
+   month-stepper picker — prev/next arrows plus a dropdown grouped by year —
+   never a free-form calendar. A Compare toggle reveals a second picker with
+   swap and quick ranges (1M/3M/6M/YTD/1Y snapped to the nearest available
+   date); the resolved checkpoint date is displayed when it differs from the
+   selection.</li>
 <li>Performance: native-currency value/cash history with bounded forward fill.</li>
 <li>Research: price, trade, and fundamental detail; moving averages use full
    fetched history before the visible period is clipped. Dated ticker lineages

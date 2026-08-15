@@ -37,6 +37,8 @@ export const api = {
   txnTypes: () => getJSON<{ rows: string[] }>("/transactions/txn-types"),
   latestDate: () => getJSON<{ latest: string | null }>("/transactions/latest-date"),
 
+  monthlyDates: (p: { account_id?: number[] } = {}) =>
+    getJSON<{ dates: string[] }>("/monthly/dates", p),
   monthlySnapshot: (p: { month_end?: string; account_id?: number[] } = {}) =>
     getJSON<{ as_of_date: string; rows: HoldingRow[]; totals?: SnapshotTotals }>("/monthly/snapshot", p),
   monthlyDiff: (p: { a: string; b: string; account_id?: number[] }) =>

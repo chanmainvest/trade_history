@@ -9,7 +9,7 @@ import duckdb
 from fastapi import APIRouter, Query
 
 from ...config import DUCKDB_PATH
-from ...holdings import holdings_at, latest_holdings_date
+from ...holdings import holding_dates, holdings_at, latest_holdings_date
 
 router = APIRouter(prefix="/monthly", tags=["monthly"])
 
@@ -85,6 +85,17 @@ def _snapshot_totals(rows: list[dict], as_of: str) -> dict:
         combined["cad_usd"] = cad_to_usd
         combined["usd_fx_date"] = usd_fx_date
     return {"native": native, "combined": combined}
+
+
+@router.get("/dates")
+def dates(account_id: str | None = Query(None)) -> dict:
+    """Snapshot dates that hold a complete checkpoint for the selected accounts.
+
+    Lets clients offer a picker of dates that actually have data instead of a
+    full calendar where most days resolve to an older snapshot.
+    """
+    accts = _csv_ints(account_id)
+    return {"dates": holding_dates(accts)}
 
 
 @router.get("/snapshot")

@@ -443,3 +443,43 @@ def test_monthly_holdings_include_cash_rows_and_converted_totals(tmp_path, monke
     assert totals["native"] == {"CAD": 125.0, "USD": 10.0}
     assert totals["combined"]["CAD"] == 137.5
     assert totals["combined"]["USD"] == 110.0
+
+
+def test_monthly_dates_lists_available_snapshot_dates(tmp_path, monkeypatch):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id, source_id = _seed_account(conn)
+        january = _seed_statement(conn, account_id, source_id, "2024-01-31")
+        february = _seed_statement(conn, account_id, source_id, "2024-02-29")
+        instrument_id = sqlite_db.upsert_instrument(
+            conn, asset_type="equity", symbol="ABC", currency="CAD"
+        )
+        seed_position(
+            conn,
+            statement_id=january,
+            instrument_id=instrument_id,
+            quantity=10,
+            market_value=100,
+            currency="CAD",
+        )
+        seed_position(
+            conn,
+            statement_id=february,
+            instrument_id=instrument_id,
+            quantity=11,
+            market_value=110,
+            currency="CAD",
+        )
+
+    from ledger.holdings import holding_dates as real_holding_dates
+
+    monkeypatch.setattr(
+        monthly_route,
+        "holding_dates",
+        lambda account_ids: real_holding_dates(account_ids, path=db_path),
+    )
+    assert monthly_route.dates(account_id=None) == {
+        "dates": ["2024-01-31", "2024-02-29"]
+    }
+    assert monthly_route.dates(account_id="999999") == {"dates": []}
