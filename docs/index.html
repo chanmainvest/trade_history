@@ -2197,6 +2197,13 @@ Native-currency totals remain primary; CAD/USD conversions display their rate
 and rate date. When both currencies are present but no FX rate exists for the
 as-of date, the UI shows per-currency totals only and a hint that the combined
 total is unavailable.</p>
+<p><code>GET /performance/total</code> also returns <code>usd_cad</code> (date, rate) pairs from the
+market database so Performance can draw a presentation-only combined
+CAD-equivalent series; the rate and rate date are shown next to it. <code>GET
+/viz/holdings_by_sector</code> returns <code>price_data_through</code> (latest <code>daily_prices</code>
+trade date). Research computes its summary strip (last close, period change,
+52-week range) client-side from the fetched price rows. All three analysis
+tabs show the price-data date and warn when it is a week or more stale.</p>
 <h2 id="frontend-rules">Frontend rules</h2>
 <ul>
 <li>Use React Query for server data and component state only for UI concerns.</li>
@@ -2210,6 +2217,12 @@ total is unavailable.</p>
 <li>Source icons in Transactions and Monthly obey <code>show_source_links</code>; they deep
   link only when the server reports exact/unique geometry and are absent when
   no defensible source reference exists. IDs alone never promise linkability.</li>
+<li>The treemap sizes rectangles in each holding's native currency, states the
+  per-currency totals, and never silently converts; the gain/loss/no-data
+  color legend is rendered above the chart.</li>
+<li>Performance can overlay a benchmark ETF (rebased % from the selected
+  period start) alongside the native-currency and combined CAD-equivalent
+  series; selecting a benchmark forces the % view.</li>
 <li>A frontend change must pass <code>npm run build</code>.</li>
 </ul>
 </div>
