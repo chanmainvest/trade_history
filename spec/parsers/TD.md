@@ -44,8 +44,9 @@ scope.
   `12M` are never treated as the quantity. Legacy rows that print quantity
   before the fund name use their separate leading-quantity grammar.
 - Signed balances accept `-$...`; February options accept both TD's `FE` and
-  `FB` codes; activity verbs are case-insensitive. The current-period state
-  machine stops at the printed pending-activity boundary.
+  `FB` month codes. Activity-line option tokens reject month/day combinations
+  that do not map to a valid expiry. Activity verbs are case-insensitive. The
+  current-period state machine stops at the printed pending-activity boundary.
 - In-kind transfers retain their security quantity/instrument with zero cash.
   `Disposition`, Web Banking transfers, paper-statement fees, cheques,
   interest rebates, cash-in-lieu, and capital-gain distributions retain their

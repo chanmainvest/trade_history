@@ -217,6 +217,10 @@ def _split_sections(text: str) -> list[tuple[str, str, str]]:
 
 
 # ------------------------------------------------------------- Activity rows
+_RE_OPTION_CALL_PUT = re.compile(r"\b(?:CALL|PUT)\b")
+_RE_OPEN_CONTRACT = re.compile(r"\bOPEN\s+CONTRACT\b")
+
+
 ACTIVITY_VERBS = {
     "Bought": "buy", "Sold": "sell",
     "Dividend": "dividend", "Distribution": "distribution",
@@ -247,12 +251,13 @@ def _classify_activity(verb: str, raw: str) -> TxnType | None:
     v = verb.strip()
     if v in ACTIVITY_VERBS:
         t = ACTIVITY_VERBS[v]
-        # Refine option open/close on Bought/Sold based on token presence.
-        if t in {"buy", "sell"} and ("CALL " in raw or "PUT " in raw or "CALL." in raw or "PUT." in raw):
+        # Refine option open/close on Bought/Sold; require CALL/PUT tokens and
+        # an explicit OPEN CONTRACT phrase so issuer names like Open Text stay equity.
+        if t in {"buy", "sell"} and _RE_OPTION_CALL_PUT.search(raw):
+            is_open = _RE_OPEN_CONTRACT.search(raw) is not None
             if v == "Bought":
-                return "option_buy_to_open" if "OPEN CONTRACT" in raw or "OPEN" in raw else "option_buy_to_close"
-            else:
-                return "option_sell_to_open" if "OPEN CONTRACT" in raw or "OPEN" in raw else "option_sell_to_close"
+                return "option_buy_to_open" if is_open else "option_buy_to_close"
+            return "option_sell_to_open" if is_open else "option_sell_to_close"
         return t
     return None
 

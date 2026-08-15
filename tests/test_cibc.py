@@ -1,7 +1,7 @@
 """Self-contained tests for the CIBC parser."""
 from __future__ import annotations
 
-from ledger.parsers.cibc import CIBCParser
+from ledger.parsers.cibc import CIBCParser, _classify_activity
 from ledger.parsers.validation import validate_parse_result
 
 from .fixture_loader import load_fixture
@@ -179,3 +179,15 @@ def test_cibc_unknown_dated_numeric_activity_marks_cash_scope_incomplete():
 
     assert cad_cash_scope.completeness == "unknown"
     assert any("Mystery Event" in row.raw_line for row in statement.quarantine)
+
+
+def test_cibc_classify_activity_ignores_open_in_equity_issuer_names():
+    assert _classify_activity("Bought", "OPEN TEXT CORP 100 45.50 $4,550.00") == "buy"
+    assert _classify_activity(
+        "Bought",
+        "CALL .XYZ DEC 15 2023 100 2 1.500",
+    ) == "option_buy_to_close"
+    assert _classify_activity(
+        "Sold",
+        "PUT .ABC JAN 20 2024 50 OPEN CONTRACT 1 2.00",
+    ) == "option_sell_to_open"

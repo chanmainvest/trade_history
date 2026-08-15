@@ -480,6 +480,21 @@ def _scope_issues_from_quarantine(
     return issues
 
 
+def _valid_td_option_token(yy: str, dd: str, mon: str) -> bool:
+    """Reject option-token regex matches with non-month codes or invalid days."""
+    month = {**_OPT_MON, "FB": 2}.get(mon.upper())
+    if month is None:
+        return False
+    if dd:
+        try:
+            day = int(dd)
+        except ValueError:
+            return False
+        if day < 1 or day > 31:
+            return False
+    return _option_expiry(yy, dd, mon) is not None
+
+
 def _option_expiry(yy: str, dd: str, mon: str) -> str | None:
     # TD uses both FE and FB for February across statement generations.
     m = {**_OPT_MON, "FB": 2}.get(mon.upper())
@@ -991,6 +1006,10 @@ def _parse_activity(body: str, currency: str, year_end: int,
         nums = re.findall(r"-?[\d,]+(?:\.\d+)?", desc)
         # An option token in description?
         m_opt = RE_OPT_TOKEN.search(desc)
+        if m_opt:
+            cp, root, yy, dd, mon, strike = m_opt.groups()
+            if not _valid_td_option_token(yy, dd, mon):
+                m_opt = None
         if m_opt:
             cp, root, yy, dd, mon, strike = m_opt.groups()
             expiry = _option_expiry(yy, dd, mon)

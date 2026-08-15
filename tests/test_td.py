@@ -1,7 +1,7 @@
 """Self-contained tests for the TD parser."""
 from ledger.db import sqlite as sqlite_db
 from ledger.ingest.identity_resolution import resolve_parse_result
-from ledger.parsers.td import TDParser
+from ledger.parsers.td import TDParser, _valid_td_option_token
 from ledger.parsers.validation import validate_parse_result
 
 from .fixture_loader import load_fixture
@@ -400,3 +400,10 @@ def test_td_summary_filename_emits_annual_statement():
     assert statement.statement_type == "annual"
     assert statement.period_start == "2023-01-01"
     assert statement.period_end == "2023-12-31"
+
+
+def test_td_option_token_rejects_invalid_month_codes():
+    assert _valid_td_option_token("26", "13", "FB") is True
+    assert _valid_td_option_token("26", "", "FB") is True
+    assert _valid_td_option_token("26", "13", "GD") is False
+    assert _valid_td_option_token("26", "32", "FB") is False

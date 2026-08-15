@@ -29,7 +29,9 @@ separate positions and cash snapshot scopes.
   markers. If an option event prints only a strike, its quantity remains null
   and the row is quarantined for review.
 - Equity tickers can be parenthesized; options retain CIBC's printed
-  `CALL/PUT .ROOT MON DD YYYY STRIKE` identity. Mutual funds can remain
+  `CALL/PUT .ROOT MON DD YYYY STRIKE` identity. Option buy/sell refinement
+  requires `\b(CALL|PUT)\b` tokens and an explicit `OPEN CONTRACT` phrase so
+  issuer names containing `OPEN` stay equity. Mutual funds can remain
   printed-name identities pending a reviewed fund-code lookup. The staged
   resolver either proves the identity or removes the pseudo-token before
   persistence.

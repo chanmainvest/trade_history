@@ -75,7 +75,11 @@ RE_ACCT_TYPE = re.compile(r"^\s*(Margin|Cash|RRSP|TFSA|RRIF|RESP|LIRA)\s*-\s*(Lo
                           re.IGNORECASE | re.MULTILINE)
 
 # Activity row: "JAN. 06 BOUGHT NUTRIEN LTD ..." — we capture date prefix.
-RE_ACT_DATE = re.compile(r"^([A-Z]+)\.?\s*(\d{1,2})\s+([A-Z][A-Z0-9 .'/&-]+?)\s+(.*)$")
+RE_ACT_DATE = re.compile(
+    r"^(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\.?\s*(\d{1,2})\s+"
+    r"([A-Z][A-Z0-9 .'/&-]+?)\s+(.*)$",
+    re.IGNORECASE,
+)
 RE_OPENING_BAL = re.compile(r"Opening\s*Balance\s*\([^)]+\)\s+\$?\s*\(?(-?[\d,]+(?:\.\d+)?)\)?")
 RE_CLOSING_BAL = re.compile(r"Closing\s*Balance\s*\([^)]+\)\s+\$?\s*\(?(-?[\d,]+(?:\.\d+)?)\)?")
 
