@@ -111,14 +111,20 @@ reported-versus-reconstructed state, reconciliation status/reason, price/date
 status, and quality warnings. Monthly renders checkpoint date, holding state,
 reconciliation state, and compact incomplete/reconciliation/pricing warnings.
 Native-currency totals remain primary; CAD/USD conversions display their rate
-and rate date.
+and rate date. When both currencies are present but no FX rate exists for the
+as-of date, the UI shows per-currency totals only and a hint that the combined
+total is unavailable.
 
 ## Frontend rules
 
 - Use React Query for server data and component state only for UI concerns.
 - Add translated strings in `frontend/src/i18n.tsx`.
 - Use CSS variables for theme colors and `plotlyTheme()` for charts.
-- Keep account filtering consistent with the active portfolio.
+- Keep account filtering consistent with the active portfolio. Transactions
+  exposes an explicit **All accounts** control when a portfolio is active so
+  users can bypass the portfolio filter without selecting individual accounts.
+- Verify renders PDF pages lazily as they enter the viewport; evidence overlays
+  size to the PDF.js viewport so boxes stay aligned with the rendered canvas.
 - Source icons in Transactions and Monthly obey `show_source_links`; they deep
   link only when the server reports exact/unique geometry and are absent when
   no defensible source reference exists. IDs alone never promise linkability.

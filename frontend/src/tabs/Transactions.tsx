@@ -80,6 +80,7 @@ export default function Transactions() {
   const [end, setEnd] = useState("");
   const [institutions, setInstitutions] = useState<string[]>([]);
   const [accountIds, setAccountIds] = useState<string[]>([]);
+  const [showAllAccounts, setShowAllAccounts] = useState(false);
   const [symbols, setSymbols] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
   const [minAbs, setMinAbs] = useState(0);
@@ -113,11 +114,13 @@ export default function Transactions() {
 
   // If a portfolio is set AND the user hasn't manually picked accounts,
   // restrict the query to the portfolio's accounts.
-  const effectiveAcctIds = accountIds.length > 0
-    ? accountIds
-    : activeAccountIds.length > 0
-      ? activeAccountIds.map(String)
-      : [];
+  const effectiveAcctIds = showAllAccounts
+    ? []
+    : accountIds.length > 0
+      ? accountIds
+      : activeAccountIds.length > 0
+        ? activeAccountIds.map(String)
+        : [];
 
   const txnsQ = useQuery({
     queryKey: ["txns", start, end, institutions, effectiveAcctIds, symbols, types, minAbs],
@@ -283,7 +286,15 @@ export default function Transactions() {
         <input type="date" value={start} onChange={(e) => setStart(e.target.value)} title={t("f.start")} />
         <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} title={t("f.end")} />
         <SmartSelect label={t("f.institution")} options={instOptions} value={institutions} onChange={setInstitutions} />
-        <SmartSelect label={t("f.account")} options={acctOptions} value={accountIds} onChange={setAccountIds} />
+        <SmartSelect
+          label={t("f.account")}
+          options={acctOptions}
+          value={accountIds}
+          onChange={(value) => {
+            setShowAllAccounts(false);
+            setAccountIds(value);
+          }}
+        />
         <SmartSelect label={t("f.symbol")} options={symOptions} value={symbols} onChange={setSymbols} />
         <SmartSelect label={t("f.type")} options={typeOptions} value={types} onChange={setTypes} />
         <label>{t("f.min_abs_amount")}:&nbsp;
@@ -299,8 +310,20 @@ export default function Transactions() {
         {txnsQ.data?.has_more && (
           <span className="tag accent">limited to first {txnsQ.data.count.toLocaleString()} rows</span>
         )}
-        {activeAccountIds.length > 0 && accountIds.length === 0 && (
+        {activeAccountIds.length > 0 && !showAllAccounts && accountIds.length === 0 && (
           <span className="tag accent">portfolio filter on</span>
+        )}
+        {activeAccountIds.length > 0 && (
+          <button
+            type="button"
+            className={showAllAccounts ? "tag accent" : "tag"}
+            onClick={() => {
+              setShowAllAccounts(true);
+              setAccountIds([]);
+            }}
+          >
+            {t("monthly.all_accounts")}
+          </button>
         )}
       </div>
 

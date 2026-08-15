@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import * as pdfjsLib from "pdfjs-dist";
 import { useSearchParams } from "react-router-dom";
@@ -46,14 +46,22 @@ function requestedSelection(searchParams: URLSearchParams): {
   };
 }
 
-/** Map of selectedKey → the physical page + top that holds its first box. */
+/** Map of selectedKey → the visually first box (lowest page, then top). */
 function boxIndexForRefs(pages: StatementBoxes["pages"]): Map<SelectedKey, { page: number; top: number }> {
-  const m = new Map<SelectedKey, { page: number; top: number }>();
+  const candidates = new Map<SelectedKey, { page: number; top: number }[]>();
   for (const page of pages) {
     for (const box of page.boxes) {
       const key = refKey(box.ref.kind, box.ref.id);
-      if (!m.has(key)) m.set(key, { page: page.page_number, top: box.rect[1] });
+      const entry = { page: page.page_number, top: box.rect[1] };
+      const list = candidates.get(key) || [];
+      list.push(entry);
+      candidates.set(key, list);
     }
+  }
+  const m = new Map<SelectedKey, { page: number; top: number }>();
+  for (const [key, entries] of candidates) {
+    entries.sort((a, b) => a.page - b.page || a.top - b.top);
+    m.set(key, entries[0]);
   }
   return m;
 }
@@ -504,6 +512,41 @@ function PdfView({
   const [doc, setDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [error, setError] = useState("");
   const [renderedCount, setRenderedCount] = useState(0);
+  const [visiblePages, setVisiblePages] = useState<Set<number>>(() => new Set());
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const pageVisibilityRef = useRef<Map<number, HTMLDivElement>>(new Map());
+
+  const markPageVisible = useCallback((pageNumber: number) => {
+    setVisiblePages((current) => {
+      if (current.has(pageNumber)) return current;
+      const next = new Set(current);
+      next.add(pageNumber);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    observerRef.current?.disconnect();
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const pageNumber = Number((entry.target as HTMLElement).dataset.page);
+          if (Number.isFinite(pageNumber)) markPageVisible(pageNumber);
+        }
+      },
+      { rootMargin: "240px 0px" },
+    );
+    for (const node of pageVisibilityRef.current.values()) {
+      observerRef.current.observe(node);
+    }
+    return () => observerRef.current?.disconnect();
+  }, [markPageVisible, pages.length]);
+
+  useEffect(() => {
+    setVisiblePages(new Set(pages.length ? [pages[0].page_number] : []));
+    pageVisibilityRef.current.clear();
+  }, [url, pages]);
 
   useEffect(() => {
     let cancelled = false;
@@ -528,24 +571,49 @@ function PdfView({
 
   return (
     <div className="verify-pdf-pages">
-      {pages.map((page) => (
-        <PdfPage
-          key={page.page_number}
-          doc={doc}
-          pageNumber={page.page_number}
-          width={page.width}
-          height={page.height}
-          scale={scale}
-          boxes={boxesByPage.get(page.page_number) || []}
-          selectedKey={selectedKey}
-          onSelect={onSelect}
-          pageRef={(el) => { pageRefs.current[page.page_number] = el; }}
-          onRendered={() => {
-            setRenderedCount((count) => count + 1);
-            onPageRendered(page.page_number);
-          }}
-        />
-      ))}
+      {pages.map((page) => {
+        const pageNumber = page.page_number;
+        const registerPage = (el: HTMLDivElement | null) => {
+          pageRefs.current[pageNumber] = el;
+          const prior = pageVisibilityRef.current.get(pageNumber);
+          if (prior && observerRef.current) observerRef.current.unobserve(prior);
+          if (el) {
+            pageVisibilityRef.current.set(pageNumber, el);
+            observerRef.current?.observe(el);
+          } else {
+            pageVisibilityRef.current.delete(pageNumber);
+          }
+        };
+        if (!visiblePages.has(pageNumber)) {
+          return (
+            <div
+              key={pageNumber}
+              className="verify-pdf-page verify-pdf-page-placeholder"
+              ref={registerPage}
+              data-page={pageNumber}
+              style={{ width: page.width * scale, height: page.height * scale }}
+            />
+          );
+        }
+        return (
+          <PdfPage
+            key={pageNumber}
+            doc={doc}
+            pageNumber={pageNumber}
+            width={page.width}
+            height={page.height}
+            scale={scale}
+            boxes={boxesByPage.get(pageNumber) || []}
+            selectedKey={selectedKey}
+            onSelect={onSelect}
+            pageRef={registerPage}
+            onRendered={() => {
+              setRenderedCount((count) => count + 1);
+              onPageRendered(pageNumber);
+            }}
+          />
+        );
+      })}
       {renderedCount < pages.length && (
         <span className="muted verify-rendering">{t("verify.rendering")} {renderedCount}/{pages.length}</span>
       )}
@@ -579,6 +647,8 @@ function PdfPage({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // Known rendered size; the overlay must wait for this before sizing itself.
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  const onRenderedRef = useRef(onRendered);
+  onRenderedRef.current = onRendered;
 
   useEffect(() => {
     let cancelled = false;
@@ -597,7 +667,7 @@ function PdfPage({
         .then(() => {
           if (!cancelled) {
             setSize({ w: viewport.width, h: viewport.height });
-            onRendered();
+            onRenderedRef.current();
           }
         })
         .catch(() => { /* render cancelled / page hidden */ });
@@ -608,21 +678,23 @@ function PdfPage({
         try { renderTask.cancel(); } catch { /* ignore */ }
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc, pageNumber, scale]);
+
+  const renderedWidth = size?.w ?? width * scale;
+  const renderedHeight = size?.h ?? height * scale;
 
   return (
     <div
       className="verify-pdf-page"
       ref={pageRef}
       data-page={pageNumber}
-      style={{ width: width * scale, height: height * scale }}
+      style={{ width: renderedWidth, height: renderedHeight }}
     >
       <canvas ref={canvasRef} />
       <span className="verify-physical-page">{pageNumber}</span>
       <div
         className="verify-page-overlay"
-        style={{ width: size?.w ?? width * scale, height: size?.h ?? height * scale }}
+        style={{ width: renderedWidth, height: renderedHeight }}
       >
           {boxes.map((line, i) => (
             <BoxDiv

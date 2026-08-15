@@ -170,6 +170,12 @@ export default function Monthly() {
       combinedTotals.USD = usd + cad * (fxTotals?.cad_usd || 0);
     }
   }
+  const needsFxForCombined = (
+    (totalsByCurrency.CAD || 0) > 0
+    && (totalsByCurrency.USD || 0) > 0
+    && combinedTotals.CAD === undefined
+    && combinedTotals.USD === undefined
+  );
 
   function toggleSort(c: Col) {
     if (c === sortCol) setSortDir(sortDir === "asc" ? "desc" : "asc");
@@ -229,6 +235,9 @@ export default function Monthly() {
               {interpolate(t("monthly.fx_cad_usd"), { rate: fmtNum(fxTotals.cad_usd) })}
               {fxTotals.usd_fx_date ? ` · ${interpolate(t("monthly.fx_date"), { date: fxTotals.usd_fx_date })}` : ""}
             </span>
+          )}
+          {needsFxForCombined && (
+            <span className="tag muted">{t("monthly.fx_unavailable")}</span>
           )}
           {effectiveA !== effectiveB && (
             <span className="tag">{interpolate(t("monthly.diff_legend"), { date: effectiveA })}</span>
