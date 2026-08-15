@@ -490,6 +490,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     parser_confidence  REAL DEFAULT 1.0,
     resolution_method  TEXT,
     resolution_confidence REAL,
+    resolution_source  TEXT CHECK (resolution_source IS NULL OR
+                         resolution_source IN ('auto', 'manual')),
     resolution_evidence_id INTEGER REFERENCES source_evidence(evidence_id) ON DELETE SET NULL,
     created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
                          CHECK (length(created_at) = 20

@@ -28,11 +28,13 @@ makes a residual zero. A resolved transaction records `account_holding_name`
 or `portfolio_holding_name`, its score, and the supporting position evidence.
 
 This derived link is rebuildable: the pass first clears only those two prior
-automatic methods and recomputes them. Reviewed aliases, printed symbols,
-same-statement matches, and reported transaction fields are untouched. The
-existing transaction description/evidence plus checkpoint name/evidence are
-sufficient, so no second alias table is required. `instrument_aliases` remains
-reserved for reviewed user mappings rather than inferred corpus observations.
+automatic methods with `resolution_source = 'auto'` (or legacy null) and
+recomputes them. Rows marked `resolution_source = 'manual'` are left untouched.
+Reviewed aliases, printed symbols, same-statement matches, and reported
+transaction fields are untouched. The existing transaction description/evidence
+plus checkpoint name/evidence are sufficient, so no second alias table is
+required. `instrument_aliases` remains reserved for reviewed user mappings
+rather than inferred corpus observations.
 
 ## Persisted checkpoint equations
 
@@ -72,10 +74,12 @@ the stored parser delta remains and normal incomplete/residual rules apply.
 
 An explicit ticker change is replayed across the whole interval: immediately
 before the effective date, the engine debits the complete old-symbol balance
-and credits the new-symbol balance multiplied by the stored ratio. The same
-source transaction is therefore an auditable negative component for the old
-instrument and positive component for the new one. It never derives a ticker
-relationship from the closing residual.
+and credits the new-symbol balance multiplied by the stored ratio. Interval
+replay tracks balances by `instrument_id` so a successor that already exists in
+the prior checkpoint receives the moved quantity additively. The same source
+transaction is therefore an auditable negative component for the old instrument
+and positive component for the new one. It never derives a ticker relationship
+from the closing residual.
 
 For an empty scope, one scope-level result is stored. It records the same
 missing-prior or incomplete condition, or `not_applicable` when both complete

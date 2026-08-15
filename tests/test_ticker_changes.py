@@ -150,3 +150,82 @@ def test_ticker_change_reconciles_and_reconstructs_one_lineage(tmp_path):
     assert rows[0]["book_value"] == 80.0
     assert rows[0]["ticker_symbols"] == ["OLD", "NEW"]
     assert "OLD" in rows[0]["holding_key"]
+
+
+def test_ticker_change_replay_when_successor_already_has_prior_quantity(tmp_path):
+    """Ticker moves must add to an existing successor balance, not replace it."""
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id = _account(conn)
+        old_id = sqlite_db.upsert_instrument(
+            conn, asset_type="equity", symbol="OLD", currency="CAD"
+        )
+        new_id = sqlite_db.upsert_instrument(
+            conn, asset_type="equity", symbol="NEW", currency="CAD"
+        )
+        jan = _statement(conn, account_id, "2024-01")
+        feb = _statement(conn, account_id, "2024-02")
+        seed_position(
+            conn,
+            statement_id=jan,
+            instrument_id=old_id,
+            quantity=10,
+            currency="CAD",
+        )
+        seed_position(
+            conn,
+            statement_id=jan,
+            instrument_id=new_id,
+            quantity=5,
+            currency="CAD",
+        )
+        seed_position(
+            conn,
+            statement_id=feb,
+            instrument_id=new_id,
+            quantity=15,
+            currency="CAD",
+        )
+        transaction_id = int(
+            conn.execute(
+                """
+                INSERT INTO transactions(
+                    account_id, statement_id, trade_date, txn_type,
+                    instrument_id, currency, description, raw_line,
+                    resolution_method, resolution_confidence
+                ) VALUES (?, ?, '2024-02-10', 'name_change', ?, 'CAD',
+                          'SYMBOL CHANGE FROM OLD TO NEW',
+                          'SYMBOL CHANGE FROM OLD TO NEW',
+                          'printed_ticker_change', 1.0)
+                RETURNING transaction_id
+                """,
+                (account_id, feb, old_id),
+            ).fetchone()[0]
+        )
+        record_ticker_change(
+            conn,
+            from_instrument_id=old_id,
+            to_instrument_id=new_id,
+            effective_date="2024-02-10",
+            conversion_ratio=1.0,
+            transaction_id=transaction_id,
+            evidence_id=None,
+            resolution_method="printed_ticker_change",
+            resolution_confidence=1.0,
+        )
+
+    rebuild_reconciliation_results(db_path)
+    with sqlite_db.session(db_path) as conn:
+        new_row = conn.execute(
+            """
+            SELECT opening_value, summed_deltas, expected_close, reported_close, status
+              FROM reconciliation_results rr
+              JOIN instruments i ON i.instrument_id = rr.instrument_id
+             WHERE rr.kind = 'position'
+               AND rr.statement_id = ?
+               AND i.symbol = 'NEW'
+            """,
+            (feb,),
+        ).fetchone()
+    assert tuple(new_row) == (5.0, 10.0, 15.0, 15.0, "reconciled")

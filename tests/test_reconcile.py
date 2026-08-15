@@ -254,3 +254,56 @@ def test_name_resolution_uses_strict_portfolio_wide_fallback(tmp_path):
             (transaction_id,),
         ).fetchone()
     assert tuple(resolved) == (instrument_id, "portfolio_holding_name")
+
+
+def test_manual_resolution_source_is_not_reset_by_auto_pass(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id = _seed_account(conn, "A1")
+        statement_id = _seed_statement(
+            conn, account_id, "Statements/Test/manual.pdf", "2024-04-30"
+        )
+        instrument_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="equity",
+            symbol="MAN",
+            currency="CAD",
+            name="MANUAL REVIEW INC",
+        )
+        seed_position(
+            conn,
+            statement_id=statement_id,
+            instrument_id=instrument_id,
+            quantity=50,
+            currency="CAD",
+        )
+        transaction_id = conn.execute(
+            """
+            INSERT INTO transactions(
+                account_id, statement_id, trade_date, txn_type, quantity,
+                position_delta, currency, description, resolution_method,
+                resolution_confidence, resolution_source, instrument_id
+            ) VALUES (?, ?, '2024-04-12', 'buy', 50, 50, 'CAD',
+                      'MANUAL REVIEW INC', 'account_holding_name', 1.0,
+                      'manual', ?)
+            RETURNING transaction_id
+            """,
+            (account_id, statement_id, instrument_id),
+        ).fetchone()[0]
+
+    summary = resolve_trade_instruments_from_holdings(db_path)
+
+    assert summary["reset"] == 0
+    with sqlite_db.session(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT instrument_id, resolution_method, resolution_source
+              FROM transactions
+             WHERE transaction_id = ?
+            """,
+            (transaction_id,),
+        ).fetchone()
+    assert row["instrument_id"] == instrument_id
+    assert row["resolution_method"] == "account_holding_name"
+    assert row["resolution_source"] == "manual"

@@ -632,6 +632,13 @@ def _combine_security_states(states: list[_SecurityState]) -> _SecurityState:
     combined.incomplete = True
     combined.warnings = {warning for state in states for warning in state.warnings}
     combined.warnings.add("duplicate_complete_position_scopes")
+    anchor_dates = [
+        state.anchor.as_of_date
+        for state in states
+        if state.anchor is not None
+    ]
+    if anchor_dates:
+        combined.initial_date = min(anchor_dates)
     return combined
 
 
@@ -734,7 +741,11 @@ def _security_record(
         "market_price": state.market_price if is_reported else None,
         "market_value": state.market_value if is_reported else None,
         "unrealized_pnl": state.unrealized_pnl if is_reported else None,
-        "checkpoint_date": state.anchor.as_of_date if state.anchor else state.initial_date,
+        "checkpoint_date": (
+            state.initial_date
+            if state.incomplete and "duplicate_complete_position_scopes" in warnings
+            else (state.anchor.as_of_date if state.anchor else state.initial_date)
+        ),
         "checkpoint_statement_id": state.anchor.statement_id if state.anchor else None,
         "checkpoint_snapshot_set_id": state.anchor.snapshot_set_id if state.anchor else None,
         "is_reported": is_reported,

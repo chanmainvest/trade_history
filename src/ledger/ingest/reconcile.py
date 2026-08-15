@@ -275,6 +275,7 @@ def resolve_trade_instruments_from_holdings(
                        resolution_evidence_id = evidence_id
                  WHERE txn_type IN ('buy', 'sell')
                    AND resolution_method IN ({method_placeholders})
+                   AND COALESCE(resolution_source, 'auto') = 'auto'
                 """,
                 sorted(AUTOMATIC_NAME_METHODS),
             ).rowcount
@@ -338,7 +339,8 @@ def resolve_trade_instruments_from_holdings(
                 """
                 UPDATE transactions
                    SET instrument_id = ?, resolution_method = ?,
-                       resolution_confidence = ?, resolution_evidence_id = ?
+                       resolution_confidence = ?, resolution_evidence_id = ?,
+                       resolution_source = 'auto'
                  WHERE transaction_id = ?
                 """,
                 (
@@ -865,46 +867,60 @@ def _position_interval_replay(
         """,
         (account_id, currency, prior_checkpoint, current_checkpoint),
     ).fetchall()
-    balances = {key: value for key, (_instrument_id, value) in prior_rows.items()}
-    instrument_ids = {key: iid for key, (iid, _value) in prior_rows.items()}
+    balances: dict[int, float] = {
+        instrument_id: value for _key, (instrument_id, value) in prior_rows.items()
+    }
+    id_to_key: dict[int, str] = {
+        instrument_id: key for key, (instrument_id, _value) in prior_rows.items()
+    }
     components: dict[str, list[tuple[int, float]]] = defaultdict(list)
     missing: dict[str, int] = defaultdict(int)
     for row in rows:
-        key = row["instrument_key"]
-        if key is None:
+        instrument_id = row["instrument_id"]
+        instrument_key = row["instrument_key"]
+        if instrument_id is None or instrument_key is None:
             continue
-        key = str(key)
-        instrument_ids.setdefault(key, int(row["instrument_id"]))
+        instrument_id = int(instrument_id)
+        instrument_key = str(instrument_key)
+        id_to_key.setdefault(instrument_id, instrument_key)
+        component_key = id_to_key[instrument_id]
         transaction_id = int(row["transaction_id"])
-        if row["successor_key"] is not None:
+        if row["successor_id"] is not None:
+            successor_id = int(row["successor_id"])
             successor_key = str(row["successor_key"])
-            moved = balances.get(key, 0.0)
+            id_to_key[successor_id] = successor_key
+            moved = balances.get(instrument_id, 0.0)
             ratio = float(row["conversion_ratio"])
             old_delta = -moved
             new_delta = moved * ratio
-            balances[key] = 0.0
-            balances[successor_key] = balances.get(successor_key, 0.0) + new_delta
-            instrument_ids[successor_key] = int(row["successor_id"])
+            balances[instrument_id] = 0.0
+            balances[successor_id] = balances.get(successor_id, 0.0) + new_delta
             if abs(old_delta) > EXACT_TOLERANCE:
-                components[key].append((transaction_id, old_delta))
+                components[component_key].append((transaction_id, old_delta))
             if abs(new_delta) > EXACT_TOLERANCE:
-                components[successor_key].append((transaction_id, new_delta))
+                components[id_to_key[successor_id]].append((transaction_id, new_delta))
             continue
         effect = _position_effect(row)
         effect = contextual_position_delta(
             str(row["txn_type"]),
             row["quantity"],
-            balances.get(key, 0.0),
+            balances.get(instrument_id, 0.0),
             effect,
         )
         if effect is None:
             if row["txn_type"] in POSITION_EFFECT_TYPES:
-                missing[key] += 1
+                missing[component_key] += 1
             continue
-        balances[key] = balances.get(key, 0.0) + effect
+        balances[instrument_id] = balances.get(instrument_id, 0.0) + effect
         if abs(effect) > EXACT_TOLERANCE:
-            components[key].append((transaction_id, effect))
-    return balances, components, missing, instrument_ids
+            components[component_key].append((transaction_id, effect))
+    key_balances = {
+        id_to_key[instrument_id]: balance
+        for instrument_id, balance in balances.items()
+        if instrument_id in id_to_key
+    }
+    instrument_ids = {key: iid for iid, key in id_to_key.items()}
+    return key_balances, components, missing, instrument_ids
 
 
 def _unresolved_position_effect_count(
@@ -1194,6 +1210,8 @@ def _cash_components(
         value = row["cash_delta"] if row["cash_delta"] is not None else row["net_amount"]
         if value is None:
             missing_effects += 1
+            continue
+        if abs(float(value)) <= EXACT_TOLERANCE:
             continue
         components.append((int(row["transaction_id"]), float(value)))
     return components, missing_effects

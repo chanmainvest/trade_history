@@ -147,8 +147,9 @@ effects used by new consumers; `net_amount` remains a compatibility field.
 When a generic split, name change, spinoff, or merger has no explicit safe
 position effect, `position_delta` remains null rather than being fabricated as
 zero.
-Resolution method/confidence and an optional resolution-evidence link are also
-available. Phase 3 writes these through its conservative staged resolver:
+Resolution method/confidence, optional `resolution_source` (`auto` or
+`manual`), and an optional resolution-evidence link are also available. Phase 3
+writes these through its conservative staged resolver:
 explicit printed identities, reviewed aliases/fund lookups, and unambiguous
 same-statement holdings are distinguishable from unresolved printed names. The
 database does not constrain `txn_type`; the Python literal vocabulary and
@@ -158,7 +159,9 @@ Post-ingest reconciliation may replace a null `instrument_id` on an unresolved
 buy/sell with a canonical holding identity already observed in the same native
 currency. Methods `account_holding_name` and `portfolio_holding_name` identify
 these rebuildable derived links; `resolution_evidence_id` points at the
-supporting position row. The description and reported numeric fields remain
+supporting position row. Automatic reruns reset only rows with
+`resolution_source = 'auto'` (or legacy null); `manual` overrides are preserved.
+The description and reported numeric fields remain
 unchanged. Existing transaction and checkpoint evidence is sufficient for this
 derivation, while `instrument_aliases` remains reserved for reviewed mappings.
 

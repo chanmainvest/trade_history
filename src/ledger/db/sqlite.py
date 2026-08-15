@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -46,8 +47,21 @@ def init_db(path: Path | str = SQLITE_PATH) -> None:
         conn.close()
 
 
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def safe_identifier(name: str) -> str:
+    """Validate a SQL identifier before it is interpolated into a statement."""
+    if not _IDENTIFIER_RE.fullmatch(name):
+        raise ValueError(f"refusing to interpolate unsafe SQL identifier: {name!r}")
+    return name
+
+
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    return {
+        str(row["name"])
+        for row in conn.execute("SELECT name FROM pragma_table_info(?)", (table,))
+    }
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
@@ -62,12 +76,6 @@ def _needs_v6_migration(conn: sqlite3.Connection) -> bool:
         "instrument_key" not in _table_columns(conn, "instruments")
         or "statement_key" not in _table_columns(conn, "statements")
     )
-
-
-def _add_column(conn: sqlite3.Connection, table: str, definition: str) -> None:
-    name = definition.split()[0]
-    if name not in _table_columns(conn, table):
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
 
 
 def _create_v6_support_tables(conn: sqlite3.Connection) -> None:
@@ -94,12 +102,11 @@ def _create_v6_support_tables(conn: sqlite3.Connection) -> None:
         )
         """
     )
-    _add_column(
-        conn,
-        "source_files",
-        "active_ingestion_run_id INTEGER REFERENCES ingestion_runs(ingestion_run_id) "
-        "ON DELETE SET NULL",
-    )
+    if "active_ingestion_run_id" not in _table_columns(conn, "source_files"):
+        conn.execute(
+            "ALTER TABLE source_files ADD COLUMN active_ingestion_run_id INTEGER "
+            "REFERENCES ingestion_runs(ingestion_run_id) ON DELETE SET NULL"
+        )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS source_evidence (
@@ -640,17 +647,37 @@ def _statement_source_run(
 
 
 def _migrate_transactions(conn: sqlite3.Connection) -> None:
-    for definition in (
-        "ingestion_run_id INTEGER REFERENCES ingestion_runs(ingestion_run_id) ON DELETE SET NULL",
-        "evidence_id INTEGER REFERENCES source_evidence(evidence_id) ON DELETE SET NULL",
-        "position_delta REAL",
-        "cash_delta REAL",
-        "cash_effective_date TEXT",
-        "resolution_method TEXT",
-        "resolution_confidence REAL",
-        "resolution_evidence_id INTEGER REFERENCES source_evidence(evidence_id) ON DELETE SET NULL",
-    ):
-        _add_column(conn, "transactions", definition)
+    columns = _table_columns(conn, "transactions")
+    if "ingestion_run_id" not in columns:
+        conn.execute(
+            "ALTER TABLE transactions ADD COLUMN ingestion_run_id INTEGER "
+            "REFERENCES ingestion_runs(ingestion_run_id) ON DELETE SET NULL"
+        )
+    if "evidence_id" not in columns:
+        conn.execute(
+            "ALTER TABLE transactions ADD COLUMN evidence_id INTEGER "
+            "REFERENCES source_evidence(evidence_id) ON DELETE SET NULL"
+        )
+    if "position_delta" not in columns:
+        conn.execute("ALTER TABLE transactions ADD COLUMN position_delta REAL")
+    if "cash_delta" not in columns:
+        conn.execute("ALTER TABLE transactions ADD COLUMN cash_delta REAL")
+    if "cash_effective_date" not in columns:
+        conn.execute("ALTER TABLE transactions ADD COLUMN cash_effective_date TEXT")
+    if "resolution_method" not in columns:
+        conn.execute("ALTER TABLE transactions ADD COLUMN resolution_method TEXT")
+    if "resolution_confidence" not in columns:
+        conn.execute("ALTER TABLE transactions ADD COLUMN resolution_confidence REAL")
+    if "resolution_source" not in columns:
+        conn.execute(
+            "ALTER TABLE transactions ADD COLUMN resolution_source TEXT CHECK "
+            "(resolution_source IS NULL OR resolution_source IN ('auto', 'manual'))"
+        )
+    if "resolution_evidence_id" not in columns:
+        conn.execute(
+            "ALTER TABLE transactions ADD COLUMN resolution_evidence_id INTEGER "
+            "REFERENCES source_evidence(evidence_id) ON DELETE SET NULL"
+        )
 
     rows = conn.execute("SELECT * FROM transactions ORDER BY transaction_id").fetchall()
     for row in rows:
@@ -940,13 +967,30 @@ def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
 def _migrate_existing_schema(conn: sqlite3.Connection) -> None:
     if "notes" not in _table_columns(conn, "initial_cash"):
         conn.execute("ALTER TABLE initial_cash ADD COLUMN notes TEXT")
-    for definition in ("opened_on TEXT", "closed_on TEXT", "notes TEXT"):
-        _add_column(conn, "accounts", definition)
-    _add_column(conn, "instruments", "security_id INTEGER REFERENCES securities(security_id)")
-    _add_column(conn, "reconciliation_results", "check_type TEXT")
-    _add_column(conn, "reconciliation_results", "reason_code TEXT")
-    _add_column(conn, "snapshot_sets", "opening_total REAL")
-    _add_column(conn, "snapshot_sets", "reported_change REAL")
+    if "opened_on" not in _table_columns(conn, "accounts"):
+        conn.execute("ALTER TABLE accounts ADD COLUMN opened_on TEXT")
+    if "closed_on" not in _table_columns(conn, "accounts"):
+        conn.execute("ALTER TABLE accounts ADD COLUMN closed_on TEXT")
+    if "notes" not in _table_columns(conn, "accounts"):
+        conn.execute("ALTER TABLE accounts ADD COLUMN notes TEXT")
+    if "security_id" not in _table_columns(conn, "instruments"):
+        conn.execute(
+            "ALTER TABLE instruments ADD COLUMN security_id INTEGER "
+            "REFERENCES securities(security_id)"
+        )
+    if "check_type" not in _table_columns(conn, "reconciliation_results"):
+        conn.execute("ALTER TABLE reconciliation_results ADD COLUMN check_type TEXT")
+    if "reason_code" not in _table_columns(conn, "reconciliation_results"):
+        conn.execute("ALTER TABLE reconciliation_results ADD COLUMN reason_code TEXT")
+    if "opening_total" not in _table_columns(conn, "snapshot_sets"):
+        conn.execute("ALTER TABLE snapshot_sets ADD COLUMN opening_total REAL")
+    if "reported_change" not in _table_columns(conn, "snapshot_sets"):
+        conn.execute("ALTER TABLE snapshot_sets ADD COLUMN reported_change REAL")
+    if "resolution_source" not in _table_columns(conn, "transactions"):
+        conn.execute(
+            "ALTER TABLE transactions ADD COLUMN resolution_source TEXT CHECK "
+            "(resolution_source IS NULL OR resolution_source IN ('auto', 'manual'))"
+        )
     _migrate_reconciliation_check_v11(conn)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_instruments_security ON instruments(security_id)"
