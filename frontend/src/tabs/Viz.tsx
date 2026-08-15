@@ -29,6 +29,12 @@ function isoMinusYears(years: number) {
   const d = new Date(); d.setFullYear(d.getFullYear() - years);
   return d.toISOString().slice(0, 10);
 }
+function interpolate(text: string, values: Record<string, string>): string {
+  return Object.entries(values).reduce(
+    (result, [key, value]) => result.replaceAll(`{${key}}`, value),
+    text,
+  );
+}
 
 const CORR_RGB_STOPS = [
   { position: 0.0, red: 30, green: 100, blue: 200 },
@@ -93,10 +99,10 @@ function sectorColor(symbol: string, sector: string | null | undefined, symbols:
   return shade(base, Math.round(offset));
 }
 
-function formatPerf(value: number | null | undefined) {
-  if (value == null || !Number.isFinite(value)) return "Performance: n/a";
+function formatPerf(value: number | null | undefined, perfNa: string, perfValue: string) {
+  if (value == null || !Number.isFinite(value)) return perfNa;
   const sign = value > 0 ? "+" : "";
-  return `Performance: ${sign}${value.toFixed(2)}%`;
+  return `${perfValue.replace("{value}", `${sign}${value.toFixed(2)}`)}`;
 }
 
 function performanceColor(value: number | null | undefined) {
@@ -190,7 +196,8 @@ export default function Viz() {
                  setPeriod={setTreemapPeriod}
                  actualDate={sectorQ.data?.as_of_date}
                  rows={sectorQ.data?.rows ?? []}
-                 loading={sectorQ.isLoading} />
+                 loading={sectorQ.isLoading}
+                 priceDataThrough={sectorQ.data?.price_data_through} />
       )}
 
       {view === "correlation" && (
@@ -206,7 +213,7 @@ export default function Viz() {
   );
 }
 
-function Treemap({ monthEnd, setMonthEnd, period, setPeriod, actualDate, rows, loading }: {
+function Treemap({ monthEnd, setMonthEnd, period, setPeriod, actualDate, rows, loading, priceDataThrough }: {
   monthEnd: string;
   setMonthEnd: (s: string) => void;
   period: TreemapPeriod;
@@ -214,9 +221,15 @@ function Treemap({ monthEnd, setMonthEnd, period, setPeriod, actualDate, rows, l
   actualDate: string | null | undefined;
   rows: TreemapRow[];
   loading: boolean;
+  priceDataThrough: string | null | undefined;
 }) {
   const theme = plotlyTheme();
+  const { t } = useI18n();
   const [groupBy, setGroupBy] = useState<TreemapGroupBy>("sector");
+  const perfLabel = useMemo(() => ({
+    na: t("viz.perf_na"),
+    value: t("viz.perf_value"),
+  }), [t]);
   const { ids, labels, parents, values, colors, customdata } = useMemo(() => {
     const ids: string[] = [];
     const labels: string[] = [];
@@ -255,7 +268,7 @@ function Treemap({ monthEnd, setMonthEnd, period, setPeriod, actualDate, rows, l
           accountLabel,
           row.symbol,
           value,
-          `${accountLabel}<br>${row.asset_type} • ${row.currency}<br>${formatPerf(row.performance_pct)}`,
+          `${accountLabel}<br>${row.asset_type} • ${row.currency}<br>${formatPerf(row.performance_pct, perfLabel.na, perfLabel.value)}`,
         );
       } else {
         const group = groupBy === "sector" ? (row.sector || "Unknown") : row.asset_type;
@@ -268,7 +281,7 @@ function Treemap({ monthEnd, setMonthEnd, period, setPeriod, actualDate, rows, l
           group,
           row.symbol,
           value,
-          `${group}<br>${row.asset_type} • ${row.currency}<br>${formatPerf(row.performance_pct)}`,
+          `${group}<br>${row.asset_type} • ${row.currency}<br>${formatPerf(row.performance_pct, perfLabel.na, perfLabel.value)}`,
         );
       }
     }
@@ -305,23 +318,40 @@ function Treemap({ monthEnd, setMonthEnd, period, setPeriod, actualDate, rows, l
         performanceColor(source?.performance_pct), leaf.detail);
     }
     return { ids, labels, parents, values, colors, customdata };
-  }, [rows, groupBy]);
+  }, [rows, groupBy, perfLabel]);
+
+  const currencyTotals = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const row of rows) {
+      const value = row.market_value || 0;
+      if (value > 0) totals.set(row.currency, (totals.get(row.currency) || 0) + value);
+    }
+    return Array.from(totals.entries()).sort().map(
+      ([ccy, amount]) => `${ccy} ${Math.round(amount).toLocaleString()}`,
+    ).join(" • ");
+  }, [rows]);
+
+  const staleDays = useMemo(() => {
+    if (!priceDataThrough) return null;
+    const days = Math.floor((Date.now() - new Date(priceDataThrough).getTime()) / 86400000);
+    return days >= 7 ? days : null;
+  }, [priceDataThrough]);
 
   return (
     <div className="card">
       <div className="filters">
-        <h3 style={{ marginRight: 12 }}>Holdings treemap</h3>
-        <label>As of:&nbsp;
+        <h3 style={{ marginRight: 12 }}>{t("viz.holdings_treemap")}</h3>
+        <label>{t("viz.as_of")}:&nbsp;
           <input type="date" value={monthEnd} onChange={(e) => setMonthEnd(e.target.value)} />
         </label>
-        <label>Group by:&nbsp;
+        <label>{t("viz.group_by")}:&nbsp;
           <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as TreemapGroupBy)}>
-            <option value="account">Institution / account</option>
-            <option value="asset_type">Type</option>
-            <option value="sector">Sector</option>
+            <option value="account">{t("viz.group_account")}</option>
+            <option value="asset_type">{t("viz.group_type")}</option>
+            <option value="sector">{t("viz.group_sector")}</option>
           </select>
         </label>
-        <label>Performance:&nbsp;
+        <label>{t("viz.performance_label")}:&nbsp;
           <select value={period} onChange={(e) => setPeriod(e.target.value as TreemapPeriod)}>
             <option value="1d">1D</option>
             <option value="1w">1W</option>
@@ -333,15 +363,31 @@ function Treemap({ monthEnd, setMonthEnd, period, setPeriod, actualDate, rows, l
           </select>
         </label>
         {actualDate && actualDate !== monthEnd && (
-          <span className="muted">(snapshot from {actualDate})</span>
+          <span className="muted">{interpolate(t("viz.snapshot_from"), { date: actualDate })}</span>
+        )}
+        {priceDataThrough && (
+          <span className="muted">
+            {interpolate(t("viz.price_data_through"), { date: priceDataThrough })}
+            {staleDays != null && interpolate(t("viz.data_stale"), { days: String(staleDays) })}
+          </span>
         )}
       </div>
-      {loading && <p className="muted">Loading…</p>}
+      <div className="filters">
+        <span className="legend-chip" style={{ background: "rgb(20, 170, 85)" }} />
+        <span className="muted">{t("viz.legend_gain")}</span>
+        <span className="legend-chip" style={{ background: "rgb(170, 55, 60)" }} />
+        <span className="muted">{t("viz.legend_loss")}</span>
+        <span className="legend-chip" style={{ background: "#6b7280" }} />
+        <span className="muted">{t("viz.legend_nodata")}</span>
+        {currencyTotals && (
+          <span className="muted" style={{ marginLeft: "auto" }}>
+            {interpolate(t("viz.native_note"), { totals: currencyTotals })}
+          </span>
+        )}
+      </div>
+      {loading && <p className="muted">{t("viz.loading")}</p>}
       {!loading && rows.length === 0 && (
-        <p className="muted">
-          No holdings to display for this date.{" "}
-          Try picking a date after your earliest statement.
-        </p>
+        <p className="muted">{t("viz.no_holdings")}</p>
       )}
       {rows.length > 0 && (
         <Plot
@@ -374,6 +420,7 @@ function CorrelationView({ start, end, setStart, setEnd, symbols, matrix, profil
 }) {
   const [sortBy, setSortBy] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const { t } = useI18n();
 
   function toggleSym(sym: string) {
     const next = new Set(hidden);
@@ -398,16 +445,16 @@ function CorrelationView({ start, end, setStart, setEnd, symbols, matrix, profil
   return (
     <div className="card">
       <div className="filters">
-        <h3 style={{ marginRight: 12 }}>Correlation matrix</h3>
-        <label>Start:&nbsp;<input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
-        <label>End:&nbsp;<input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></label>
-        <label>Sort by:&nbsp;
+        <h3 style={{ marginRight: 12 }}>{t("viz.correlation_matrix")}</h3>
+        <label>{t("viz.start")}:&nbsp;<input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
+        <label>{t("viz.end")}:&nbsp;<input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></label>
+        <label>{t("viz.sort_by")}:&nbsp;
           <select value={sortBy || ""} onChange={(e) => setSortBy(e.target.value || null)}>
-            <option value="">(alphabetical)</option>
+            <option value="">{t("viz.sort_alphabetical")}</option>
             {symbols.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </label>
-        <span className="muted">{symbols.length} symbols</span>
+        <span className="muted">{interpolate(t("viz.symbols_count"), { count: String(symbols.length) })}</span>
       </div>
       {symbols.length > 0 && (
         <div className="checkbox-row">
@@ -420,9 +467,9 @@ function CorrelationView({ start, end, setStart, setEnd, symbols, matrix, profil
         </div>
       )}
       {symbols.length === 0 ? (
-        <p className="muted">No correlation data for this range.</p>
+        <p className="muted">{t("viz.no_corr_data")}</p>
       ) : sortedSymbols.length === 0 ? (
-        <p className="muted">All symbols are hidden.</p>
+        <p className="muted">{t("viz.all_hidden")}</p>
       ) : (
         <div className="correlation-matrix-scroll">
           <div className="correlation-grid" style={{ gridTemplateColumns: columnTemplate }}>
@@ -432,7 +479,7 @@ function CorrelationView({ start, end, setStart, setEnd, symbols, matrix, profil
                 key={`col-${symbolName}`}
                 type="button"
                 className={`correlation-label correlation-label-top${sortBy === symbolName ? " active" : ""}`}
-                title={`Sort correlations by ${symbolName}`}
+                title={interpolate(t("viz.sort_by_symbol"), { symbol: symbolName })}
                 onClick={() => setSortBy(symbolName)}
               >
                 {symbolName}
@@ -444,7 +491,7 @@ function CorrelationView({ start, end, setStart, setEnd, symbols, matrix, profil
                   key={`row-${rowSymbol}`}
                   type="button"
                   className={`correlation-label correlation-label-side${sortBy === rowSymbol ? " active" : ""}`}
-                  title={`Sort correlations by ${rowSymbol}`}
+                  title={interpolate(t("viz.sort_by_symbol"), { symbol: rowSymbol })}
                   onClick={() => setSortBy(rowSymbol)}
                 >
                   {rowSymbol}
@@ -479,6 +526,7 @@ function RRG({ benchmark, setBenchmark, windowDays, setWindowDays, frames }: {
   frames: { date: string; points: { symbol: string; x: number; y: number; sector?: string | null }[] }[];
 }) {
   const theme = plotlyTheme();
+  const { t } = useI18n();
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [tailDays, setTailDays] = useState(20);
@@ -561,13 +609,13 @@ function RRG({ benchmark, setBenchmark, windowDays, setWindowDays, frames }: {
   return (
     <>
       <div className="filters">
-        <label>Benchmark:&nbsp;<input value={benchmark}
+        <label>{t("viz.benchmark")}:&nbsp;<input value={benchmark}
                           onChange={(e) => setBenchmark(e.target.value.toUpperCase())} /></label>
-        <label>Window:&nbsp;<input type="number" value={windowDays} min={20} max={252}
+        <label>{t("viz.window")}:&nbsp;<input type="number" value={windowDays} min={20} max={252}
                           onChange={(e) => setWindowDays(parseInt(e.target.value || "60", 10))} /></label>
-        <label>Tail:&nbsp;<input type="number" value={tailDays} min={0} max={120}
+        <label>{t("viz.tail")}:&nbsp;<input type="number" value={tailDays} min={0} max={120}
                           onChange={(e) => setTailDays(parseInt(e.target.value || "0", 10))} /></label>
-        <button onClick={() => setPlaying(!playing)}>{playing ? "Pause" : "Play"}</button>
+        <button onClick={() => setPlaying(!playing)}>{playing ? t("viz.pause") : t("viz.play")}</button>
         <input type="range" min={0} max={Math.max(0, frames.length - 1)} value={idx}
                onChange={(e) => setIdx(parseInt(e.target.value, 10))}
                style={{ flex: 1, minWidth: 200 }} />
@@ -619,7 +667,7 @@ function RRG({ benchmark, setBenchmark, windowDays, setWindowDays, frames }: {
       </div>
 
       <div className="card">
-        <h3>Toggle symbols</h3>
+        <h3>{t("viz.toggle_symbols")}</h3>
         <div className="checkbox-row">
           {allSymbols.map((s) => (
             <label key={s} style={{ borderBottom: `2px solid ${colorOf(s)}` }}>

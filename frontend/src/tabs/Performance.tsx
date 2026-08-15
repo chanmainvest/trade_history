@@ -48,6 +48,7 @@ export default function Performance() {
   const [accountIds, setAccountIds] = useState<string[]>([]);
   const [showCcy, setShowCcy] = useState<"both" | "CAD" | "USD">("both");
   const [normalize, setNormalize] = useState(false);  // show % rebased to start
+  const [benchmark, setBenchmark] = useState("");
 
   const totalQ = useQuery({
     queryKey: ["perfTotal", institutions, accountIds, activeAccountIds],
@@ -68,6 +69,11 @@ export default function Performance() {
     }),
   });
   const acctsQ = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+  const benchQ = useQuery({
+    queryKey: ["bench", benchmark],
+    queryFn: () => api.prices(benchmark, "D"),
+    enabled: !!benchmark,
+  });
 
   const instOpts = useMemo(() => Array.from(new Set(
     (acctsQ.data?.rows ?? []).map((a) => a.institution_code)
@@ -135,6 +141,50 @@ export default function Performance() {
     return out;
   }, [filteredCash]);
 
+  const fxPairs = (totalQ.data?.usd_cad ?? []) as [string, number][];
+  const combinedSeries = useMemo(() => {
+    if (fxPairs.length === 0) return null;
+    const byDate = new Map<string, { cad: number; usd: number }>();
+    for (const r of filteredTotal) {
+      const entry = byDate.get(r.as_of_date) || { cad: 0, usd: 0 };
+      if (r.currency === "USD") entry.usd += r.market_value;
+      else if (r.currency === "CAD") entry.cad += r.market_value;
+      byDate.set(r.as_of_date, entry);
+    }
+    const x: string[] = [];
+    const y: number[] = [];
+    for (const [iso, entry] of Array.from(byDate.entries()).sort(([a], [b]) => a.localeCompare(b))) {
+      let rate: number | null = null;
+      for (const [d, r] of fxPairs) {
+        if (d <= iso) rate = r;
+        else break;
+      }
+      if (rate == null) continue;
+      x.push(iso);
+      y.push(entry.cad + entry.usd * rate);
+    }
+    return x.length ? { x, y } : null;
+  }, [filteredTotal, fxPairs]);
+
+  const benchTrace = useMemo(() => {
+    if (!benchmark) return null;
+    const rowsB = (benchQ.data?.rows ?? []).filter((r: any) => {
+      if (r.trade_date < chartStart) return false;
+      if (end && r.trade_date > end) return false;
+      return true;
+    });
+    if (rowsB.length < 2) return null;
+    const base = Number(rowsB[0].adj_close ?? rowsB[0].close);
+    if (!base) return null;
+    return {
+      x: rowsB.map((r: any) => r.trade_date),
+      y: rowsB.map((r: any) => (Number(r.adj_close ?? r.close) / base - 1) * 100),
+    };
+  }, [benchmark, benchQ.data, chartStart, end]);
+
+  const effectiveNormalize = normalize || hideMoney || !!benchmark;
+  const lastFx = fxPairs.length ? fxPairs[fxPairs.length - 1] : null;
+
   const theme = plotlyTheme();
 
   function rebase(y: number[]): number[] {
@@ -173,26 +223,53 @@ export default function Performance() {
                  onChange={(e) => setNormalize(e.target.checked)} />
           &nbsp;Show as % from start{hideMoney ? " (forced by config)" : ""}
         </label>
+        <label>{t("performance.benchmark_overlay")}:&nbsp;
+          <select value={benchmark} onChange={(e) => setBenchmark(e.target.value)}>
+            <option value="">—</option>
+            {["SPY", "QQQ", "VTI", "ACWI", "DIA", "IWM", "TLT", "GLD"].map((b) =>
+              <option key={b} value={b}>{b}</option>
+            )}
+          </select>
+        </label>
+        {benchmark && <span className="muted">(%)</span>}
       </div>
 
       <div className="card">
-        <h3>{t("performance.native_value")}{(normalize || hideMoney) ? " — % change" : ""}</h3>
+        <h3>{t("performance.native_value")}{effectiveNormalize ? " — % change" : ""}</h3>
         <Plot
-          data={Array.from(seriesByCcy.entries()).map(([ccy, s]) => ({
-            type: "scatter", name: ccy,
-            x: s.x,
-            y: (normalize || hideMoney) ? rebase(s.y) : s.y,
-            mode: s.x.length <= 2 ? "lines+markers" : "lines",
-            line: { width: 2 },
-          }))}
+          data={[
+            ...Array.from(seriesByCcy.entries()).map(([ccy, s]) => ({
+              type: "scatter" as const, name: ccy,
+              x: s.x,
+              y: effectiveNormalize ? rebase(s.y) : s.y,
+              mode: s.x.length <= 2 ? "lines+markers" : "lines",
+              line: { width: 2 },
+            })),
+            ...(combinedSeries ? [{
+              type: "scatter" as const,
+              name: t("performance.combined_cad"),
+              x: combinedSeries.x,
+              y: effectiveNormalize ? rebase(combinedSeries.y) : combinedSeries.y,
+              mode: "lines" as const,
+              line: { width: 2, dash: "dot" as const },
+            }] : []),
+            ...(benchTrace ? [{
+              type: "scatter" as const,
+              name: `${benchmark} (%)`,
+              x: benchTrace.x,
+              y: benchTrace.y,
+              mode: "lines" as const,
+              line: { width: 1.5, dash: "dash" as const, color: "#f0a020" },
+            }] : []),
+          ]}
           layout={{
             paper_bgcolor: theme.paper_bgcolor, plot_bgcolor: theme.plot_bgcolor,
             font: theme.font, margin: { t: 10, r: 10, b: 40, l: 60 },
             xaxis: { gridcolor: theme.xaxis_gridcolor, title: "Date", range: [chartStart, chartEnd] },
             yaxis: {
               gridcolor: theme.yaxis_gridcolor,
-              title: (normalize || hideMoney) ? "% change" : "Market value",
-              ticksuffix: (normalize || hideMoney) ? "%" : "",
+              title: effectiveNormalize ? "% change" : "Market value",
+              ticksuffix: effectiveNormalize ? "%" : "",
             },
             height: 380,
             hovermode: "x unified",
@@ -205,6 +282,14 @@ export default function Performance() {
             days: String(totalQ.data?.forward_fill_max_days ?? 90),
           })}
         </p>
+        {lastFx && (
+          <p className="muted" style={{ marginBottom: 0 }}>
+            {interpolate(t("performance.fx_note"), {
+              rate: lastFx[1].toFixed(4),
+              date: lastFx[0],
+            })}
+          </p>
+        )}
       </div>
 
       {!hideMoney && (

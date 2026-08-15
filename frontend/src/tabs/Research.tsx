@@ -30,6 +30,13 @@ function fmtNum(n: number | null | undefined, dec = 2) {
   return n.toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 
+function interpolate(text: string, values: Record<string, string>): string {
+  return Object.entries(values).reduce(
+    (result, [key, value]) => result.replaceAll(`{${key}}`, value),
+    text,
+  );
+}
+
 const OPTION_TYPES = new Set([
   "option_buy_to_open", "option_sell_to_open",
   "option_buy_to_close", "option_sell_to_close",
@@ -123,6 +130,27 @@ export default function Research() {
 
   const theme = plotlyTheme();
 
+  const summary = useMemo(() => {
+    if (allRows.length === 0) return null;
+    const last = allRows[allRows.length - 1];
+    const first = rows.length > 0 ? rows[0] : last;
+    const lastClose = Number(last.close);
+    const periodPct = Number(first.adj_close ?? first.close) > 0
+      ? (lastClose / Number(first.adj_close ?? first.close) - 1) * 100
+      : null;
+    const cutoff52w = new Date(); cutoff52w.setFullYear(cutoff52w.getFullYear() - 1);
+    const rows52w = allRows.filter((r: any) => new Date(r.trade_date) >= cutoff52w);
+    const high = rows52w.length ? Math.max(...rows52w.map((r: any) => Number(r.high))) : null;
+    const low = rows52w.length ? Math.min(...rows52w.map((r: any) => Number(r.low))) : null;
+    return { lastClose, periodPct, high, low, dataThrough: String(last.trade_date) };
+  }, [allRows, rows]);
+
+  const staleDays = useMemo(() => {
+    if (!summary) return null;
+    const days = Math.floor((Date.now() - new Date(summary.dataThrough).getTime()) / 86400000);
+    return days >= 7 ? days : null;
+  }, [summary]);
+
   const symbolOptions = useMemo(() => {
     const seen = new Map<string, string>();
     for (const row of symbolsQ.data?.rows ?? []) {
@@ -175,7 +203,7 @@ export default function Research() {
                   <span>{hint}</span>
                 </button>
               ))}
-              {filteredSymbols.length === 0 && <div className="ticker-search-empty">No matching tickers.</div>}
+              {filteredSymbols.length === 0 && <div className="ticker-search-empty">{t("research.no_matching")}</div>}
             </div>
           )}
         </div>
@@ -194,7 +222,28 @@ export default function Research() {
       </div>
 
       {!symbol && (
-        <p className="muted">Enter a symbol and press Enter to load prices, trades, and financials.</p>
+        <p className="muted">{t("research.enter_symbol")}</p>
+      )}
+
+      {symbol && summary && (
+        <div className="filters">
+          <span><strong>{t("research.last_close")}:</strong> {fmtNum(summary.lastClose)}</span>
+          <span>
+            <strong>{t("research.period_change")} ({period}):</strong>{" "}
+            {summary.periodPct == null ? "n/a" : (
+              <span className={summary.periodPct >= 0 ? "pos" : "neg"}>
+                {summary.periodPct > 0 ? "+" : ""}{summary.periodPct.toFixed(2)}%
+              </span>
+            )}
+          </span>
+          {summary.high != null && (
+            <span><strong>{t("research.range_52w")}:</strong> {fmtNum(summary.low)} – {fmtNum(summary.high)}</span>
+          )}
+          <span className="muted">
+            {interpolate(t("viz.price_data_through"), { date: summary.dataThrough })}
+            {staleDays != null && interpolate(t("viz.data_stale"), { days: String(staleDays) })}
+          </span>
+        </div>
       )}
 
       {symbol && (
@@ -278,11 +327,11 @@ export default function Research() {
       {symbol && (
         <div className="card">
           <div className="filters">
-            <h3 style={{ marginRight: 12 }}>Financials</h3>
+            <h3 style={{ marginRight: 12 }}>{t("research.financials")}</h3>
             <button className={finPeriod === "quarterly" ? "active" : ""}
-                    onClick={() => setFinPeriod("quarterly")}>Quarterly</button>
+                    onClick={() => setFinPeriod("quarterly")}>{t("research.quarterly")}</button>
             <button className={finPeriod === "annual" ? "active" : ""}
-                    onClick={() => setFinPeriod("annual")}>Annual</button>
+                    onClick={() => setFinPeriod("annual")}>{t("research.annual")}</button>
           </div>
           <div className="checkbox-row">
             {Object.keys(finMetrics).map((k) =>
@@ -313,7 +362,7 @@ export default function Research() {
 
       {symbol && (
         <div className="card">
-          <h3>Trade history for {symbol}</h3>
+          <h3>{interpolate(t("research.trade_history"), { symbol })}</h3>
           <div style={{ overflow: "auto", maxHeight: 320 }}>
             <table>
               <thead>
@@ -338,7 +387,7 @@ export default function Research() {
                   </tr>
                 ))}
                 {allTrades.length === 0 && (
-                  <tr><td colSpan={8} className="muted">No trades recorded for this symbol.</td></tr>
+                  <tr><td colSpan={8} className="muted">{t("research.no_trades")}</td></tr>
                 )}
               </tbody>
             </table>

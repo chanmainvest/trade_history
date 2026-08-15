@@ -115,6 +115,14 @@ and rate date. When both currencies are present but no FX rate exists for the
 as-of date, the UI shows per-currency totals only and a hint that the combined
 total is unavailable.
 
+`GET /performance/total` also returns `usd_cad` (date, rate) pairs from the
+market database so Performance can draw a presentation-only combined
+CAD-equivalent series; the rate and rate date are shown next to it. `GET
+/viz/holdings_by_sector` returns `price_data_through` (latest `daily_prices`
+trade date). Research computes its summary strip (last close, period change,
+52-week range) client-side from the fetched price rows. All three analysis
+tabs show the price-data date and warn when it is a week or more stale.
+
 ## Frontend rules
 
 - Use React Query for server data and component state only for UI concerns.
@@ -128,4 +136,10 @@ total is unavailable.
 - Source icons in Transactions and Monthly obey `show_source_links`; they deep
   link only when the server reports exact/unique geometry and are absent when
   no defensible source reference exists. IDs alone never promise linkability.
+- The treemap sizes rectangles in each holding's native currency, states the
+  per-currency totals, and never silently converts; the gain/loss/no-data
+  color legend is rendered above the chart.
+- Performance can overlay a benchmark ETF (rebased % from the selected
+  period start) alongside the native-currency and combined CAD-equivalent
+  series; selecting a benchmark forces the % view.
 - A frontend change must pass `npm run build`.

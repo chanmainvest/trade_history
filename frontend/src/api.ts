@@ -43,7 +43,7 @@ export const api = {
     getJSON<{ a: string; b: string; rows: DiffRow[] }>("/monthly/diff", p),
 
   perfTotal: (p: Record<string, any> = {}) =>
-    getJSON<{ rows: { as_of_date: string; market_value: number; currency: string }[]; forward_fill_max_days: number | null }>(
+    getJSON<{ rows: { as_of_date: string; market_value: number; currency: string }[]; forward_fill_max_days: number | null; usd_cad?: [string, number][] }>(
       "/performance/total", p),
   perfCash: (p: Record<string, any> = {}) =>
     getJSON<{ rows: { as_of_date: string; currency: string; closing_balance: number }[] }>(
@@ -59,7 +59,7 @@ export const api = {
       "/research/financials", { symbol, period }),
 
   vizSector: (p: { month_end?: string; account_id?: number[]; period?: string } = {}) =>
-    getJSON<{ as_of_date: string | null; period?: string; rows: { account_id: number; account_number: string; institution_code: string; institution_name: string; symbol: string; asset_type: string; currency: string; market_value: number; sector?: string | null; industry?: string | null; performance_pct?: number | null }[] }>(
+    getJSON<{ as_of_date: string | null; period?: string; price_data_through?: string | null; rows: { account_id: number; account_number: string; institution_code: string; institution_name: string; symbol: string; asset_type: string; currency: string; market_value: number; sector?: string | null; industry?: string | null; performance_pct?: number | null }[] }>(
       "/viz/holdings_by_sector", p),
   vizCorrelation: (p: { start: string; end: string; account_id?: number[] }) =>
     getJSON<{ symbols: string[]; matrix: number[][]; profiles?: Record<string, { sector?: string | null; industry?: string | null }> }>("/viz/correlation", p),
