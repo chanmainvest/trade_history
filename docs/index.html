@@ -1285,8 +1285,9 @@ effects used by new consumers; <code>net_amount</code> remains a compatibility f
 When a generic split, name change, spinoff, or merger has no explicit safe
 position effect, <code>position_delta</code> remains null rather than being fabricated as
 zero.
-Resolution method/confidence and an optional resolution-evidence link are also
-available. Phase 3 writes these through its conservative staged resolver:
+Resolution method/confidence, optional <code>resolution_source</code> (<code>auto</code> or
+<code>manual</code>), and an optional resolution-evidence link are also available. Phase 3
+writes these through its conservative staged resolver:
 explicit printed identities, reviewed aliases/fund lookups, and unambiguous
 same-statement holdings are distinguishable from unresolved printed names. The
 database does not constrain <code>txn_type</code>; the Python literal vocabulary and
@@ -1295,7 +1296,9 @@ validator own it.</p>
 buy/sell with a canonical holding identity already observed in the same native
 currency. Methods <code>account_holding_name</code> and <code>portfolio_holding_name</code> identify
 these rebuildable derived links; <code>resolution_evidence_id</code> points at the
-supporting position row. The description and reported numeric fields remain
+supporting position row. Automatic reruns reset only rows with
+<code>resolution_source = 'auto'</code> (or legacy null); <code>manual</code> overrides are preserved.
+The description and reported numeric fields remain
 unchanged. Existing transaction and checkpoint evidence is sufficient for this
 derivation, while <code>instrument_aliases</code> remains reserved for reviewed mappings.</p>
 <p>Parser-contract v6 includes v3's <code>related_instrument</code> and
@@ -1825,11 +1828,13 @@ name-to-ticker map, use market prices, or choose the candidate that merely
 makes a residual zero. A resolved transaction records <code>account_holding_name</code>
 or <code>portfolio_holding_name</code>, its score, and the supporting position evidence.</p>
 <p>This derived link is rebuildable: the pass first clears only those two prior
-automatic methods and recomputes them. Reviewed aliases, printed symbols,
-same-statement matches, and reported transaction fields are untouched. The
-existing transaction description/evidence plus checkpoint name/evidence are
-sufficient, so no second alias table is required. <code>instrument_aliases</code> remains
-reserved for reviewed user mappings rather than inferred corpus observations.</p>
+automatic methods with <code>resolution_source = 'auto'</code> (or legacy null) and
+recomputes them. Rows marked <code>resolution_source = 'manual'</code> are left untouched.
+Reviewed aliases, printed symbols, same-statement matches, and reported
+transaction fields are untouched. The existing transaction description/evidence
+plus checkpoint name/evidence are sufficient, so no second alias table is
+required. <code>instrument_aliases</code> remains reserved for reviewed user mappings
+rather than inferred corpus observations.</p>
 <h2 id="persisted-checkpoint-equations">Persisted checkpoint equations</h2>
 <p>Each generated result belongs to a current <code>snapshot_set</code>, its statement, and
 the statement's ingestion run. Position and cash components point to the exact
@@ -1860,10 +1865,12 @@ position immediately before the event, replay directs it toward zero; otherwise
 the stored parser delta remains and normal incomplete/residual rules apply.</p>
 <p>An explicit ticker change is replayed across the whole interval: immediately
 before the effective date, the engine debits the complete old-symbol balance
-and credits the new-symbol balance multiplied by the stored ratio. The same
-source transaction is therefore an auditable negative component for the old
-instrument and positive component for the new one. It never derives a ticker
-relationship from the closing residual.</p>
+and credits the new-symbol balance multiplied by the stored ratio. Interval
+replay tracks balances by <code>instrument_id</code> so a successor that already exists in
+the prior checkpoint receives the moved quantity additively. The same source
+transaction is therefore an auditable negative component for the old instrument
+and positive component for the new one. It never derives a ticker relationship
+from the closing residual.</p>
 <p>For an empty scope, one scope-level result is stored. It records the same
 missing-prior or incomplete condition, or <code>not_applicable</code> when both complete
 checkpoints are known empty and no unresolved movement is present.</p>
@@ -2187,13 +2194,19 @@ reported-versus-reconstructed state, reconciliation status/reason, price/date
 status, and quality warnings. Monthly renders checkpoint date, holding state,
 reconciliation state, and compact incomplete/reconciliation/pricing warnings.
 Native-currency totals remain primary; CAD/USD conversions display their rate
-and rate date.</p>
+and rate date. When both currencies are present but no FX rate exists for the
+as-of date, the UI shows per-currency totals only and a hint that the combined
+total is unavailable.</p>
 <h2 id="frontend-rules">Frontend rules</h2>
 <ul>
 <li>Use React Query for server data and component state only for UI concerns.</li>
 <li>Add translated strings in <code>frontend/src/i18n.tsx</code>.</li>
 <li>Use CSS variables for theme colors and <code>plotlyTheme()</code> for charts.</li>
-<li>Keep account filtering consistent with the active portfolio.</li>
+<li>Keep account filtering consistent with the active portfolio. Transactions
+  exposes an explicit <strong>All accounts</strong> control when a portfolio is active so
+  users can bypass the portfolio filter without selecting individual accounts.</li>
+<li>Verify renders PDF pages lazily as they enter the viewport; evidence overlays
+  size to the PDF.js viewport so boxes stay aligned with the rendered canvas.</li>
 <li>Source icons in Transactions and Monthly obey <code>show_source_links</code>; they deep
   link only when the server reports exact/unique geometry and are absent when
   no defensible source reference exists. IDs alone never promise linkability.</li>
@@ -2464,7 +2477,9 @@ separate positions and cash snapshot scopes.</p>
   markers. If an option event prints only a strike, its quantity remains null
   and the row is quarantined for review.</li>
 <li>Equity tickers can be parenthesized; options retain CIBC's printed
-  <code>CALL/PUT .ROOT MON DD YYYY STRIKE</code> identity. Mutual funds can remain
+  <code>CALL/PUT .ROOT MON DD YYYY STRIKE</code> identity. Option buy/sell refinement
+  requires <code>\b(CALL|PUT)\b</code> tokens and an explicit <code>OPEN CONTRACT</code> phrase so
+  issuer names containing <code>OPEN</code> stay equity. Mutual funds can remain
   printed-name identities pending a reviewed fund-code lookup. The staged
   resolver either proves the identity or removes the pseudo-token before
   persistence.</li>
@@ -2678,8 +2693,9 @@ scope.</p>
   <code>12M</code> are never treated as the quantity. Legacy rows that print quantity
   before the fund name use their separate leading-quantity grammar.</li>
 <li>Signed balances accept <code>-$...</code>; February options accept both TD's <code>FE</code> and
-  <code>FB</code> codes; activity verbs are case-insensitive. The current-period state
-  machine stops at the printed pending-activity boundary.</li>
+  <code>FB</code> month codes. Activity-line option tokens reject month/day combinations
+  that do not map to a valid expiry. Activity verbs are case-insensitive. The
+  current-period state machine stops at the printed pending-activity boundary.</li>
 <li>In-kind transfers retain their security quantity/instrument with zero cash.
   <code>Disposition</code>, Web Banking transfers, paper-statement fees, cheques,
   interest rebates, cash-in-lieu, and capital-gain distributions retain their
