@@ -7,6 +7,7 @@ deterministic re-ingest consumes the resolved candidate.
 from __future__ import annotations
 
 import difflib
+import json
 import re
 import sqlite3
 from collections import Counter
@@ -17,6 +18,7 @@ from typing import Any
 from ..config import DATA_DIR
 from ..db import sqlite as sqlite_db
 from ..domains import utc_now_text
+from ..logging_setup import jsonl_path
 
 SearchFunction = Callable[[str], list[dict[str, Any]]]
 HistoryFunction = Callable[[str], bool]
@@ -86,6 +88,21 @@ def _symbol_first_candidates(symbol: str, currency: str) -> list[str]:
     return []
 
 
+def _acceptable_quote(quote: dict[str, Any], currency: str) -> bool:
+    """Deterministic listing-family filter shared by search and LLM paths."""
+    symbol = str(quote.get("symbol") or "").upper()
+    quote_type = str(quote.get("quoteType") or "").upper()
+    if quote_type not in _QUOTE_TYPES or not _SYMBOL.fullmatch(symbol):
+        return False
+    canadian_suffix = symbol.endswith((".TO", ".V", ".CN", ".NE"))
+    usd_canadian_line = symbol.endswith("-U.TO")
+    if currency == "CAD" and (not canadian_suffix or usd_canadian_line):
+        return False
+    if currency == "USD" and canadian_suffix and not usd_canadian_line:
+        return False
+    return True
+
+
 def _unique_quote(
     query: str,
     quotes: list[dict[str, Any]],
@@ -95,19 +112,11 @@ def _unique_quote(
 ) -> dict[str, Any] | None:
     scored = []
     for quote in quotes:
-        symbol = str(quote.get("symbol") or "").upper()
-        quote_type = str(quote.get("quoteType") or "").upper()
-        if quote_type not in _QUOTE_TYPES or not _SYMBOL.fullmatch(symbol):
-            continue
-        canadian_suffix = symbol.endswith((".TO", ".V", ".CN", ".NE"))
-        usd_canadian_line = symbol.endswith("-U.TO")
-        if currency == "CAD" and (not canadian_suffix or usd_canadian_line):
-            continue
-        if currency == "USD" and canadian_suffix and not usd_canadian_line:
+        if not _acceptable_quote(quote, currency):
             continue
         score = _name_score(query, quote)
         if score >= minimum_score:
-            scored.append((score, symbol, quote))
+            scored.append((score, str(quote.get("symbol")).upper(), quote))
     scored.sort(key=lambda item: (-item[0], item[1]))
     if not scored:
         return None
@@ -188,6 +197,7 @@ def _resolve_pending_candidates(
     search: SearchFunction,
     history: HistoryFunction,
     metrics: Counter[str],
+    llm: Any = None,
 ) -> None:
     rows = conn.execute(
         """
@@ -199,12 +209,30 @@ def _resolve_pending_candidates(
     ).fetchall()
     for row in rows:
         query = str(row["display_text"])
+        currency = str(row["currency"])
         try:
             quotes = search(query)
         except Exception:
             metrics["candidate_search_failed"] += 1
             continue
-        quote = _unique_quote(query, quotes, currency=str(row["currency"]))
+        quote = _unique_quote(query, quotes, currency=currency)
+        resolved_method = "yahoo_unique_name"
+        if quote is None and quotes and llm is not None:
+            grounded = [item for item in quotes if _acceptable_quote(item, currency)]
+            try:
+                llm_quote, reason = llm.choose(
+                    name=query, symbol=None, currency=currency, quotes=grounded
+                )
+            except Exception:
+                llm_quote, reason = None, "llm chooser raised"
+            if llm_quote is not None and not any(llm_quote == item for item in grounded):
+                llm_quote, reason = None, "llm choice not grounded in candidate list"
+            if llm_quote is not None:
+                quote = llm_quote
+                resolved_method = "llm_assisted"
+                metrics["candidates_llm_proposed"] += 1
+            elif "failed" in reason or "raised" in reason:
+                metrics["candidates_llm_errors"] += 1
         if quote is None:
             if quotes:
                 conn.execute(
@@ -233,15 +261,16 @@ def _resolve_pending_candidates(
         quote_type = str(quote.get("quoteType") or "").upper()
         asset_type = "etf" if quote_type == "ETF" else str(row["asset_type"])
         name = quote.get("longname") or quote.get("shortname") or query
+        confidence = 0.9 if resolved_method == "yahoo_unique_name" else 0.85
         instrument_id = sqlite_db.upsert_instrument(
             conn,
             asset_type=asset_type,
             symbol=symbol,
-            currency=str(row["currency"]),
+            currency=currency,
             exchange=exchange,
-            name=str(name),
-            resolution_method="yahoo_unique_name",
-            resolution_confidence=0.9,
+            name=name,
+            resolution_method=resolved_method,
+            resolution_confidence=confidence,
             market_symbol=provider_symbol,
         )
         now = utc_now_text()
@@ -258,31 +287,24 @@ def _resolve_pending_candidates(
             """
             UPDATE instrument_resolution_candidates
                SET status = 'resolved', resolved_instrument_id = ?,
-                   resolution_method = 'yahoo_unique_name',
-                   resolution_confidence = 0.9,
+                   resolution_method = ?,
+                   resolution_confidence = ?,
                    last_seen_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE candidate_id = ?
             """,
-            (instrument_id, row["candidate_id"]),
+            (instrument_id, resolved_method, confidence, row["candidate_id"]),
         )
+        if resolved_method == "llm_assisted":
+            metrics["candidates_resolved_llm"] += 1
         metrics["candidates_resolved"] += 1
 
 
-def _resolve_unmapped_instruments(
-    conn: sqlite3.Connection,
-    quote_info: QuoteInfoFunction,
-    history: HistoryFunction,
-    metrics: Counter[str],
-) -> None:
-    """Verify unmapped traded instruments against their own printed symbol.
-
-    Broker-truncated names routinely fail the name-search pass, so try the
-    deterministic provider candidates first and accept one only when Yahoo's
-    quote name, currency, and live price history corroborate the ledger row.
-    """
-    rows = conn.execute(
+def _unmapped_traded_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Traded/held equity+ETF instruments that still lack a Yahoo mapping."""
+    return conn.execute(
         """
-        SELECT instrument_id, symbol, name, currency, exchange, asset_type
+        SELECT instrument_id, symbol, name, currency, exchange, asset_type,
+               option_root, option_expiry, option_strike
           FROM instruments
          WHERE asset_type IN ('equity','etf')
            AND currency IN ('CAD','USD')
@@ -299,6 +321,25 @@ def _resolve_unmapped_instruments(
          ORDER BY symbol, instrument_id
         """
     ).fetchall()
+
+
+_LLM_NAME_FLOOR = 0.50
+_CONTRACT_NAME_RE = re.compile(r"\b(?:CALL|PUT)\b|\d{2,3}\.\d{2}\s+\d{2,3}\.\d{2}")
+
+
+def _resolve_unmapped_instruments(
+    conn: sqlite3.Connection,
+    quote_info: QuoteInfoFunction,
+    history: HistoryFunction,
+    metrics: Counter[str],
+) -> None:
+    """Verify unmapped traded instruments against their own printed symbol.
+
+    Broker-truncated names routinely fail the name-search pass, so try the
+    deterministic provider candidates first and accept one only when Yahoo's
+    quote name, currency, and live price history corroborate the ledger row.
+    """
+    rows = _unmapped_traded_rows(conn)
     taken = {
         str(r["provider_symbol"])
         for r in conn.execute(
@@ -373,15 +414,160 @@ def _resolve_unmapped_instruments(
         metrics["symbol_first_resolved"] += 1
 
 
+def _resolve_unmapped_with_llm(
+    conn: sqlite3.Connection,
+    llm: Any,
+    search: SearchFunction,
+    history: HistoryFunction,
+    metrics: Counter[str],
+) -> None:
+    """LLM fallback for traded instruments the deterministic passes left unmapped.
+
+    Grounded candidates come from Yahoo search on the ledger name and the
+    printed symbol; the model picks one, and acceptance still requires the
+    deterministic currency/type checks, a 0.50 name floor, live price history,
+    and an unclaimed provider symbol. Contract-like rows (options, bond
+    descriptions) never reach the model.
+    """
+    rows = _unmapped_traded_rows(conn)
+    if not rows:
+        return
+    taken = {
+        str(r["provider_symbol"])
+        for r in conn.execute(
+            "SELECT provider_symbol FROM instrument_market_symbols WHERE provider = 'yahoo'"
+        ).fetchall()
+    }
+    jsonl = jsonl_path("llm_resolution").open("a", encoding="utf-8")
+    try:
+        for row in rows:
+            if row["option_root"] or row["option_expiry"] or row["option_strike"]:
+                metrics["symbol_llm_skipped_contract"] += 1
+                continue
+            name = str(row["name"] or row["symbol"])
+            if _CONTRACT_NAME_RE.search(name):
+                metrics["symbol_llm_skipped_contract"] += 1
+                continue
+            symbol = str(row["symbol"])
+            currency = str(row["currency"])
+            quotes: dict[str, dict[str, Any]] = {}
+            for query in dict.fromkeys([name, symbol]):
+                try:
+                    results = search(query)
+                except Exception:
+                    metrics["symbol_llm_search_failed"] += 1
+                    continue
+                for quote in results:
+                    if _acceptable_quote(quote, currency):
+                        quotes[str(quote.get("symbol") or "").upper()] = quote
+            if not quotes:
+                metrics["symbol_llm_no_candidates"] += 1
+                continue
+            try:
+                chosen, reason = llm.choose(
+                    name=name, symbol=symbol, currency=currency, quotes=list(quotes.values())
+                )
+            except Exception as exc:
+                metrics["symbol_llm_errors"] += 1
+                jsonl.write(json.dumps({
+                    "key": symbol, "currency": currency, "status": "error",
+                    "err": str(exc)[:200],
+                }) + "\n")
+                continue
+            if chosen is not None and str(chosen.get("symbol") or "").upper() not in quotes:
+                chosen, reason = None, "llm choice not grounded in candidate list"
+            if chosen is None:
+                metrics["symbol_llm_declined"] += 1
+                jsonl.write(json.dumps({
+                    "key": symbol, "currency": currency, "status": "declined",
+                    "reason": reason[:200],
+                }) + "\n")
+                continue
+            provider_symbol = str(chosen["symbol"]).upper()
+            score = _name_score(name, chosen)
+            entry = {
+                "key": symbol,
+                "currency": currency,
+                "provider_symbol": provider_symbol,
+                "name_score": round(score, 3),
+                "chosen_name": chosen.get("longname") or chosen.get("shortname"),
+                "reason": reason[:200],
+            }
+            if provider_symbol in taken:
+                entry["status"] = "conflict"
+                metrics["symbol_llm_conflict"] += 1
+                jsonl.write(json.dumps(entry) + "\n")
+                continue
+            if score < _LLM_NAME_FLOOR:
+                entry["status"] = "name_floor"
+                metrics["symbol_llm_name_floor"] += 1
+                jsonl.write(json.dumps(entry) + "\n")
+                continue
+            try:
+                available = history(provider_symbol)
+            except Exception:
+                available = False
+            if not available:
+                entry["status"] = "no_history"
+                metrics["symbol_llm_no_history"] += 1
+                jsonl.write(json.dumps(entry) + "\n")
+                continue
+            now = utc_now_text()
+            market_symbol_id = sqlite_db.upsert_market_symbol(
+                conn,
+                instrument_id=int(row["instrument_id"]),
+                provider_symbol=provider_symbol,
+                status="verified",
+            )
+            taken.add(provider_symbol)
+            conn.execute(
+                """
+                UPDATE instrument_market_symbols
+                   SET status = 'verified', last_checked_at = ?,
+                       verified_at = ?, last_error = NULL
+                 WHERE market_symbol_id = ?
+                """,
+                (now, now, market_symbol_id),
+            )
+            conn.execute(
+                """
+                UPDATE instruments
+                   SET resolution_method = 'llm_assisted_yahoo',
+                       resolution_confidence = 0.85
+                 WHERE instrument_id = ?
+                   AND (resolution_method IS NULL
+                        OR resolution_method = 'unresolved_printed_identity')
+                """,
+                (row["instrument_id"],),
+            )
+            if row["exchange"] is None and provider_symbol.endswith(".TO"):
+                conn.execute(
+                    "UPDATE instruments SET exchange = 'TSX' WHERE instrument_id = ?",
+                    (row["instrument_id"],),
+                )
+            entry["status"] = "ok"
+            metrics["symbol_llm_resolved"] += 1
+            jsonl.write(json.dumps(entry) + "\n")
+    finally:
+        jsonl.close()
+
+
 def verify_yahoo_identities(
     path: Path | str | None = None,
     *,
     search: SearchFunction | None = None,
     history: HistoryFunction | None = None,
     quote_info: QuoteInfoFunction | None = None,
+    llm: Any = None,
 ) -> dict[str, int]:
     """Verify mappings, resolve pending public-name candidates, and verify
-    unmapped traded instruments against their own printed symbol."""
+    unmapped traded instruments against their own printed symbol.
+
+    ``llm`` (any object with ``choose(name, symbol, currency, quotes)``) adds
+    an LLM fallback for ambiguous candidates and still-unmapped instruments;
+    every LLM choice remains grounded in Yahoo results and passes the same
+    deterministic checks.
+    """
     db_path = path if path is not None else sqlite_db.SQLITE_PATH
     sqlite_db.init_db(db_path)
     metrics: Counter[str] = Counter()
@@ -392,6 +578,7 @@ def verify_yahoo_identities(
             search or _default_search,
             history or _default_history,
             metrics,
+            llm=llm,
         )
         _resolve_unmapped_instruments(
             conn,
@@ -399,4 +586,12 @@ def verify_yahoo_identities(
             history or _default_history,
             metrics,
         )
+        if llm is not None:
+            _resolve_unmapped_with_llm(
+                conn,
+                llm,
+                search or _default_search,
+                history or _default_history,
+                metrics,
+            )
     return dict(sorted(metrics.items()))

@@ -182,6 +182,25 @@ and instruments whose names fail the score (options/bond descriptions, ticker
 reuse) stay unmapped for human review. Accepted `.TO` mappings backfill a NULL
 instrument exchange to TSX.
 
+With `--llm` (or automatically when `ZAI_API_KEY` is set; `--no-llm` opts
+out), the same command adds an LLM fallback for exactly the cases the
+deterministic passes refuse: ambiguous pending candidates and still-unmapped
+traded instruments. The model is Z.ai GLM-5.3 by default
+(`LEDGER_LLM_BASE_URL`/`LEDGER_LLM_MODEL` point elsewhere; any
+OpenAI-compatible chat endpoint works) and receives only public security
+names/symbols, currency, and the Yahoo quotes already fetched for the row —
+never account or statement values. The model can only choose among the
+currency-consistent grounded quotes; it can never introduce a symbol Yahoo did
+not return. Every choice still passes the deterministic checks (quote type,
+currency family, live price history, an unclaimed provider symbol, and a 0.50
+name floor on the unmapped path) before a mapping is written. Contract-like
+rows (options, bond descriptions) never reach the model. Provenance is
+recorded as `resolution_method='llm_assisted'` on resolved candidates,
+`'llm_assisted_yahoo'` on previously-unresolved instruments, and per-decision
+entries in the `llm_resolution` audit log. As with Yahoo verification, the
+LLM never runs inside `ledger ingest run`, and a mapping it verified makes
+affected sources stale for deterministic re-ingest.
+
 Yahoo verification is not part of `ledger ingest run`: source activation must
 remain reproducible and must not depend on network availability. The resolver
 cache includes the catalog version, resolved candidates, and provider mappings,

@@ -133,6 +133,24 @@ claimed by another instrument is never double-mapped.
   `spec/INGESTION.md` documents the new pass; 3 new tests in
   `tests/test_instrument_identity.py`.
 
+### 2026-08-17 follow-up 2: LLM fallback for ambiguous candidates
+
+`resolve-instruments --verify-yahoo --llm` (auto-on when `ZAI_API_KEY` is
+set; `--no-llm` opts out) adds a Z.ai GLM-5.3 fallback
+(`src/ledger/ingest/llm_resolution.py`, `LEDGER_LLM_BASE_URL`/`LEDGER_LLM_MODEL`
+override) for exactly what the deterministic passes refuse: ambiguous pending
+candidates and still-unmapped traded instruments. The model picks among
+currency-filtered, grounded Yahoo search results only; acceptance still
+requires quote type, currency family, live history, an unclaimed provider
+symbol, and a 0.50 name floor; contract-like rows never reach the model.
+Provenance: `llm_assisted` / `llm_assisted_yahoo` resolution methods plus a
+per-decision `logs/llm_resolution.jsonl` audit. Validated the grounding
+against the live backlog (CCJ surfaces for CAMECO CORP; Barrick's new ticker
+`B` does not surface, so GOLD stays in human review by design). The live
+backlog run activates as soon as `ZAI_API_KEY` is exported:
+`uv run ledger ingest resolve-instruments --verify-yahoo --llm`, then
+`market refresh-all` for the newly mapped symbols.
+
 ### Verification
 
 - `pytest -q`: 139 passed; `ruff check src tests`: clean;

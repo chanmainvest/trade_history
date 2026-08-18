@@ -156,6 +156,25 @@ The review server mounts the API at `/api` and serves SPA fallbacks from
 bound, causing different routes to read different databases and Verify links
 to return 404.
 
+## LLM resolver configuration
+
+`ledger ingest resolve-instruments --verify-yahoo --llm` enables the LLM
+fallback for ambiguous listing candidates (it is on automatically whenever the
+API key is present; `--no-llm` preserves deterministic-only behavior):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ZAI_API_KEY` (or `ZHIPUAI_API_KEY`) | — | API key; the fallback stays off without it |
+| `LEDGER_LLM_BASE_URL` | `https://api.z.ai/api/paas/v4` | OpenAI-compatible chat endpoint |
+| `LEDGER_LLM_MODEL` | `glm-5.3` | Z.ai GLM-5.3 by default |
+
+The base URL must be http(s) with a public host — loopback, private,
+link-local, and reserved addresses are rejected before any request is sent,
+and redirects are not followed. Only public security names/symbols, currency,
+and already-fetched Yahoo quotes are sent to the model (see
+`spec/INGESTION.md` for the grounding and verification rules). Decisions are
+appended to `logs/llm_resolution.jsonl` for audit.
+
 ## Docker deployment
 
 `docker compose up --build` exposes the backend on 8000 and the built frontend

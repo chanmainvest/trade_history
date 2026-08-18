@@ -497,7 +497,18 @@ def ingest_repair_symbols() -> None:
     is_flag=True,
     help="Send public security names/symbols to Yahoo and require price history.",
 )
-def ingest_resolve_instruments(verify_yahoo: bool) -> None:
+@click.option(
+    "--llm/--no-llm",
+    "use_llm",
+    default=None,
+    help=(
+        "LLM fallback for ambiguous candidates (default: on when ZAI_API_KEY "
+        "is set). Uses Z.ai GLM-5.3 unless LEDGER_LLM_BASE_URL/LEDGER_LLM_MODEL "
+        "override. The model only picks among Yahoo results; deterministic "
+        "currency/type/history checks still gate every mapping."
+    ),
+)
+def ingest_resolve_instruments(verify_yahoo: bool, use_llm: bool | None) -> None:
     """Resolve catalog listing names and report Yahoo mapping status."""
     from .ingest.instrument_resolution import sync_catalog_identities
 
@@ -507,9 +518,21 @@ def ingest_resolve_instruments(verify_yahoo: bool) -> None:
         + ", ".join(f"{key}={value}" for key, value in sorted(out.items()))
     )
     if verify_yahoo:
+        from .ingest.llm_resolution import LlmResolver, llm_api_key
         from .ingest.yahoo_resolution import verify_yahoo_identities
 
-        verified = verify_yahoo_identities()
+        llm = None
+        api_key = llm_api_key()
+        if use_llm is True and not api_key:
+            raise click.ClickException(
+                "LLM fallback requested but ZAI_API_KEY is not set "
+                "(or set ZHIPUAI_API_KEY / LEDGER_LLM_BASE_URL for another "
+                "OpenAI-compatible endpoint)."
+            )
+        if use_llm is not False and api_key:
+            llm = LlmResolver(api_key)
+            click.echo(f"LLM fallback enabled: {llm.describe()}")
+        verified = verify_yahoo_identities(llm=llm)
         click.echo(
             "Yahoo verification: "
             + ", ".join(f"{key}={value}" for key, value in sorted(verified.items()))

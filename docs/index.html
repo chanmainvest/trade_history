@@ -1582,6 +1582,24 @@ provider symbol already claimed by another instrument is never double-mapped,
 and instruments whose names fail the score (options/bond descriptions, ticker
 reuse) stay unmapped for human review. Accepted <code>.TO</code> mappings backfill a NULL
 instrument exchange to TSX.</p>
+<p>With <code>--llm</code> (or automatically when <code>ZAI_API_KEY</code> is set; <code>--no-llm</code> opts
+out), the same command adds an LLM fallback for exactly the cases the
+deterministic passes refuse: ambiguous pending candidates and still-unmapped
+traded instruments. The model is Z.ai GLM-5.3 by default
+(<code>LEDGER_LLM_BASE_URL</code>/<code>LEDGER_LLM_MODEL</code> point elsewhere; any
+OpenAI-compatible chat endpoint works) and receives only public security
+names/symbols, currency, and the Yahoo quotes already fetched for the row —
+never account or statement values. The model can only choose among the
+currency-consistent grounded quotes; it can never introduce a symbol Yahoo did
+not return. Every choice still passes the deterministic checks (quote type,
+currency family, live price history, an unclaimed provider symbol, and a 0.50
+name floor on the unmapped path) before a mapping is written. Contract-like
+rows (options, bond descriptions) never reach the model. Provenance is
+recorded as <code>resolution_method='llm_assisted'</code> on resolved candidates,
+<code>'llm_assisted_yahoo'</code> on previously-unresolved instruments, and per-decision
+entries in the <code>llm_resolution</code> audit log. As with Yahoo verification, the
+LLM never runs inside <code>ledger ingest run</code>, and a mapping it verified makes
+affected sources stale for deterministic re-ingest.</p>
 <p>Yahoo verification is not part of <code>ledger ingest run</code>: source activation must
 remain reproducible and must not depend on network availability. The resolver
 cache includes the catalog version, resolved candidates, and provider mappings,
@@ -2374,6 +2392,42 @@ ledger, bind the database explicitly before any API module is imported:</p>
 <code>sqlite_db.SQLITE_PATH</code> after importing the API: helper defaults may already be
 bound, causing different routes to read different databases and Verify links
 to return 404.</p>
+<h2 id="llm-resolver-configuration">LLM resolver configuration</h2>
+<p><code>ledger ingest resolve-instruments --verify-yahoo --llm</code> enables the LLM
+fallback for ambiguous listing candidates (it is on automatically whenever the
+API key is present; <code>--no-llm</code> preserves deterministic-only behavior):</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ZAI_API_KEY</code> (or <code>ZHIPUAI_API_KEY</code>)</td>
+<td>—</td>
+<td>API key; the fallback stays off without it</td>
+</tr>
+<tr>
+<td><code>LEDGER_LLM_BASE_URL</code></td>
+<td><code>https://api.z.ai/api/paas/v4</code></td>
+<td>OpenAI-compatible chat endpoint</td>
+</tr>
+<tr>
+<td><code>LEDGER_LLM_MODEL</code></td>
+<td><code>glm-5.3</code></td>
+<td>Z.ai GLM-5.3 by default</td>
+</tr>
+</tbody>
+</table>
+<p>The base URL must be http(s) with a public host — loopback, private,
+link-local, and reserved addresses are rejected before any request is sent,
+and redirects are not followed. Only public security names/symbols, currency,
+and already-fetched Yahoo quotes are sent to the model (see
+<code>spec/INGESTION.md</code> for the grounding and verification rules). Decisions are
+appended to <code>logs/llm_resolution.jsonl</code> for audit.</p>
 <h2 id="docker-deployment">Docker deployment</h2>
 <p><code>docker compose up --build</code> exposes the backend on 8000 and the built frontend
 on 5173. It mounts <code>data/</code>, <code>logs/</code>, and <code>Statements/</code> into the backend. The
