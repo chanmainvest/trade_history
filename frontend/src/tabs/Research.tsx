@@ -133,8 +133,10 @@ export default function Research() {
   const summary = useMemo(() => {
     if (allRows.length === 0) return null;
     const last = allRows[allRows.length - 1];
-    const first = rows.length > 0 ? rows[0] : last;
-    const lastClose = Number(last.close);
+    // today's live bar can carry a null close; show the last completed close
+    const lastClosed = [...allRows].reverse().find((r: any) => r.close !== null && r.close !== undefined) ?? last;
+    const first = rows.length > 0 ? rows[0] : lastClosed;
+    const lastClose = Number(lastClosed.close);
     const periodPct = Number(first.adj_close ?? first.close) > 0
       ? (lastClose / Number(first.adj_close ?? first.close) - 1) * 100
       : null;

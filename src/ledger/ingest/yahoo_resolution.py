@@ -20,8 +20,11 @@ from ..domains import utc_now_text
 
 SearchFunction = Callable[[str], list[dict[str, Any]]]
 HistoryFunction = Callable[[str], bool]
+QuoteInfoFunction = Callable[[str], dict[str, Any] | None]
 _QUOTE_TYPES = {"EQUITY", "ETF", "MUTUALFUND"}
 _SYMBOL = re.compile(r"^[A-Z][A-Z0-9.\-]{0,14}$")
+_CANADIAN_SUFFIXES = (".TO", ".V", ".NE")
+_SYMBOL_FIRST_MIN_SCORE = 0.70
 
 
 def _normalized_name(value: str | None) -> str:
@@ -52,6 +55,35 @@ def _default_history(symbol: str) -> bool:
     yf.set_tz_cache_location(str(DATA_DIR / "yfinance_cache"))
     history = yf.Ticker(symbol).history(period="1mo", interval="1d", auto_adjust=False)
     return history is not None and not history.empty
+
+
+def _default_quote_info(symbol: str) -> dict[str, Any] | None:
+    import yfinance as yf
+
+    yf.set_tz_cache_location(str(DATA_DIR / "yfinance_cache"))
+    info = yf.Ticker(symbol).info
+    if not info:
+        return None
+    return {
+        "symbol": info.get("symbol") or symbol,
+        "shortname": info.get("shortName"),
+        "longname": info.get("longName"),
+        "currency": info.get("currency"),
+        "quoteType": info.get("quoteType"),
+    }
+
+
+def _symbol_first_candidates(symbol: str, currency: str) -> list[str]:
+    """Deterministic Yahoo candidates built from the broker-printed symbol."""
+    value = symbol.upper()
+    if not _SYMBOL.fullmatch(value):
+        return []
+    base = value.replace(".", "-")
+    if currency == "CAD":
+        return [base + suffix for suffix in _CANADIAN_SUFFIXES]
+    if currency == "USD":
+        return [base]
+    return []
 
 
 def _unique_quote(
@@ -236,13 +268,120 @@ def _resolve_pending_candidates(
         metrics["candidates_resolved"] += 1
 
 
+def _resolve_unmapped_instruments(
+    conn: sqlite3.Connection,
+    quote_info: QuoteInfoFunction,
+    history: HistoryFunction,
+    metrics: Counter[str],
+) -> None:
+    """Verify unmapped traded instruments against their own printed symbol.
+
+    Broker-truncated names routinely fail the name-search pass, so try the
+    deterministic provider candidates first and accept one only when Yahoo's
+    quote name, currency, and live price history corroborate the ledger row.
+    """
+    rows = conn.execute(
+        """
+        SELECT instrument_id, symbol, name, currency, exchange, asset_type
+          FROM instruments
+         WHERE asset_type IN ('equity','etf')
+           AND currency IN ('CAD','USD')
+           AND NOT EXISTS (
+                SELECT 1 FROM instrument_market_symbols market
+                 WHERE market.instrument_id = instruments.instrument_id
+                   AND market.provider = 'yahoo'
+           )
+           AND (
+                EXISTS (SELECT 1 FROM transactions t WHERE t.instrument_id = instruments.instrument_id)
+             OR EXISTS (SELECT 1 FROM position_snapshots p WHERE p.instrument_id = instruments.instrument_id)
+             OR EXISTS (SELECT 1 FROM initial_positions initial WHERE initial.instrument_id = instruments.instrument_id)
+           )
+         ORDER BY symbol, instrument_id
+        """
+    ).fetchall()
+    taken = {
+        str(r["provider_symbol"])
+        for r in conn.execute(
+            "SELECT provider_symbol FROM instrument_market_symbols WHERE provider = 'yahoo'"
+        ).fetchall()
+    }
+    for row in rows:
+        symbol = str(row["symbol"])
+        currency = str(row["currency"])
+        candidates = _symbol_first_candidates(symbol, currency)
+        if not candidates:
+            metrics["symbol_first_skipped_symbol"] += 1
+            continue
+        accepted: dict[str, Any] | None = None
+        tried: list[str] = []
+        for candidate in candidates:
+            if candidate in taken:
+                metrics["symbol_first_conflict"] += 1
+                continue
+            tried.append(candidate)
+            try:
+                quote = quote_info(candidate)
+            except Exception:
+                quote = None
+            if not quote:
+                continue
+            quote_symbol = str(quote.get("symbol") or candidate).upper()
+            quote_type = str(quote.get("quoteType") or "").upper()
+            if quote_symbol != candidate or quote_type not in _QUOTE_TYPES:
+                continue
+            if str(quote.get("currency") or "").upper() != currency:
+                continue
+            if _name_score(str(row["name"] or symbol), quote) < _SYMBOL_FIRST_MIN_SCORE:
+                metrics["symbol_first_name_mismatch"] += 1
+                continue
+            try:
+                available = history(candidate)
+            except Exception:
+                available = False
+            if not available:
+                metrics["symbol_first_no_history"] += 1
+                continue
+            accepted = quote
+            provider_symbol = candidate
+            break
+        if accepted is None:
+            if tried:
+                metrics["symbol_first_unverified"] += 1
+            continue
+        now = utc_now_text()
+        market_symbol_id = sqlite_db.upsert_market_symbol(
+            conn,
+            instrument_id=int(row["instrument_id"]),
+            provider_symbol=provider_symbol,
+            status="verified",
+        )
+        taken.add(provider_symbol)
+        conn.execute(
+            """
+            UPDATE instrument_market_symbols
+               SET status = 'verified', last_checked_at = ?,
+                   verified_at = ?, last_error = NULL
+             WHERE market_symbol_id = ?
+            """,
+            (now, now, market_symbol_id),
+        )
+        if row["exchange"] is None and provider_symbol.endswith(".TO"):
+            conn.execute(
+                "UPDATE instruments SET exchange = 'TSX' WHERE instrument_id = ?",
+                (row["instrument_id"],),
+            )
+        metrics["symbol_first_resolved"] += 1
+
+
 def verify_yahoo_identities(
     path: Path | str | None = None,
     *,
     search: SearchFunction | None = None,
     history: HistoryFunction | None = None,
+    quote_info: QuoteInfoFunction | None = None,
 ) -> dict[str, int]:
-    """Verify mappings and uniquely resolve pending public-name candidates."""
+    """Verify mappings, resolve pending public-name candidates, and verify
+    unmapped traded instruments against their own printed symbol."""
     db_path = path if path is not None else sqlite_db.SQLITE_PATH
     sqlite_db.init_db(db_path)
     metrics: Counter[str] = Counter()
@@ -251,6 +390,12 @@ def verify_yahoo_identities(
         _resolve_pending_candidates(
             conn,
             search or _default_search,
+            history or _default_history,
+            metrics,
+        )
+        _resolve_unmapped_instruments(
+            conn,
+            quote_info or _default_quote_info,
             history or _default_history,
             metrics,
         )

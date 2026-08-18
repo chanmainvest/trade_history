@@ -106,6 +106,33 @@ Deliberately **not** done tonight (larger follow-ups, listed for review):
   (by design — a shared company name is not evidence). Suggested follow-up:
   a small review workflow over the 194 ambiguous candidates.
 
+### 2026-08-17 follow-up: symbol-first resolver pass
+
+The name-search resolver could never cover broker-truncated names ("CHECK
+POINT SOFTWARE TECH" vs "Check Point Software Technologies Ltd." scores 0.73
+under the 0.82 bar), so most traded instruments stayed unmapped and their
+Research charts stalled at 2026-04-30 (CHKP was the visible symptom; 77 of
+114 price series were stale). Added a symbol-first pass to
+`ingest resolve-instruments --verify-yahoo`: for each unmapped traded
+equity/ETF it proposes the printed symbol (`.TO`/`.V`/`.NE` for CAD lines)
+and accepts it only when the Yahoo quote symbol, type, currency, live
+history, and a ≥0.70 name score corroborate. A provider symbol already
+claimed by another instrument is never double-mapped.
+
+- Verified mappings 33 → **130**; refused the traps correctly: CCO USD
+  (Yahoo's CCO is now Clear Channel Outdoor — Cameco's NYSE line is CCJ),
+  GOLD (Barrick moved to ticker B; GOLD is now Gold.com Inc.), the PFE
+  bond row, the SOXS option row, and the delisted relics (YHOO, AABA, MSCC).
+- ~28 instruments remain for human review: generic broker names ("ISHARES
+  INC" for EWM/EWS/EWW/EWZ/INDA/VNM), near-threshold scores (CORN 0.63,
+  RIO 0.65, VALE 0.50, XOM 0.65), CCO USD→CCJ and GOLD→B (correct Yahoo
+  symbols differ from the printed symbol — needs an explicit human pair),
+  and delisted tickers with no live data.
+- Full refresh (prices + profiles + dividends + splits + financials +
+  earnings + FX + benchmarks) re-run for the expanded 130-symbol set;
+  `spec/INGESTION.md` documents the new pass; 3 new tests in
+  `tests/test_instrument_identity.py`.
+
 ### Verification
 
 - `pytest -q`: 139 passed; `ruff check src tests`: clean;

@@ -319,3 +319,131 @@ def test_yahoo_candidate_rejects_ambiguous_or_wrong_currency_results(tmp_path):
 
     assert result == {"candidate_ambiguous": 1}
     assert status == "ambiguous"
+
+
+def _unmapped_instrument(conn, *, symbol: str, name: str, currency: str) -> int:
+    institution_id = sqlite_db.upsert_institution(conn, "TST", "Test")
+    account_id = sqlite_db.upsert_account(
+        conn, institution_id=institution_id, account_number="A-1"
+    )
+    instrument_id = sqlite_db.upsert_instrument(
+        conn,
+        asset_type="equity",
+        symbol=symbol,
+        currency=currency,
+        exchange=None,
+        name=name,
+    )
+    conn.execute(
+        """
+        INSERT INTO transactions(
+            account_id, trade_date, txn_type, instrument_id, quantity,
+            position_delta, currency
+        ) VALUES (?, '2024-01-10', 'buy', ?, 1, 1, ?)
+        """,
+        (account_id, instrument_id, currency),
+    )
+    return instrument_id
+
+
+def test_yahoo_symbol_first_verifies_unmapped_traded_instrument(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        _unmapped_instrument(
+            conn, symbol="CLS", name="CELESTICA INC SV", currency="CAD"
+        )
+
+    result = verify_yahoo_identities(
+        db_path,
+        search=lambda _query: [],
+        quote_info=lambda symbol: {
+            "symbol": symbol,
+            "longname": "Celestica Inc.",
+            "currency": "CAD",
+            "quoteType": "EQUITY",
+        }
+        if symbol == "CLS.TO"
+        else None,
+        history=lambda symbol: symbol == "CLS.TO",
+    )
+    with sqlite_db.session(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT i.symbol, i.exchange, market.provider_symbol, market.status,
+                   market.verified_at
+              FROM instruments i
+              JOIN instrument_market_symbols market
+                ON market.instrument_id = i.instrument_id
+            """
+        ).fetchall()
+
+    assert result == {"symbol_first_resolved": 1}
+    assert [tuple(r)[:4] for r in rows] == [("CLS", "TSX", "CLS.TO", "verified")]
+    assert rows[0]["verified_at"]
+
+
+def test_yahoo_symbol_first_rejects_mismatched_name_or_currency(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        _unmapped_instrument(
+            conn, symbol="PFE", name="PFIZER INC 300 123.00 104.55", currency="USD"
+        )
+
+    result = verify_yahoo_identities(
+        db_path,
+        search=lambda _query: [],
+        quote_info=lambda symbol: {
+            "symbol": symbol,
+            "longname": "Pfizer Inc.",
+            "currency": "USD",
+            "quoteType": "EQUITY",
+        },
+        history=lambda _symbol: True,
+    )
+    with sqlite_db.session(db_path) as conn:
+        count = conn.execute(
+            "SELECT count(*) FROM instrument_market_symbols"
+        ).fetchone()[0]
+
+    assert result == {"symbol_first_name_mismatch": 1, "symbol_first_unverified": 1}
+    assert count == 0
+
+
+def test_yahoo_symbol_first_skips_provider_symbol_taken_by_other_instrument(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        _unmapped_instrument(
+            conn, symbol="BRK.B", name="BERKSHIRE HATHAWAY INC", currency="USD"
+        )
+        _unmapped_instrument(
+            conn, symbol="BRK-B", name="BERKSHIRE HATHAWAY INC", currency="USD"
+        )
+
+    result = verify_yahoo_identities(
+        db_path,
+        search=lambda _query: [],
+        quote_info=lambda symbol: {
+            "symbol": symbol,
+            "longname": "Berkshire Hathaway Inc.",
+            "currency": "USD",
+            "quoteType": "EQUITY",
+        },
+        history=lambda _symbol: True,
+    )
+    with sqlite_db.session(db_path) as conn:
+        mapping = conn.execute(
+            """
+            SELECT i.symbol, market.provider_symbol
+              FROM instrument_market_symbols market
+              JOIN instruments i ON i.instrument_id = market.instrument_id
+            """
+        ).fetchone()
+
+    assert result == {
+        "symbol_first_conflict": 1,
+        "symbol_first_resolved": 1,
+    }
+    assert tuple(mapping) == ("BRK-B", "BRK-B")

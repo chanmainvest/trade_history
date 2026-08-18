@@ -169,6 +169,19 @@ currency/listing family plus non-empty price history, and records
 verified/failed/ambiguous status. A newly resolved candidate affects financial
 rows only on the next deterministic re-ingest.
 
+`--verify-yahoo` also runs a symbol-first pass over traded/held equity and ETF
+instruments that still lack a Yahoo mapping: it proposes the deterministic
+candidate list built from the broker-printed symbol (`.TO`/`.V`/`.NE` suffixes
+for CAD lines, the bare dashed symbol for USD lines), and accepts one only when
+Yahoo's quote symbol, quote type, currency, and live price history corroborate
+the ledger row and the quote name scores at least 0.70 against the ledger name.
+The lower threshold (versus 0.82 for name search) reflects broker-truncated
+names; the printed symbol plus currency agreement is the primary evidence. A
+provider symbol already claimed by another instrument is never double-mapped,
+and instruments whose names fail the score (options/bond descriptions, ticker
+reuse) stay unmapped for human review. Accepted `.TO` mappings backfill a NULL
+instrument exchange to TSX.
+
 Yahoo verification is not part of `ledger ingest run`: source activation must
 remain reproducible and must not depend on network availability. The resolver
 cache includes the catalog version, resolved candidates, and provider mappings,
