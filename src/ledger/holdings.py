@@ -7,6 +7,7 @@ signal, never permission to clear or replace an earlier anchor.
 from __future__ import annotations
 
 import copy
+import math
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -38,11 +39,57 @@ class _ScopeAnchor:
     scope_key: str
 
 
+@dataclass(frozen=True)
+class _ContributorSourceRef:
+    statement_id: int
+    kind: str
+    row_id: int
+    checkpoint: bool | None
+    geometry_status: str
+    page_numbers: tuple[int, ...]
+    linkable: bool
+
+    def serialize(self) -> dict:
+        source_ref = {
+            "statement_id": self.statement_id,
+            "kind": self.kind,
+            "id": self.row_id,
+            "geometry_status": self.geometry_status,
+            "page_numbers": list(self.page_numbers),
+            "linkable": self.linkable,
+        }
+        if self.checkpoint is not None:
+            source_ref["checkpoint"] = self.checkpoint
+        return source_ref
+
+
+@dataclass(frozen=True)
+class _SecurityContributor:
+    scope_key: str | None
+    checkpoint_date: str | None
+    checkpoint_statement_id: int | None
+    checkpoint_snapshot_set_id: int | None
+    quantity: float
+    source_ref: _ContributorSourceRef | None
+    movements: tuple[_ContributorSourceRef, ...]
+
+    def serialize(self) -> dict:
+        return {
+            "scope_key": self.scope_key,
+            "checkpoint_date": self.checkpoint_date,
+            "checkpoint_statement_id": self.checkpoint_statement_id,
+            "checkpoint_snapshot_set_id": self.checkpoint_snapshot_set_id,
+            "quantity": self.quantity,
+            "source_ref": self.source_ref.serialize() if self.source_ref else None,
+            "movements": [movement.serialize() for movement in self.movements],
+        }
+
+
 @dataclass
 class _SecurityState:
     account_id: int
     currency: str
-    scope_key: str
+    scope_key: str | None
     instrument_id: int
     instrument_key: str
     symbol: str
@@ -71,6 +118,8 @@ class _SecurityState:
     ticker_symbols: tuple[str, ...] = ()
     anchor_instrument_id: int | None = None
     movement_source_refs: list[dict] = field(default_factory=list)
+    contributors: tuple[_SecurityContributor, ...] = ()
+    composite: bool = False
 
 
 @dataclass
@@ -125,6 +174,92 @@ def _transaction_source_ref(row: dict) -> dict | None:
         "page_numbers": list(pages),
         "linkable": status in {"exact", "unique_tokens"} and bool(pages),
     }
+
+
+def _position_source_ref(
+    state: _SecurityState,
+    *,
+    checkpoint: bool,
+) -> dict | None:
+    if state.anchor is None or state.source_snapshot_id is None:
+        return None
+    return {
+        "statement_id": state.anchor.statement_id,
+        "kind": "position",
+        "id": state.source_snapshot_id,
+        "checkpoint": checkpoint,
+        "geometry_status": state.source_geometry_status or "unavailable",
+        "page_numbers": list(state.source_page_numbers),
+        "linkable": state.source_geometry_status in {"exact", "unique_tokens"}
+        and bool(state.source_page_numbers),
+    }
+
+
+def _source_ref_identity(source_ref: dict) -> tuple:
+    return (
+        source_ref.get("statement_id"),
+        source_ref.get("kind"),
+        source_ref.get("id"),
+        source_ref.get("checkpoint"),
+        source_ref.get("geometry_status"),
+        tuple(source_ref.get("page_numbers") or ()),
+        bool(source_ref.get("linkable")),
+    )
+
+
+def _copy_source_ref(source_ref: dict) -> dict:
+    copied = dict(source_ref)
+    copied["page_numbers"] = list(source_ref.get("page_numbers") or ())
+    return copied
+
+
+def _stable_source_refs(source_refs: list[dict]) -> list[dict]:
+    seen: set[tuple] = set()
+    stable: list[dict] = []
+    for source_ref in source_refs:
+        identity = _source_ref_identity(source_ref)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        stable.append(_copy_source_ref(source_ref))
+    return stable
+
+
+def _freeze_source_ref(source_ref: dict) -> _ContributorSourceRef:
+    return _ContributorSourceRef(
+        statement_id=int(source_ref["statement_id"]),
+        kind=str(source_ref["kind"]),
+        row_id=int(source_ref["id"]),
+        checkpoint=source_ref.get("checkpoint"),
+        geometry_status=str(source_ref.get("geometry_status") or "unavailable"),
+        page_numbers=tuple(int(page) for page in source_ref.get("page_numbers") or ()),
+        linkable=bool(source_ref.get("linkable")),
+    )
+
+
+def _contributor_bundle(state: _SecurityState) -> _SecurityContributor:
+    source_ref = _position_source_ref(state, checkpoint=True)
+    return _SecurityContributor(
+        scope_key=state.scope_key,
+        checkpoint_date=(state.anchor.as_of_date if state.anchor else state.initial_date),
+        checkpoint_statement_id=(state.anchor.statement_id if state.anchor else None),
+        checkpoint_snapshot_set_id=(state.anchor.snapshot_set_id if state.anchor else None),
+        quantity=state.quantity,
+        source_ref=_freeze_source_ref(source_ref) if source_ref else None,
+        movements=tuple(
+            _freeze_source_ref(movement)
+            for movement in _stable_source_refs(state.movement_source_refs)
+        ),
+    )
+
+
+def _contributor_order(contributor: _SecurityContributor) -> tuple:
+    return (
+        contributor.checkpoint_date or "",
+        contributor.checkpoint_statement_id or 0,
+        contributor.checkpoint_snapshot_set_id or 0,
+        contributor.scope_key or "",
+    )
 
 
 def _latest_scopes(rows: list[dict], *, complete_only: bool) -> dict[tuple[int, str, str], dict]:
@@ -621,24 +756,43 @@ def _combine_security_states(states: list[_SecurityState]) -> _SecurityState:
             state.anchor.as_of_date if state.anchor else state.initial_date or "",
             state.anchor.statement_id if state.anchor else 0,
             state.anchor.snapshot_set_id if state.anchor else 0,
+            state.scope_key or "",
         ),
     )
     if len(states) == 1:
         return primary
+
+    contributors = tuple(sorted(
+        (_contributor_bundle(state) for state in states),
+        key=_contributor_order,
+    ))
     combined = copy.copy(primary)
-    combined.quantity = sum(state.quantity for state in states)
+    combined.quantity = math.fsum(contributor.quantity for contributor in contributors)
     combined.position_movement = any(state.position_movement for state in states)
-    combined.cost_basis_stale = any(state.cost_basis_stale for state in states)
+    combined.cost_basis_stale = False
     combined.incomplete = True
     combined.warnings = {warning for state in states for warning in state.warnings}
     combined.warnings.add("duplicate_complete_position_scopes")
-    anchor_dates = [
-        state.anchor.as_of_date
-        for state in states
-        if state.anchor is not None
-    ]
-    if anchor_dates:
-        combined.initial_date = min(anchor_dates)
+    combined.scope_key = None
+    combined.source_snapshot_id = None
+    combined.source_geometry_status = None
+    combined.source_page_numbers = ()
+    combined.anchor = None
+    combined.initial_date = None
+    combined.anchor_quantity = None
+    combined.avg_cost = None
+    combined.book_value = None
+    combined.market_price = None
+    combined.market_value = None
+    combined.unrealized_pnl = None
+    combined.anchor_instrument_id = None
+    combined.movement_source_refs = _stable_source_refs([
+        movement.serialize()
+        for contributor in contributors
+        for movement in contributor.movements
+    ])
+    combined.contributors = contributors
+    combined.composite = True
     return combined
 
 
@@ -673,41 +827,58 @@ def _security_record(
     reconciliation_status: str | None = None
     reconciliation_reason: str | None = None
     reconciliation_incomplete = False
-    if state.anchor is not None:
-        reconciliation_status, reconciliation_reason, reconciliation_incomplete = _result_quality(
-            reconciliation_results.get((
-                state.anchor.snapshot_set_id,
-                state.anchor_instrument_id or state.instrument_id,
-            )),
-            warnings,
-        )
-    else:
-        warnings.add("missing_complete_position_checkpoint")
-    is_reported = state.anchor is not None and state.anchor.as_of_date == as_of
-    holding_state = "reported" if is_reported else "reconstructed"
-    if state.incomplete or reconciliation_incomplete:
+    if state.composite:
+        is_reported = False
         holding_state = "incomplete"
-    source_ref = (
-        {
-            "statement_id": state.anchor.statement_id,
-            "kind": "position",
-            "id": state.source_snapshot_id,
-            "checkpoint": not is_reported,
-            "geometry_status": state.source_geometry_status or "unavailable",
-            "page_numbers": list(state.source_page_numbers),
-            "linkable": state.source_geometry_status in {"exact", "unique_tokens"}
-            and bool(state.source_page_numbers),
+        source_ref = None
+        provenance = {
+            "type": "multiple_checkpoints",
+            "checkpoint": None,
+            "checkpoints": [
+                contributor.serialize() for contributor in state.contributors
+            ],
+            "movements": _stable_source_refs(state.movement_source_refs),
         }
-        if state.anchor is not None and state.source_snapshot_id is not None
-        else None
-    )
-    provenance_type = (
-        "reported_row"
-        if is_reported
-        else "checkpoint_plus_movements"
-        if source_ref is not None or state.movement_source_refs
-        else "unavailable"
-    )
+        checkpoint_date = None
+        checkpoint_statement_id = None
+        checkpoint_snapshot_set_id = None
+    else:
+        if state.anchor is not None:
+            reconciliation_status, reconciliation_reason, reconciliation_incomplete = (
+                _result_quality(
+                    reconciliation_results.get((
+                        state.anchor.snapshot_set_id,
+                        state.anchor_instrument_id or state.instrument_id,
+                    )),
+                    warnings,
+                )
+            )
+        else:
+            warnings.add("missing_complete_position_checkpoint")
+        is_reported = state.anchor is not None and state.anchor.as_of_date == as_of
+        holding_state = "reported" if is_reported else "reconstructed"
+        if state.incomplete or reconciliation_incomplete:
+            holding_state = "incomplete"
+        source_ref = _position_source_ref(state, checkpoint=not is_reported)
+        provenance = {
+            "type": (
+                "reported_row"
+                if is_reported
+                else "checkpoint_plus_movements"
+                if source_ref is not None or state.movement_source_refs
+                else "unavailable"
+            ),
+            "checkpoint": source_ref,
+            "movements": state.movement_source_refs,
+        }
+        checkpoint_date = (
+            state.initial_date
+            if state.incomplete and "duplicate_complete_position_scopes" in warnings
+            else (state.anchor.as_of_date if state.anchor else state.initial_date)
+        )
+        checkpoint_statement_id = state.anchor.statement_id if state.anchor else None
+        checkpoint_snapshot_set_id = state.anchor.snapshot_set_id if state.anchor else None
+
     return {
         "as_of_date": as_of,
         "account_id": state.account_id,
@@ -731,23 +902,15 @@ def _security_record(
         "option_type": state.option_type,
         "quantity": state.quantity,
         "source_ref": source_ref,
-        "provenance": {
-            "type": provenance_type,
-            "checkpoint": source_ref,
-            "movements": state.movement_source_refs,
-        },
+        "provenance": provenance,
         "avg_cost": state.avg_cost if is_reported or not state.cost_basis_stale else None,
         "book_value": state.book_value if is_reported or not state.cost_basis_stale else None,
         "market_price": state.market_price if is_reported else None,
         "market_value": state.market_value if is_reported else None,
         "unrealized_pnl": state.unrealized_pnl if is_reported else None,
-        "checkpoint_date": (
-            state.initial_date
-            if state.incomplete and "duplicate_complete_position_scopes" in warnings
-            else (state.anchor.as_of_date if state.anchor else state.initial_date)
-        ),
-        "checkpoint_statement_id": state.anchor.statement_id if state.anchor else None,
-        "checkpoint_snapshot_set_id": state.anchor.snapshot_set_id if state.anchor else None,
+        "checkpoint_date": checkpoint_date,
+        "checkpoint_statement_id": checkpoint_statement_id,
+        "checkpoint_snapshot_set_id": checkpoint_snapshot_set_id,
         "is_reported": is_reported,
         "is_reconstructed": not is_reported,
         "holding_state": holding_state,

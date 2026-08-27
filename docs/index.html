@@ -294,10 +294,15 @@ database, across all accounts in the active portfolio.</p>
   exact/unique persisted rectangle. Reported rows link to their exact
   position/cash evidence. Reconstructed rows retain explicit checkpoint plus
   movement provenance rather than claiming the checkpoint quantity is the
-  calculated current quantity.</li>
+  calculated current quantity. If several complete position scopes contribute
+  to one holding, Monthly shows a multiple-source marker and each contributor;
+  linkable contributors open Verify, while contributors without defensible
+  geometry stay visible but non-clickable. No contributor is presented as the
+  source of the whole aggregate.</li>
 <li>Every current holding shows its checkpoint date and whether it is
-  <strong>reported</strong>, <strong>reconstructed</strong>, or <strong>incomplete</strong>. The quality cell also
-  shows its reconciliation result and warns about incomplete scopes,
+  <strong>reported</strong>, <strong>reconstructed</strong>, or <strong>incomplete</strong>. Composite rows show
+  <strong>multiple checkpoints</strong> instead of a singular checkpoint date. The quality
+  cell also shows its reconciliation result and warns about incomplete scopes,
   reconciliation issues, and stale or missing prices. These flags describe
   uncertainty; they never add a balancing transaction or guess a value.</li>
 </ul>
@@ -2033,6 +2038,27 @@ initial inference, holdings, movement attribution, and reconciliation.</p>
 for one account/currency are candidates, the service does not fan one movement
 out across them; it leaves the quantities unchanged and marks the affected
 rows incomplete with an ambiguity warning.</p>
+<p>When two or more non-zero complete-scope states resolve to the same
+<code>(account_id, security lineage, native currency)</code> holding, the service sums the
+quantities but treats the result as a composite rather than selecting one scope
+as authoritative. The row is incomplete, reconstructed, and not reported; its
+<code>scope_key</code>, singular source/checkpoint IDs and date, reconciliation result,
+average cost, book value, unrealized P/L, and broker valuation are null. Its
+provenance type is <code>multiple_checkpoints</code>, with a deterministically ordered
+<code>checkpoints</code> list. Each immutable contributor bundle keeps that contributor's
+scope key, checkpoint date, statement ID, snapshot-set ID, quantity, position
+source reference, and movement references together. Contributor and aggregate
+movement references retain the existing exact/unique geometry linkability
+rules and are stably de-duplicated without creating missing evidence.</p>
+<p>A composite equity or ETF can receive <code>market_price</code>, <code>market_value</code>, and
+<code>price_date</code> only from an independently identified market quote for its native-
+currency listing, in which case <code>price_status</code> is <code>market</code>. Contributor broker
+prices and values are never reused directly or as stale-checkpoint fallbacks;
+without an independent quote the composite is <code>unpriced</code>. Option composites
+remain unpriced because underlying-equity quotes are not option-contract
+prices. Performance's bounded forward fill uses the oldest contributor date
+internally for conservative freshness, without turning it into a singular
+aggregate checkpoint field.</p>
 <p>Cash is reconstructed independently from a complete cash scope plus later
 non-corporate-action <code>cash_delta</code> values by <code>cash_effective_date</code> (falling back
 to <code>trade_date</code> for legacy rows). It falls back to <code>initial_cash</code> before the
@@ -2227,8 +2253,24 @@ optional exact <code>source_ref</code>, and a <code>provenance</code> object tha
 reported row from a checkpoint plus contributing movements,
 the broker-facing <code>symbol</code> and distinct <code>market_symbol</code>,
 reported-versus-reconstructed state, reconciliation status/reason, price/date
-status, and quality warnings. Monthly renders checkpoint date, holding state,
-reconciliation state, and compact incomplete/reconciliation/pricing warnings.
+status, and quality warnings. A composite formed from two or more non-zero
+complete position scopes has nullable singular <code>scope_key</code>, source, checkpoint,
+and reconciliation fields and <code>provenance.type = multiple_checkpoints</code>.
+<code>provenance.checkpoints</code> is an ordered list of contributor bundles containing
+one scope key, checkpoint date, statement ID, snapshot-set ID, contributed
+quantity, position source ref, and movement refs from the same contributor.
+The aggregate is incomplete, reconstructed, and not reported. Broker cost,
+profit/loss, and valuation from an individual contributor are null; only an
+independent native-currency listing quote may provide aggregate market price
+and value with <code>price_status = market</code>.</p>
+<p>Monthly preserves the existing single-source icon for ordinary rows. For a
+<code>multiple_checkpoints</code> row it instead shows a compact multiple-source marker,
+one Verify link for each linkable contributor, and a non-clickable marker for
+each contributor without defensible geometry; it never promotes one
+contributor to an authoritative aggregate source. The checkpoint and quality
+cells explicitly identify multiple complete checkpoints using translated text.
+Monthly otherwise renders checkpoint date, holding state, reconciliation
+state, and compact incomplete/reconciliation/pricing warnings.
 Native-currency totals remain primary; CAD/USD conversions display their rate
 and rate date. When both currencies are present but no FX rate exists for the
 as-of date, the UI shows per-currency totals only and a hint that the combined
@@ -2252,7 +2294,10 @@ tabs show the price-data date and warn when it is a week or more stale.</p>
   size to the PDF.js viewport so boxes stay aligned with the rendered canvas.</li>
 <li>Source icons in Transactions and Monthly obey <code>show_source_links</code>; they deep
   link only when the server reports exact/unique geometry and are absent when
-  no defensible source reference exists. IDs alone never promise linkability.</li>
+  no defensible source reference exists. IDs alone never promise linkability.
+  Composite holdings use a multiple-source marker, preserve non-linkable
+  contributors as non-clickable evidence, and never display one contributor
+  as the aggregate's singular source.</li>
 <li>The treemap sizes rectangles in each holding's native currency, states the
   per-currency totals, and never silently converts; the gain/loss/no-data
   color legend is rendered above the chart.</li>

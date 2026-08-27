@@ -114,8 +114,25 @@ optional exact `source_ref`, and a `provenance` object that distinguishes one
 reported row from a checkpoint plus contributing movements,
 the broker-facing `symbol` and distinct `market_symbol`,
 reported-versus-reconstructed state, reconciliation status/reason, price/date
-status, and quality warnings. Monthly renders checkpoint date, holding state,
-reconciliation state, and compact incomplete/reconciliation/pricing warnings.
+status, and quality warnings. A composite formed from two or more non-zero
+complete position scopes has nullable singular `scope_key`, source, checkpoint,
+and reconciliation fields and `provenance.type = multiple_checkpoints`.
+`provenance.checkpoints` is an ordered list of contributor bundles containing
+one scope key, checkpoint date, statement ID, snapshot-set ID, contributed
+quantity, position source ref, and movement refs from the same contributor.
+The aggregate is incomplete, reconstructed, and not reported. Broker cost,
+profit/loss, and valuation from an individual contributor are null; only an
+independent native-currency listing quote may provide aggregate market price
+and value with `price_status = market`.
+
+Monthly preserves the existing single-source icon for ordinary rows. For a
+`multiple_checkpoints` row it instead shows a compact multiple-source marker,
+one Verify link for each linkable contributor, and a non-clickable marker for
+each contributor without defensible geometry; it never promotes one
+contributor to an authoritative aggregate source. The checkpoint and quality
+cells explicitly identify multiple complete checkpoints using translated text.
+Monthly otherwise renders checkpoint date, holding state, reconciliation
+state, and compact incomplete/reconciliation/pricing warnings.
 Native-currency totals remain primary; CAD/USD conversions display their rate
 and rate date. When both currencies are present but no FX rate exists for the
 as-of date, the UI shows per-currency totals only and a hint that the combined
@@ -142,6 +159,9 @@ tabs show the price-data date and warn when it is a week or more stale.
 - Source icons in Transactions and Monthly obey `show_source_links`; they deep
   link only when the server reports exact/unique geometry and are absent when
   no defensible source reference exists. IDs alone never promise linkability.
+  Composite holdings use a multiple-source marker, preserve non-linkable
+  contributors as non-clickable evidence, and never display one contributor
+  as the aggregate's singular source.
 - The treemap sizes rectangles in each holding's native currency, states the
   per-currency totals, and never silently converts; the gain/loss/no-data
   color legend is rendered above the chart.

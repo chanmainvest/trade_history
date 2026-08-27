@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 
 import duckdb
 
+from ledger import holdings as holdings_service
 from ledger.api.routes import config as config_route
 from ledger.api.routes import monthly as monthly_route
 from ledger.api.routes import transactions as transactions_route
+from ledger.api.routes import viz as viz_route
 from ledger.api.routes.monthly import _holdings_at
 from ledger.api.routes.performance import _total_rows
 from ledger.db import sqlite as sqlite_db
@@ -483,3 +486,189 @@ def test_monthly_dates_lists_available_snapshot_dates(tmp_path, monkeypatch):
         "dates": ["2024-01-31", "2024-02-29"]
     }
     assert monthly_route.dates(account_id="999999") == {"dates": []}
+
+
+def test_composite_holding_contract_is_shared_across_monthly_performance_and_viz(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = tmp_path / "ledger.sqlite"
+    market_path = tmp_path / "market.duckdb"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id, january_source_id = _seed_account(
+            conn,
+            source_relpath="Statements/Test/composite-jan.pdf",
+        )
+        february_source_id = seed_source(
+            conn,
+            "Statements/Test/composite-feb.pdf",
+        )
+        january = _seed_statement(conn, account_id, january_source_id, "2024-01-31")
+        february = _seed_statement(conn, account_id, february_source_id, "2024-02-29")
+        instrument_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="equity",
+            symbol="ABC",
+            currency="CAD",
+        )
+        seed_position(
+            conn,
+            statement_id=january,
+            instrument_id=instrument_id,
+            quantity=5,
+            market_value=50,
+            currency="CAD",
+        )
+        february_default_snapshot = seed_position(
+            conn,
+            statement_id=february,
+            instrument_id=instrument_id,
+            quantity=10,
+            market_value=100,
+            currency="CAD",
+        )
+        context = conn.execute(
+            "SELECT account_id, period_end FROM statements WHERE statement_id = ?",
+            (february,),
+        ).fetchone()
+        evidence_id = _seed_evidence(
+            conn,
+            statement_id=february,
+            row_kind="position",
+            row_index=instrument_id + 10_000,
+        )
+        secondary_set_id = sqlite_db.upsert_snapshot_set(
+            conn,
+            statement_id=february,
+            account_id=context["account_id"],
+            as_of_date=context["period_end"],
+            currency="CAD",
+            section_type="positions",
+            scope_key="secondary",
+            completeness="complete",
+            evidence_id=evidence_id,
+            reported_total=None,
+            validation_status="valid",
+        )
+        secondary_snapshot = conn.execute(
+            """
+            INSERT INTO position_snapshots(
+                statement_id, snapshot_set_id, evidence_id, account_id, as_of_date,
+                instrument_id, quantity, avg_cost, book_value, market_price,
+                market_value, unrealized_pnl, currency, raw_line
+            ) VALUES (?, ?, ?, ?, ?, ?, 20, 11, 220, 13, 260, 40, 'CAD',
+                      'synthetic secondary position evidence')
+            RETURNING snapshot_id
+            """,
+            (
+                february,
+                secondary_set_id,
+                evidence_id,
+                account_id,
+                context["period_end"],
+                instrument_id,
+            ),
+        ).fetchone()[0]
+        conn.execute(
+            """
+            UPDATE position_snapshots
+               SET avg_cost = 8, book_value = 80, market_price = 10,
+                   market_value = 100, unrealized_pnl = 20
+             WHERE snapshot_id = ?
+            """,
+            (february_default_snapshot,),
+        )
+
+    market = duckdb.connect(str(market_path))
+    try:
+        market.execute(
+            "CREATE TABLE daily_prices("
+            "symbol VARCHAR, close DOUBLE, adj_close DOUBLE, trade_date DATE)"
+        )
+        market.execute(
+            "INSERT INTO daily_prices VALUES ('ABC', 12, 12, '2024-02-29')"
+        )
+    finally:
+        market.close()
+
+    monkeypatch.setattr(holdings_service.sqlite_db, "SQLITE_PATH", db_path)
+    monkeypatch.setattr(holdings_service, "DUCKDB_PATH", market_path)
+    monkeypatch.setattr(monthly_route, "DUCKDB_PATH", market_path)
+    monkeypatch.setattr(viz_route, "_resolve_as_of", lambda month_end: "2024-02-29")
+    monkeypatch.setattr(viz_route, "_symbol_profiles", lambda symbols: {})
+    monkeypatch.setattr(
+        viz_route,
+        "_symbol_performance",
+        lambda symbols, as_of, period: {symbol: None for symbol in symbols},
+    )
+    monkeypatch.setattr(viz_route, "_price_data_through", lambda: "2024-02-29")
+
+    snapshot = monthly_route.snapshot(month_end=date(2024, 2, 29), account_id=None)
+    assert len(snapshot["rows"]) == 1
+    composite = snapshot["rows"][0]
+    assert composite["quantity"] == 30.0
+    assert composite["holding_state"] == "incomplete"
+    assert composite["is_reported"] is False
+    assert composite["source_ref"] is None
+    assert composite["scope_key"] is None
+    assert composite["checkpoint_date"] is None
+    assert composite["checkpoint_statement_id"] is None
+    assert composite["checkpoint_snapshot_set_id"] is None
+    assert composite["reconciliation_status"] is None
+    assert composite["provenance"]["type"] == "multiple_checkpoints"
+    assert composite["provenance"]["checkpoint"] is None
+    assert len(composite["provenance"]["checkpoints"]) == 2
+    assert {
+        contributor["source_ref"]["id"]
+        for contributor in composite["provenance"]["checkpoints"]
+    } == {february_default_snapshot, secondary_snapshot}
+    assert composite["avg_cost"] is None
+    assert composite["book_value"] is None
+    assert composite["unrealized_pnl"] is None
+    assert composite["market_price"] == 12.0
+    assert composite["market_value"] == 360.0
+    assert composite["price_status"] == "market"
+    assert snapshot["totals"]["native"] == {"CAD": 360.0}
+
+    diff = monthly_route.diff(
+        a=date(2024, 1, 31),
+        b=date(2024, 2, 29),
+        account_id=None,
+    )
+    assert diff["rows"] == [
+        {
+            "holding_key": composite["holding_key"],
+            "account_id": account_id,
+            "account_number": "A1",
+            "institution_code": "TST",
+            "instrument_key": composite["instrument_key"],
+            "symbol": "ABC",
+            "asset_type": "equity",
+            "currency": "CAD",
+            "option_expiry": None,
+            "option_strike": None,
+            "option_type": None,
+            "qty_a": 5.0,
+            "qty_b": 30.0,
+            "qty_delta": 25.0,
+            "mv_a": 50.0,
+            "mv_b": 360.0,
+        }
+    ]
+
+    performance = _total_rows(path=db_path)
+    assert {
+        row["currency"]: row["market_value"]
+        for row in performance
+        if row["as_of_date"] == "2024-02-29"
+    } == {"CAD": 360.0}
+    visualisation = viz_route.holdings_by_sector(
+        month_end=date(2024, 2, 29),
+        account_id=None,
+        period="1m",
+    )
+    assert len(visualisation["rows"]) == 1
+    assert visualisation["rows"][0]["currency"] == "CAD"
+    assert visualisation["rows"][0]["market_value"] == 360.0
+    assert viz_route._held_symbols_at("2024-02-29", [], path=db_path) == ["ABC"]

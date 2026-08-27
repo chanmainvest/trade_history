@@ -74,6 +74,13 @@ def _filter_rows(
     for row in rows:
         if max_checkpoint_age_days is not None:
             checkpoint = row.get("checkpoint_date")
+            if checkpoint is None and row.get("provenance", {}).get("type") == "multiple_checkpoints":
+                contributor_dates = [
+                    contributor.get("checkpoint_date")
+                    for contributor in row["provenance"].get("checkpoints", [])
+                    if contributor.get("checkpoint_date") is not None
+                ]
+                checkpoint = min(contributor_dates) if contributor_dates else None
             if checkpoint is None:
                 continue
             age = (date.fromisoformat(as_of) - date.fromisoformat(str(checkpoint))).days

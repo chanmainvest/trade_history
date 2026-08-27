@@ -118,6 +118,16 @@ export type Account = {
 
 export type SymbolRow = { symbol: string; asset_type: string; currency: string };
 
+export type HoldingCheckpointContributor = {
+  scope_key: string | null;
+  checkpoint_date: string | null;
+  checkpoint_statement_id: number | null;
+  checkpoint_snapshot_set_id: number | null;
+  quantity: number;
+  source_ref: SourceRef | null;
+  movements: SourceRef[];
+};
+
 export type HoldingRow = {
   as_of_date: string;
   account_id: number;
@@ -129,16 +139,19 @@ export type HoldingRow = {
   holding_key: string;
   symbol: string;
   ticker_symbols: string[];
+  market_symbol: string | null;
   asset_type: string;
   currency: string;
+  scope_key: string | null;
   option_expiry: string | null;
   option_strike: number | null;
   option_type: string | null;
   quantity: number;
   source_ref: SourceRef | null;
   provenance: {
-    type: "reported_row" | "checkpoint_plus_movements" | "observed_incomplete" | "unavailable";
+    type: "reported_row" | "checkpoint_plus_movements" | "multiple_checkpoints" | "observed_incomplete" | "unavailable";
     checkpoint: SourceRef | null;
+    checkpoints?: HoldingCheckpointContributor[];
     movements: SourceRef[];
   };
   avg_cost: number | null;

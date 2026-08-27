@@ -246,10 +246,15 @@ database, across all accounts in the active portfolio.
   exact/unique persisted rectangle. Reported rows link to their exact
   position/cash evidence. Reconstructed rows retain explicit checkpoint plus
   movement provenance rather than claiming the checkpoint quantity is the
-  calculated current quantity.
+  calculated current quantity. If several complete position scopes contribute
+  to one holding, Monthly shows a multiple-source marker and each contributor;
+  linkable contributors open Verify, while contributors without defensible
+  geometry stay visible but non-clickable. No contributor is presented as the
+  source of the whole aggregate.
 - Every current holding shows its checkpoint date and whether it is
-  **reported**, **reconstructed**, or **incomplete**. The quality cell also
-  shows its reconciliation result and warns about incomplete scopes,
+  **reported**, **reconstructed**, or **incomplete**. Composite rows show
+  **multiple checkpoints** instead of a singular checkpoint date. The quality
+  cell also shows its reconciliation result and warns about incomplete scopes,
   reconciliation issues, and stale or missing prices. These flags describe
   uncertainty; they never add a balancing transaction or guess a value.
 

@@ -104,9 +104,12 @@ function hasPriceWarning(row: HoldingRow): boolean {
   );
 }
 
-function HoldingQuality({ row }: { row: HoldingRow }) {
+export function HoldingQuality({ row }: { row: HoldingRow }) {
   const { t } = useI18n();
   const warnings: string[] = [];
+  if (row.provenance.type === "multiple_checkpoints") {
+    warnings.push(t("quality.warning.multiple_checkpoints"));
+  }
   if (hasScopeWarning(row)) warnings.push(t("quality.warning.scope"));
   if (hasReconciliationWarning(row)) warnings.push(t("quality.warning.reconciliation"));
   if (hasPriceWarning(row)) warnings.push(t("quality.warning.price"));
@@ -125,6 +128,49 @@ function HoldingQuality({ row }: { row: HoldingRow }) {
       {warnings.map((warning) => <span key={warning} className="quality-tag warning">{warning}</span>)}
     </div>
   );
+}
+
+export function HoldingSources({ row }: { row: HoldingRow }) {
+  const { t } = useI18n();
+  if (row.provenance.type === "multiple_checkpoints") {
+    const contributors = row.provenance.checkpoints ?? [];
+    return (
+      <div className="multiple-holding-sources" title={t("source.multiple_checkpoints")}>
+        <span className="multiple-source-indicator" aria-label={t("source.multiple_checkpoints")}>
+          {t("source.multiple_short")} {contributors.length}
+        </span>
+        {contributors.map((contributor, index) => {
+          const label = interpolate(t("source.contributor"), {
+            index: String(index + 1),
+            scope: contributor.scope_key || t("quality.unavailable"),
+          });
+          return contributor.source_ref?.linkable ? (
+            <SourceLink
+              key={`${contributor.scope_key || "scope"}-${index}`}
+              source={contributor.source_ref}
+              title={label}
+            />
+          ) : (
+            <span
+              key={`${contributor.scope_key || "scope"}-${index}`}
+              className="multiple-source-unlinked"
+              title={`${label} · ${t("source.location_unavailable")}`}
+            >
+              {index + 1}
+            </span>
+          );
+        })}
+      </div>
+    );
+  }
+  return row.source_ref?.linkable ? (
+    <SourceLink
+      source={row.source_ref}
+      title={row.source_ref.checkpoint
+        ? t("source.open_checkpoint")
+        : t("source.open_position")}
+    />
+  ) : null;
 }
 
 type Col =
@@ -385,22 +431,15 @@ export default function Monthly() {
               return (
                 <tr key={r.holding_key} className={rowClass}>
                   {showSourceLinks && (
-                    <td>
-                      {r.source_ref?.linkable ? (
-                        <SourceLink
-                          source={r.source_ref}
-                          title={r.source_ref.checkpoint
-                            ? t("source.open_checkpoint")
-                            : t("source.open_position")}
-                        />
-                      ) : null}
-                    </td>
+                    <td><HoldingSources row={r} /></td>
                   )}
                   <td>{r.institution_code}</td>
                   <td>{r.account_number}</td>
                   <td>{r.asset_type === "cash" ? r.symbol : <Link to={`/research/${r.symbol}`}>{r.symbol}</Link>}</td>
                   <td>{r.asset_type}{r.option_type ? ` ${r.option_type} ${fmtNum(r.option_strike, 2)} ${r.option_expiry || ""}` : ""}</td>
-                  <td>{r.checkpoint_date || t("quality.unavailable")}</td>
+                  <td>{r.provenance.type === "multiple_checkpoints"
+                    ? t("quality.multiple_checkpoints")
+                    : r.checkpoint_date || t("quality.unavailable")}</td>
                   <td><HoldingQuality row={r} /></td>
                   <td className="num">{fmtNum(r.quantity, 0)}</td>
                   <td className="num">{fmtNum(r.market_price)}</td>

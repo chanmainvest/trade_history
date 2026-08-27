@@ -872,6 +872,32 @@ h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+.multiple-holding-sources {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: max-content;
+}
+.multiple-source-indicator,
+.multiple-source-unlinked {
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid rgba(212, 168, 67, 0.55);
+  border-radius: 6px;
+  color: var(--warn);
+  background: rgba(212, 168, 67, 0.12);
+  font-size: 10px;
+  line-height: 1;
+}
+.multiple-source-unlinked {
+  min-width: 20px;
+  height: 20px;
+  padding: 0;
+  opacity: 0.8;
+}
 .verify-date {
   font-variant-numeric: tabular-nums;
   font-weight: 600;

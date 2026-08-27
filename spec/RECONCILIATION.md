@@ -242,6 +242,29 @@ for one account/currency are candidates, the service does not fan one movement
 out across them; it leaves the quantities unchanged and marks the affected
 rows incomplete with an ambiguity warning.
 
+When two or more non-zero complete-scope states resolve to the same
+`(account_id, security lineage, native currency)` holding, the service sums the
+quantities but treats the result as a composite rather than selecting one scope
+as authoritative. The row is incomplete, reconstructed, and not reported; its
+`scope_key`, singular source/checkpoint IDs and date, reconciliation result,
+average cost, book value, unrealized P/L, and broker valuation are null. Its
+provenance type is `multiple_checkpoints`, with a deterministically ordered
+`checkpoints` list. Each immutable contributor bundle keeps that contributor's
+scope key, checkpoint date, statement ID, snapshot-set ID, quantity, position
+source reference, and movement references together. Contributor and aggregate
+movement references retain the existing exact/unique geometry linkability
+rules and are stably de-duplicated without creating missing evidence.
+
+A composite equity or ETF can receive `market_price`, `market_value`, and
+`price_date` only from an independently identified market quote for its native-
+currency listing, in which case `price_status` is `market`. Contributor broker
+prices and values are never reused directly or as stale-checkpoint fallbacks;
+without an independent quote the composite is `unpriced`. Option composites
+remain unpriced because underlying-equity quotes are not option-contract
+prices. Performance's bounded forward fill uses the oldest contributor date
+internally for conservative freshness, without turning it into a singular
+aggregate checkpoint field.
+
 Cash is reconstructed independently from a complete cash scope plus later
 non-corporate-action `cash_delta` values by `cash_effective_date` (falling back
 to `trade_date` for legacy rows). It falls back to `initial_cash` before the

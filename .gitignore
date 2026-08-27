@@ -28,3 +28,6 @@ frontend/tsconfig.tsbuildinfo
 # Graphify output
 graphify-out/
 
+.kiro/
+.mimosa/
+data/ledger.vnext.config.previous-*.json
