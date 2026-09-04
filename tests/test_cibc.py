@@ -191,3 +191,212 @@ def test_cibc_classify_activity_ignores_open_in_equity_issuer_names():
         "Sold",
         "PUT .ABC JAN 20 2024 50 OPEN CONTRACT 1 2.00",
     ) == "option_sell_to_open"
+
+
+def test_cibc_corporate_actions_wrapped_names_and_ticker_continuations():
+    pdf = load_fixture("cibc/corporate_actions.txt")
+    result = CIBCParser().parse(pdf)
+    assert result.errors == []
+    statement = result.statements[0]
+    assert statement.account.account_number == "555-66666"
+    assert statement.period_end == "2026-07-31"
+
+    txns = statement.transactions
+
+    # "Shrs in xc" option-contract exchanges: ±qty, blank price/amount cells.
+    journals = [row for row in txns if row.txn_type == "journal"]
+    assert sorted(row.quantity for row in journals) == [-10.0, 10.0]
+    assert all(row.instrument.option_root == "XYZ1" for row in journals)
+    assert all(row.net_amount is None for row in journals)
+    assert any("SAMPLE DLY SEMICONDUCTOR BR" in row.description for row in journals)
+    assert any("SAMPLE DAILY SEMICONDUCTOR" in row.description for row in journals)
+    # The digit-bearing corporate-action note lines under the row attach to
+    # it: split ratio, and the printed post-event position value.
+    out_leg = next(row for row in journals if row.quantity < 0)
+    assert "FA 1:10 REV SPLIT & CIL" in out_leg.description
+    assert "VALUE $ 2,146.74" in out_leg.description
+    in_leg = next(row for row in journals if row.quantity > 0)
+    assert "ADJ 1:20 REV SPLIT D:5 SAMPLE" in in_leg.description
+
+    # "Assignment" is CIBC's printed noun form of an assigned option event.
+    assigns = [row for row in txns if row.txn_type == "option_assignment"]
+    assert len(assigns) == 1
+    assert assigns[0].quantity == 2.0
+    assert assigns[0].instrument.option_root == "ZYX"
+    assert assigns[0].net_amount is None
+
+    # Merger legs print qty, a blank price cell, and a signed cash value.
+    mergers = [row for row in txns if row.txn_type == "merger"]
+    assert sorted(row.quantity for row in mergers) == [-1500.0, 1500.0]
+    assert {row.net_amount for row in mergers} == {4170.0, -4170.0}
+    assert all(row.instrument.symbol == "UROY" for row in mergers)
+    assert any("SURRENDERED" in row.description for row in mergers)
+
+    buys = [row for row in txns if row.txn_type == "buy"]
+    nlr = next(row for row in buys if row.instrument and row.instrument.symbol == "NLR")
+    assert nlr.quantity == 100.0
+    assert "URANIUM AND NUCLEAR" in nlr.description
+    net = next(row for row in buys if row.instrument and row.instrument.symbol == "NET")
+    assert net.quantity == 10.0
+    sample_buy = next(row for row in buys if "SAMPLE ENERGY" in (row.description or ""))
+    assert "COM NEW UNSOLICITED" in sample_buy.description
+
+    # Portfolio rows: a printed (SYM/EXCH) continuation names the holding,
+    # and value/par note lines attach too.
+    by_symbol = {pos.instrument.symbol: pos for pos in statement.positions}
+    assert by_symbol["SEU"].quantity == 1000.0
+    assert by_symbol["NET"].quantity == 30.0
+    spu = next(
+        pos for pos in statement.positions
+        if "SAMPLE PHYSICAL URANIUM" in (pos.instrument.name or "")
+    )
+    assert spu.market_price == 21.5  # the ƒ footnote glyph must not break parsing
+    assert "VALUE $0.001 PER SHARE" in spu.instrument.name
+    opt = by_symbol["XYZ1"]
+    assert opt.instrument.option_root == "XYZ1"  # adjusted roots carry digits
+
+    # The dividend's printed note lines (share count, record/pay dates)
+    # attach to the transaction instead of quarantining.
+    dividends = [row for row in txns if row.txn_type == "dividend"]
+    royal = next(row for row in dividends if "ROYAL SAMPLE" in row.description)
+    assert royal.net_amount == 148.20
+    for note in ("CASH DIV ON 312 SHS", "REC JUL 02 2026", "PAY JUL 15 2026"):
+        assert note in royal.description
+
+    # A cash transfer whose account reference carries a journal suffix
+    # (`TRANSFER FROM 555-44444-7`) must not read the suffix as a negative
+    # quantity: it is a cash movement, not a position movement.
+    cash_xfer = next(
+        row for row in txns
+        if row.txn_type in {"transfer_in", "transfer_out"}
+        and row.net_amount == 2631.60
+    )
+    assert cash_xfer.quantity is None
+    assert cash_xfer.instrument is None
+    assert "555-44444-7" in cash_xfer.description
+
+    # An in-kind security transfer carries its source account and printed
+    # value as note lines under the row.
+    sec_xfer = next(
+        row for row in txns
+        if "SAMPLE NEVADA CORPORATION" in row.description
+    )
+    assert sec_xfer.txn_type == "transfer_in"
+    assert sec_xfer.quantity == 500.0
+    for note in ("TRANSFER FROM 555-44444-7", "VALUE $88,471.95"):
+        assert note in sec_xfer.description
+
+    # Cash sections reconcile to the printed closing balances; the CAD-
+    # converted presentation total and the note lines are neither recorded
+    # as cash nor quarantined.
+    assert {c.currency: c.closing_balance for c in statement.cash_balances} == {
+        "CAD": 3149.8,
+        "USD": 8189.5,
+    }
+    assert all(
+        row.reason != "unrecognized activity row" for row in statement.quarantine
+    )
+    assert all("FA 1:10" not in row.raw_line for row in statement.quarantine)
+    assert all(
+        "Total closing" not in row.raw_line for row in statement.quarantine
+    )
+    # Per-page furniture (period line, previous-statement marker, page footer)
+    # is skipped, not quarantined.
+    furniture = [
+        row for row in statement.quarantine
+        if "previous statement" in row.raw_line
+        or row.raw_line.startswith("July 1-")
+        or "account # 555-66666 page" in row.raw_line
+    ]
+    assert furniture == []
+    # Disclosure/legal footer prose and printer barcodes are skipped too.
+    boilerplate = [
+        row for row in statement.quarantine
+        if "gst/hst" in row.raw_line.lower()
+        or "annual fee" in row.raw_line.lower()
+        or "conduct of our business" in row.raw_line.lower()
+        or "Bay St" in row.raw_line
+        or "1-800-" in row.raw_line
+        or "HRI-*" in row.raw_line
+    ]
+    assert boilerplate == []
+    scopes = {
+        (scope.currency, scope.section_type): scope.completeness
+        for scope in statement.snapshot_sets
+    }
+    assert scopes == {
+        ("CAD", "cash"): "complete",
+        ("CAD", "positions"): "complete",
+        ("USD", "cash"): "complete",
+        ("USD", "positions"): "complete",
+    }
+    assert validate_parse_result(result).is_valid
+
+
+def test_cibc_residual_flatten_wire_footer_tax_and_option_wraps():
+    pdf = load_fixture("cibc/residual_shapes.txt")
+    result = CIBCParser().parse(pdf)
+    assert result.errors == []
+    statement = result.statements[0]
+    assert statement.account.account_number == "555-77777"
+    txns = statement.transactions
+
+    # The mutual-fund residual flatten ("Shrs in xc 1000THS <FUND> -2 — —")
+    # is a journal movement of the fund its description names: the parser
+    # keeps the printed-name identity attempt (a synthetic mutual_fund the
+    # staged resolver resolves through the reviewed fund lookup).
+    flatten = next(row for row in txns if row.txn_type == "journal")
+    assert flatten.quantity == -2.0
+    assert flatten.instrument is not None
+    assert flatten.instrument.asset_type == "mutual_fund"
+    assert flatten.instrument.resolution_method == "unresolved_printed_identity"
+    assert flatten.net_amount is None
+    for fragment in ("1000THS SAMPLE DIVIDEND", "INCOME FUND CL F", "FLATTEN RESIDUAL MFD"):
+        assert fragment in flatten.description
+
+    # A dividend whose note line prints a reinvest price with a blank cash
+    # cell is an in-kind reinvestment, not a cash dividend.
+    drip = next(row for row in txns if row.txn_type == "reinvest_dividend")
+    assert drip.quantity == 34.801
+    assert drip.net_amount is None
+    assert "REINVESTED DIV @ 15.7635" in drip.description
+
+    # Squeezed wire-confirmation footer fragments (wire reference, gross
+    # amount / transfer fee) are receipt furniture, not quarantined rows.
+    assert all("WIRE=" not in row.raw_line for row in statement.quarantine)
+    assert all("GA=" not in row.raw_line for row in statement.quarantine)
+
+    # Option assignments carry their underlying-security CUSIP wraps, split
+    # or fused, and the stock buy carries the "ASSIGNMENT OF OPTION" note
+    # plus the echoed contract description.
+    assigns = [row for row in txns if row.txn_type == "option_assignment"]
+    assert [(row.quantity, row.instrument.option_root) for row in assigns] == [
+        (2.0, "HLC"),
+        (35.0, "HLC"),
+    ]
+    assert all("A/E 9GDQHF6" in row.description for row in assigns)
+    buy = next(
+        row for row in txns
+        if row.txn_type == "buy" and "SAMPLE MINING COMPANY" in (row.description or "")
+    )
+    assert "ASSIGNMENT OF OPTION" in buy.description
+    assert "PUT HLC JUN 18 2026 22" in buy.description
+
+    # The fixed NON-RES TAX WITHHELD label is a cash event with no security
+    # identity — recorded without an unresolved-identity marker.
+    tax = next(row for row in txns if row.txn_type == "tax_withholding")
+    assert tax.net_amount == -22.23
+    assert tax.instrument is None
+    assert tax.resolution_method is None
+
+    # No activity row was quarantined: the cash scopes stay authoritative.
+    assert statement.quarantine == []
+    scopes = {
+        (scope.currency, scope.section_type): scope.completeness
+        for scope in statement.snapshot_sets
+    }
+    assert scopes == {
+        ("CAD", "cash"): "complete",
+        ("USD", "cash"): "complete",
+    }
+    assert validate_parse_result(result).is_valid

@@ -1,0 +1,73 @@
+# Synthetic fixture: corporate-action verbs (Shrs in xc / Assignment /
+# Merger), wrapped security names with printed ticker continuation lines,
+# the ƒ book-cost footnote glyph, and a digit-bearing adjusted option root.
+# No real customer data.
+Investor's Edge Investment Account
+Account # 555-66666
+July 1-July 31, 2026
+
+Account Activity — Canadian Dollars
+Jul 1 — Opening cash balance — — $2,000.00
+Jul 15 Dividend ROYAL SAMPLE INC — — $148.20
+CASH DIV ON 312 SHS
+REC JUL 02 2026
+PAY JUL 15 2026
+Jul 6 Transfer TRANSFER FROM 555-44444-7 — $2,631.60
+Jul 10 Transfer SAMPLE NEVADA CORPORATION 500 —
+TRANSFER FROM 555-44444-7
+VALUE $88,471.95
+Jul 29 Bought SAMPLE ENERGY CORP 1,000 1.630 -$1,630.00
+COM NEW UNSOLICITED
+Jul 31 — Closing cash balance — — $3,149.80
+055555 account # 555-66666 page 1 of 2 SEE OVER»
+July 1-July 31, 2026
+(previous statement June 30, 2026)
+
+Account Activity — U.S. Dollars
+Jul 1 — Opening cash balance — — $20,000.00
+Jul 15 Shrs in xc CALL XYZ1 JAN 15 2027 50 -10 — —
+SAMPLE DLY SEMICONDUCTOR BR
+FA 1:10 REV SPLIT & CIL
+VALUE $ 2,146.74
+Jul 15 Shrs in xc CALL XYZ1 JAN 15 2027 50 10 — —
+SAMPLE DAILY SEMICONDUCTOR
+ADJ 1:20 REV SPLIT D:5 SAMPLE
+Jul 16 Assignment PUT ZYX JUN 18 2026 22 2 — —
+Jul 2 Bought CLOUDFLARE INC 10 100.000 -$1,000.00
+Jul 31 Merger URANIUM ROYALTY CORP -1,500 — $4,170.00
+COM SHRS SURRENDERED - MERGER
+Jul 31 Merger URANIUM ROYALTY CORP 1,500 — -$4,170.00
+COMMON STOCK
+SHRS RECEIVED THRU MERGER
+Jul 31 Bought VANECK ETF TRUST 100 108.105 -$10,810.50
+VANECK URANIUM AND NUCLEAR ETF
+UNSOLICITED
+Jul 31 — Closing cash balance — — $8,189.50
+($1.00 U.S. equals $1.40220 CAN)
+Total closing cash balance in Canadian dollars — — $11,488.60
+
+Portfolio Assets — Canadian Dollars
+July 1-July 31, 2026
+(previous statement June 30, 2026)
+Equities
+SAMPLE ENERGY CORP COM NEW 1,000 $1,630.00 1.520 $1,520.00 1,000
+(SEU/CDNX)
+SAMPLE PHYSICAL URANIUM 100 $2,500.00 ƒ 21.500 $2,150.00 100
+VALUE $0.001 PER SHARE
+(SPU/TSX)
+
+Portfolio Assets — U.S. Dollars
+Equities
+CLOUDFLARE INC 30 $500.00 27.890 $836.94 —
+CLASS A COMMON STOCK PAR
+VALUE $0.001 PER SHARE
+(NET/US)
+Other
+CALL XYZ1 JAN 15 2027 50 -10 -$214.67 0.050 -$5.00 —
+• Annual fees will be charged in September if the combined market balance of all your accounts is less than $10,000. If your combined balance
+is greater, then the annual fee of $100 is waived!
+45 days of the statement date. We reserve the purposes. GST/HST and QST: # 89531 9382 funds are not segregated from other funds and
+right to adjust this statement for errors and RT0001. may be used in the conduct of our business.
+Services Inc., 161 Bay St. 4th floor, Toronto, SAMPLE World Markets Inc. or SAMPLE.
+ON, M5J 0E7 or call 1-800-555-0100.
+HRI-*05555500*

@@ -23,7 +23,15 @@ Use `ingest.fund_lookup.lookup_fund_code()` / `lookup_fund_instrument_id()` inst
 
 - The first unresolved fund name is recorded in `instrument_identifier_lookups` with `status = 'pending'`.
 - A reviewed lookup can be marked `resolved` with `resolved_symbol`, optional `resolved_exchange`, `resolved_name`, `evidence_url`, and notes.
-- After a row is resolved, `ledger ingest repair-symbols` rewrites matching mutual-fund transactions and snapshots to the reviewed code.
+- The review surface shared by humans and agents is `data/fund_lookups.json`, applied with
+  `ledger ingest resolve-fund-lookup --file data/fund_lookups.json`. Each entry carries the
+  normalized printed name, currency, institution codes, the researched symbol, and its evidence
+  URLs; the command validates every symbol shape and applies nothing when an entry is malformed.
+  Research the identity from the issuer's published fund codes or an independent fund-code
+  vendor — never from the statement, which prints no code.
+- After a row is resolved, the staged resolver applies it as `reviewed_fund_lookup` on the next
+  ingest (holdings persist, transactions keep the instrument), and `ledger ingest repair-symbols`
+  can rewrite already-persisted rows.
 - Until reviewed, keep the printed fund-name instrument so the row stays auditable and no fabricated fund code enters the ledger.
 
 ## Transfers And Journals
@@ -75,4 +83,4 @@ Statement page footers and continuation text can append unrelated holdings to an
 - `DISTRIB. TEXAS PACIFIC LAND CORPORATION` resolves to `TPL`.
 - `OSISKO GOLD ROYALTIES LTD` resolves to `OR`.
 - `SANDSTORM GOLD LTD` resolves to `SAND` in USD and `SSL` in CAD.
-- CIBC fund names remain pending fund-code lookups unless reviewed in `instrument_identifier_lookups`.
+- CIBC fund names resolve only through reviewed `instrument_identifier_lookups` rows; the reviewed identities live in `data/fund_lookups.json` (CIBC Dividend/Monthly Income funds, FundServ codes, applied 2026-09).

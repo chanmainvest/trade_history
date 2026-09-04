@@ -29,6 +29,7 @@ NAME_TO_TICKER: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"\bISHARES\s+ETHEREUM\s+TRUST\b"),                        "ETHA", "etf"),
     (re.compile(r"\bISHARES\b.*\bMSCI\s+SINGAPORE\s+ETF\b"),              "EWS", "etf"),
     (re.compile(r"\bISHARES\b.*\bMSCI\s+MEXICO\s+ETF\b"),                 "EWW", "etf"),
+    (re.compile(r"\bISHARES\b.*\bMSCI\s+BRAZIL\s+ETF\b"),                 "EWZ", "etf"),
     (re.compile(r"\bISHARES\b.*\bMSCI\s+INDONESIA\s+ETF\b"),              "EIDO", "etf"),
     (re.compile(r"\bISHARES\b.*\bMSCI\s+MALAYSIA\s+ETF\b"),               "EWM", "etf"),
     (re.compile(r"\bISHARES\b.*\bMSCI\s+INDIA\s+INDEX\s+FD\b"),           "INDA", "etf"),
@@ -97,6 +98,14 @@ NAME_TO_TICKER: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"\bRIO\s+TINTO\s+PLC\b"),                                 "RIO", "equity"),
     (re.compile(r"\bURANIUM\s+ROYALTY\s+CORP\b"),                          "UROY", "equity"),
     (re.compile(r"\bMETALLA\s+ROYALTY\s+&?\s*STREAMING\b"),                "MTA", "equity"),
+    # Names below were added from CIBC Investor's Edge statements that print
+    # the identity on a wrapped ``(SYM/EXCH)`` continuation line under the
+    # holding row (2026-06/2026-07 formats).
+    (re.compile(r"\bCLOUDFLARE\s+INC\b"),                                   "NET", "equity"),
+    (re.compile(r"\bISHARES\s+SILVER\s+SHARES\b"),                          "SLV", "etf"),
+    (re.compile(r"\bSPROTT\s+PHYSICAL\s+URANIUM\b"),                        "U.UN", "equity"),
+    (re.compile(r"\bENCORE\s+ENERGY\s+CORP\b"),                             "EU", "equity"),
+    (re.compile(r"\bVANECK\b.*\bURANIUM\s+AND\s+NUCLEAR\s+ETF\b"),         "NLR", "etf"),
 ]
 
 # Leading words that aren't part of the security name (verbs, qualifiers).
@@ -107,6 +116,7 @@ _LEADING_NOISE = {
     "TRANSFER", "JOURNAL", "DEPOSIT", "WITHDRAWAL", "WITHDRAW",
     "TAX", "FEE", "ADJUSTMENT",
     "OPENING", "CLOSING",
+    "MGR", "MERGER", "EXCHANGE",
 }
 
 
@@ -147,6 +157,13 @@ def resolve_ticker(desc: str, currency: str | None = None) -> tuple[str, str] | 
             return "URC", atype
         if tkr == "SAND" and currency == "CAD":
             return "SSL", atype
+        # Sprott Physical Uranium Trust lists in USD under a different symbol.
+        if tkr == "U.UN" and currency == "USD":
+            return "U.U.UN", atype
+        # "EU" is the TSX Venture listing; a U.S.-dollar Encore printing would
+        # be a different security, so leave it unresolved instead of guessing.
+        if tkr == "EU" and currency != "CAD":
+            return None
         return tkr, atype
     return None
 

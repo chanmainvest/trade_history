@@ -22,6 +22,7 @@ import re
 from dataclasses import dataclass
 
 from ..pdf_text import PdfText
+from ..quantity import POSITION_AFFECTING_TYPES
 from .helpers import (
     _option_mon,
     parse_money,
@@ -66,8 +67,9 @@ RE_FILE_ACCT     = re.compile(r"(\d{3}[-]?\d{5})")
 # Option position line in "Other" subsection of Portfolio Assets:
 #   CALL .FNV MAR 15 2024 180   10  $4,119.45  2.000  $2,000.00  —
 #   PUT .NGT JUN 21 2024 50    -20 -$8,268.05  2.750 -$5,500.00  —
+# Adjusted roots may carry digits (SOXS1 after a reverse split).
 RE_OPT_POS = re.compile(
-    r"^(CALL|PUT)\s+\.?([A-Z]{1,6})\s+([A-Z]{3})\s+(\d{1,2})\s+(\d{4})\s+"
+    r"^(CALL|PUT)\s+\.?([A-Z][A-Z0-9]{0,5})\s+([A-Z]{3})\s+(\d{1,2})\s+(\d{4})\s+"
     r"(\d+(?:\.\d+)?)\s+(-?\d[\d,]*)\s+"
     r"(-?\$?[\d,]+\.\d+)\s+(\d+(?:\.\d+)?)\s+(-?\$?[\d,]+\.\d+)"
 )
@@ -76,19 +78,22 @@ RE_OPT_POS = re.compile(
 #   Bought CALL .FNV MAR 15 2024 180 10 4.100 -$4,119.45
 #   Sold   PUT  .NGT JUN 21 2024  50 -20 4.150 $8,268.05
 RE_OPT_TXN = re.compile(
-    r"\b(Bought|Sold|Expired|Exercised|Assigned|Expire|Exercise|Assign)\s+"
-    r"(CALL|PUT)\s+\.?([A-Z]{1,6})\s+([A-Z]{3})\s+(\d{1,2})\s+(\d{4})\s+"
+    r"\b(Bought|Sold|Expired|Exercised|Assignment|Assigned|Expire|Exercise|Assign|"
+    r"Shrs in xc)\s+"
+    r"(CALL|PUT)\s+\.?([A-Z][A-Z0-9]{0,5})\s+([A-Z]{3})\s+(\d{1,2})\s+(\d{4})\s+"
     r"(\d+(?:\.\d+)?)\s+(-?\d[\d,]*)\s+(\d+(?:\.\d+)?)\s+(-?\$?[\d,]+\.\d+)"
 )
 
 # Unpriced option events print the strike and, when present, the contract
 # quantity followed by two blank-cell em dashes:
 #   Expired PUT RIO DEC 17 2021 60 20 — —
+#   Assignment PUT HL JUN 18 2026 22 2 — —
+#   Shrs in xc CALL SOXS1 JAN 15 2027 35 -30 — —
 # A row with only one number before the dashes contains a strike but no printed
 # quantity; the optional group deliberately remains None in that case.
 RE_OPT_EVENT = re.compile(
-    r"\b(Expired|Exercised|Assigned|Expire|Exercise|Assign)\s+"
-    r"(CALL|PUT)\s+\.?([A-Z]{1,6})\s+([A-Z]{3})\s+(\d{1,2})\s+(\d{4})\s+"
+    r"\b(Expired|Exercised|Assignment|Assigned|Expire|Exercise|Assign|Shrs in xc)\s+"
+    r"(CALL|PUT)\s+\.?([A-Z][A-Z0-9]{0,5})\s+([A-Z]{3})\s+(\d{1,2})\s+(\d{4})\s+"
     r"(\d+(?:\.\d+)?)(?:\s+(-?\d[\d,]*))?(?:\s+—){1,2}\s*$"
 )
 
@@ -97,6 +102,53 @@ RE_OPT_EVENT = re.compile(
 RE_UNPRICED_QUANTITY = re.compile(
     r"(-?\d[\d,]*(?:\.\d+)?)(?:\s+—){1,2}\s*$"
 )
+
+# Page furniture repeats on every page: the statement's own period line
+# ("July 1-July 31, 2026"), the previous-statement marker, and the page
+# footer ("054697 account # 588-93738 page 2 of 5"). None of it is row data.
+_RE_PERIOD_FURNITURE = re.compile(
+    r"^\(?[A-Z][a-z]+ \d{1,2}(?:\s*[-–]\s*(?:[A-Z][a-z]+ )?\d{1,2})?,? \d{4}\)?$"
+)
+_RE_PREV_STATEMENT_FURNITURE = re.compile(
+    r"^\(previous statement [A-Z][a-z]+ \d{1,2}, \d{4}\)$", re.IGNORECASE
+)
+
+
+def _is_page_furniture(s: str) -> bool:
+    if "account #" in s.lower():
+        return True
+    return bool(_RE_PERIOD_FURNITURE.match(s) or _RE_PREV_STATEMENT_FURNITURE.match(s))
+
+
+# Disclosure/legal boilerplate fragments from the page footer land inside the
+# portfolio sections (wrapped mid-sentence by the text extractor). Matched by
+# their fixed legal markers — never by amounts, which real rows carry.
+_DISCLOSURE_MARKERS = (
+    "gst/hst", "qst:", "annual fee", "conduct of our business",
+    "we reserve the", "cibc world markets", "bay st",
+)
+_RE_POSTAL_CODE = re.compile(r"\b[A-Z]\d[A-Z] \d[A-Z]\d\b")
+_RE_TOLL_FREE = re.compile(r"\b1-800-\d{3}-\d{4}\b")
+
+
+def _is_disclosure_boilerplate(s: str) -> bool:
+    low = s.lower()
+    if any(marker in low for marker in _DISCLOSURE_MARKERS):
+        return True
+    return bool(_RE_POSTAL_CODE.search(s) or _RE_TOLL_FREE.search(s))
+
+
+# Squeezed wire-confirmation footer fragments printed under large wire-
+# settled fund redemptions — the wire reference ("1000THS=700,WIRE=AAMX0FL")
+# and the gross-amount/transfer-fee pair ("GA=288662.60; TF=6.95"). Receipt
+# furniture: no date prefix, no row shape, and the amounts repeat the
+# settled row's proceeds rather than new events.
+_RE_WIRE_REF_FURNITURE = re.compile(r"^\d+THS=\d+(?:\.\d+)?,WIRE=[A-Z0-9]+$")
+_RE_WIRE_TOTAL_FURNITURE = re.compile(r"^GA=\$?[\d,]+(?:\.\d+)?;\s*TF=\$?[\d,]+(?:\.\d+)?$")
+
+
+def _is_wire_confirmation_footer(s: str) -> bool:
+    return bool(_RE_WIRE_REF_FURNITURE.match(s) or _RE_WIRE_TOTAL_FURNITURE.match(s))
 
 # Stock txn (last three numbers on the activity line):
 #   Bought RBB FD INC                    3,600  48.009  -$172,838.55
@@ -229,6 +281,7 @@ ACTIVITY_VERBS = {
     "Expired": "option_expiration", "Expire": "option_expiration",
     "Exercised": "option_exercise", "Exercise": "option_exercise",
     "Assigned": "option_assignment", "Assign": "option_assignment",
+    "Assignment": "option_assignment",
     "Transfer": "transfer_in",  # direction inferred from amount sign
     "Journal": "journal",
     "Deposit": "deposit",
@@ -240,6 +293,12 @@ ACTIVITY_VERBS = {
     "Ticker Change": "name_change",
     "EFT DEBIT": "deposit",
     "Contrib": "transfer_in",
+    # Corporate-action shares/contracts swapped for a successor security;
+    # printed quantity with blank price/amount cells (e.g. an adjusted
+    # option root after a reverse split, ±N with the same printed identity).
+    "Shrs in xc": "journal",
+    # Merger legs print qty, a blank price cell, and a signed cash value.
+    "Merger": "merger",
 }
 
 
@@ -383,6 +442,104 @@ def _instr_from_desc(desc: str, currency: str) -> ParsedInstrument:
 
 
 # ------------------------------------------------------------- Activity parse
+# ------------------------------------------------------- Wrapped name lines
+_CONTINUATION_STOP_PREFIXES = (
+    "date activity", "subtotal", "total ", "account #", "disclosures",
+    "hri-", "reference",
+)
+_CONTINUATION_STOP_HEADERS = {
+    "Equities", "Mutual Funds", "Other", "Cash & Cash Equivalents",
+    "Fixed Income", "Bonds",
+}
+
+
+# Digit-bearing note lines CIBC prints under an activity or portfolio row.
+# They carry row-local evidence — the transfer source/destination account,
+# dividend record/pay dates, share counts, distribution counts, DRIP
+# reinvest prices, corporate-action ratios, and printed value/par text —
+# and can fuse with the wrapped name's last word ("CORP COM CASH DIV ON
+# 3500 SHS"). A row itself never starts with these keywords: activity rows
+# begin with a Mon DD date prefix and portfolio rows end in a numeric
+# column tail.
+#
+# The option-assignment alternatives cover the underlying-security CUSIP
+# wrap ("HECLA MINING CO A/E 9GDQHF6 2", split as "HECLA MINING CO" +
+# "A/E 9GDQHF6 35") and the bare contract echo CIBC reprints under
+# "ASSIGNMENT OF OPTION" note lines ("PUT HL JUN 18 2026 22"). Neither
+# shape is ever a row on its own: a real option row carries a date prefix
+# (guarded below) or holding columns after the strike.
+_RE_REINVEST_ALT = r"REINVEST(?:ED)?\.?\s+(?:DIV\s*@|[A-Z]{3})"
+RE_ROW_NOTE = re.compile(
+    r"TRANSFER\s+TO\s*\d"
+    r"|TRANSFER\s+FROM\s*\d"
+    r"|REC\s+[A-Z]{3}\.?\s+\d"
+    r"|PAY\s+[A-Z]{3}\.?\s+\d"
+    r"|CASH DIV ON\s+\d"
+    r"|DIST ON\s+\d"
+    r"|" + _RE_REINVEST_ALT +
+    r"|^\s*@\s*[\d,.]+\s*$"
+    r"|\bFA\s*\d+\s*:\s*\d"
+    r"|\bADJ\s*\d+\s*:\s*\d"
+    r"|VALUE\s*\$"
+    r"|\bA/E\s+[A-Z0-9]{5,9}\s+\d"
+    r"|^(?:CALL|PUT)\s+\.?[A-Z][A-Z0-9]{0,5}\s+[A-Z]{3}\s+\d{1,2}\s+\d{4}\s+\d+(?:\.\d+)?$"
+)
+# Reinvested-dividend note text: "REINVESTED DIV @ 15.7635" under a
+# dividend row, or the squeezed legacy "REINVEST. JAN 29 2016 @ 9.0419"
+# shape. Marks a share reinvestment with no cash cell.
+RE_REINVEST_NOTE = re.compile(_RE_REINVEST_ALT)
+
+
+def _is_name_continuation(s: str) -> bool:
+    """True when `s` is a wrapped-name/ticker line belonging to the row above.
+
+    CIBC wraps long security names and prints an explicit ``(SYM/EXCH)``
+    ticker line under the row they identify. Continuation lines carry no
+    ``Mon DD`` date prefix and no digits, except the keyword-anchored note
+    sub-lines matched by ``RE_ROW_NOTE``. The date-prefix guard runs first:
+    a dated data row that happens to contain a note keyword (a cash
+    transfer printing ``Transfer TRANSFER FROM 588-58964-22``) is a row,
+    never a continuation.
+    """
+    if not s or s == "$$":
+        return False
+    if RE_DATE_PREFIX.match(s):
+        return False
+    if RE_ROW_NOTE.search(s):
+        return True
+    if re.search(r"[0-9]", s):
+        return False
+    if RE_DATE_PREFIX.match(s):
+        return False
+    low = s.lower()
+    if low.startswith(_CONTINUATION_STOP_PREFIXES):
+        return False
+    if "account activity" in low or "portfolio assets" in low:
+        return False
+    if "opening cash balance" in low or "closing cash balance" in low:
+        return False
+    return s not in _CONTINUATION_STOP_HEADERS
+
+
+def _take_name_continuations(lines: list[str], i: int) -> tuple[list[str], int]:
+    """Consume the continuation lines directly following a parsed row.
+
+    Returns the stripped continuation texts and the new index. Blank lines
+    are skipped over; the run stops at the first non-continuation line.
+    """
+    out: list[str] = []
+    while i < len(lines):
+        s = lines[i].strip()
+        if not s:
+            i += 1
+            continue
+        if not _is_name_continuation(s):
+            break
+        out.append(s)
+        i += 1
+    return out, i
+
+
 def _parse_activity_block(body: str, *, currency: str, year: int,
                           stmt: ParsedStatement) -> bool:
     lines = body.splitlines()
@@ -407,8 +564,24 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
         if s.startswith("account #") or s.startswith("Disclosures") or s.startswith("HRI-"):
             continue
 
+        # Page furniture (period line, previous-statement marker, page footer)
+        # repeats per page and is never row data.
+        if _is_page_furniture(s):
+            continue
+
         # Currency conversion footer of a USD activity block.
         if "Canadian dollar equivalent" in s or "U.S. equals" in s:
+            continue
+
+        # Squeezed wire-confirmation receipt fragments under wire-settled
+        # redemptions: furniture, not activity.
+        if _is_wire_confirmation_footer(s):
+            continue
+
+        # CAD-converted presentation total printed under that footer. FX
+        # conversion is presentation-only and the native-currency closing
+        # balance is already recorded from the dated closing-balance row.
+        if s.startswith("Total closing cash balance in Canadian dollars"):
             continue
 
         # Detect a leading 'Mon DD' date.
@@ -479,12 +652,14 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                                 else "option_sell_to_open" if verb in {"Sold"} and qty < 0
                                 else "option_buy_to_close" if verb in {"Bought"} and qty < 0
                                 else "option_sell_to_close")
+                cont, i = _take_name_continuations(lines, i)
                 stmt.transactions.append(ParsedTxn(
                     trade_date=trade_date or "", settle_date=None, txn_type=txn_type,
                     instrument=instr, quantity=qty, price=parse_money(price_s),
                     gross_amount=None, commission=None, other_fees=None,
                     net_amount=parse_money(amt_s), currency=currency,
-                    description=rest, raw_line=ln,
+                    description=" ".join([rest] + cont).strip(),
+                    raw_line=ln,
                 ))
                 continue
 
@@ -502,27 +677,37 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                         raw_line=ln,
                         reason="option event has no printed contract quantity",
                     ))
+                cont, i = _take_name_continuations(lines, i)
                 stmt.transactions.append(ParsedTxn(
                     trade_date=trade_date or "", settle_date=None,
                     txn_type=_classify_activity(verb, rest) or "option_expiration",
                     instrument=instr, quantity=qty, price=None,
                     gross_amount=None, commission=None, other_fees=None,
                     net_amount=None, currency=currency,
-                    description=rest, raw_line=ln,
+                    description=" ".join([rest] + cont).strip(), raw_line=ln,
                 ))
                 continue
 
-            # Stock / dividend / fee / interest line: extract trailing numbers.
+            # Stock / dividend / fee / interest / merger line: extract trailing
+            # numbers.
             verb_match = re.match(
                 r"(EFT DEBIT|Contrib|Bought|Sold|Dividend|Distribution|Tax|Interest|Expired|Expire|"
-                r"Exercised|Assigned|Transfer|Journal|Deposit|Withdrawal|Fee|"
+                r"Exercised|Assigned|Assignment|Transfer|Journal|Deposit|Withdrawal|Fee|"
                 r"Adjustment|Reinvested|Reinvest|Name Change|Symbol Change|"
-                r"Ticker Change)\b",
+                r"Ticker Change|Merger|Shrs in xc)\b",
                 rest,
             )
             if verb_match:
                 verb = verb_match.group(1)
                 desc_and_nums = rest[verb_match.end():].strip()
+                # An account reference like `TRANSFER FROM 588-58964-22` is
+                # not a quantity: its journal suffix must not be read as a
+                # negative amount by the number-tail extraction below. The
+                # reference is restored into the stored description.
+                acct_ref = re.search(r"\b\d{3}-\d{5}-\d{1,3}\b", desc_and_nums)
+                if acct_ref:
+                    desc_and_nums = desc_and_nums.replace(
+                        acct_ref.group(0), "ACCTREF", 1)
                 tail = RE_STOCK_TAIL.search(desc_and_nums)
                 qty = price = amount = None
                 desc = desc_and_nums
@@ -532,33 +717,66 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                     amount = parse_money(tail.group(3)) if tail.group(3) not in {"—", "-"} else None
                     desc = desc_and_nums[:tail.start()].strip()
                 else:
-                    unpriced = RE_UNPRICED_QUANTITY.search(desc_and_nums)
-                    if unpriced:
-                        qty = parse_money(unpriced.group(1))
-                        desc = desc_and_nums[:unpriced.start()].strip()
-                    # 2-number tail (qty + amount, no price; common for dividends)
-                    m2 = None if unpriced else re.search(
-                        r"(-?\$?[\d,]+(?:\.\d+)?)\s+(-?\$?[\d,]+(?:\.\d+)?)\s*$",
+                    # Merger-style rows print qty, a blank price cell, and a
+                    # signed cash value:  URANIUM ROYALTY CORP -15,000 — $41,700.00
+                    dash = re.search(
+                        r"(-?\d[\d,]*(?:\.\d+)?)\s+(?:—|-)\s+(-?\$?[\d,]+(?:\.\d+)?)\s*$",
                         desc_and_nums,
                     )
-                    if m2:
-                        # Heuristic: treat as price/amount missing, qty/amount.
-                        q = m2.group(1)
-                        a = m2.group(2)
-                        amount = parse_money(a)
-                        if q not in {"—", "-"}:
-                            qty = parse_money(q)
-                        desc = desc_and_nums[:m2.start()].strip()
-                    elif not unpriced:
-                        m1 = re.search(r"(-?\$?[\d,]+(?:\.\d+)?)\s*$", desc_and_nums)
-                        if m1:
-                            amount = parse_money(m1.group(1))
-                            desc = desc_and_nums[:m1.start()].strip()
+                    if dash:
+                        qty = parse_money(dash.group(1))
+                        amount = parse_money(dash.group(2))
+                        desc = desc_and_nums[:dash.start()].strip()
+                    else:
+                        unpriced = RE_UNPRICED_QUANTITY.search(desc_and_nums)
+                        if unpriced:
+                            qty = parse_money(unpriced.group(1))
+                            desc = desc_and_nums[:unpriced.start()].strip()
+                        # 2-number tail (qty + amount, no price; common for dividends)
+                        m2 = None if unpriced else re.search(
+                            r"(-?\$?[\d,]+(?:\.\d+)?)\s+(-?\$?[\d,]+(?:\.\d+)?)\s*$",
+                            desc_and_nums,
+                        )
+                        if m2:
+                            # Heuristic: treat as price/amount missing, qty/amount.
+                            q = m2.group(1)
+                            a = m2.group(2)
+                            amount = parse_money(a)
+                            if q not in {"—", "-"}:
+                                qty = parse_money(q)
+                            desc = desc_and_nums[:m2.start()].strip()
+                        elif not unpriced:
+                            m1 = re.search(r"(-?\$?[\d,]+(?:\.\d+)?)\s*$", desc_and_nums)
+                            if m1:
+                                amount = parse_money(m1.group(1))
+                                desc = desc_and_nums[:m1.start()].strip()
+
+                # Wrapped name/ticker lines under the row identify the
+                # security; merge them before resolving the instrument.
+                if acct_ref:
+                    desc = desc.replace("ACCTREF", acct_ref.group(0), 1)
+                cont, i = _take_name_continuations(lines, i)
+                if cont:
+                    desc = " ".join([desc] + cont).strip()
 
                 txn_type = _classify_activity(verb, rest)
                 if txn_type is None:
                     stmt.quarantine.append((ln, f"unknown verb: {verb}"))
                     continue
+
+                # A reinvested dividend prints shares and a reinvest price
+                # with a blank cash cell — an in-kind reinvestment, not a
+                # cash dividend. Retype so cash reconciliation treats it as
+                # non-cash and the position replay books the shares. The
+                # printed amount guards the retype: a cash dividend always
+                # carries one.
+                if (
+                    txn_type == "dividend"
+                    and amount is None
+                    and qty is not None
+                    and RE_REINVEST_NOTE.search(desc)
+                ):
+                    txn_type = "reinvest_dividend"
 
                 # Direction sanity for transfers whose amount cell is blank but
                 # quantity/name carries the outbound sign.
@@ -569,9 +787,23 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                     txn_type = "transfer_out"
 
                 instr = _instr_from_desc(desc, currency) if desc else None
-                # interest / fee rows have no instrument
+                # interest / fee rows have no instrument. A journal keeps its
+                # identity attempt only when the description names a fund
+                # (CIBC types such names mutual_fund): the residual-flatten
+                # rows move units of a reviewed fund, while every other
+                # journal is an account-internal cash movement.
                 if txn_type in {"interest_income", "interest_expense", "fee",
-                                "deposit", "withdrawal", "adjustment", "journal"}:
+                                "deposit", "withdrawal", "adjustment"}:
+                    instr = None
+                elif txn_type == "journal" and not (
+                    instr is not None and instr.asset_type == "mutual_fund"
+                ):
+                    instr = None
+                # Non-resident withholding prints a fixed label with no
+                # security columns (the em dashes are the blank symbol
+                # cells): a pure cash event, not an unresolved identity.
+                if (txn_type == "tax_withholding"
+                        and desc.upper().startswith("NON-RES TAX WITHHELD")):
                     instr = None
                 # Account-to-account cash transfers print TO/FROM followed by
                 # an account number. Those direction words are not tickers.
@@ -580,12 +812,21 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                 ):
                     instr = None
 
+                # A verb-path position movement that keeps a quantity but no
+                # resolvable identity (the mutual-fund residual flatten
+                # "Shrs in xc 1000THS <FUND> -2 — —") is recorded with its
+                # identity marked unresolved, not silently dropped.
+                resolution_method = None
+                if instr is None and qty is not None and txn_type in POSITION_AFFECTING_TYPES:
+                    resolution_method = "unresolved_printed_identity"
+
                 stmt.transactions.append(ParsedTxn(
                     trade_date=trade_date or "", settle_date=None, txn_type=txn_type,
                     instrument=instr, quantity=qty, price=price,
                     gross_amount=None, commission=None, other_fees=None,
                     net_amount=amount, currency=currency,
                     description=desc, raw_line=ln,
+                    resolution_method=resolution_method,
                 ))
                 continue
 
@@ -651,8 +892,12 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
                            stmt: ParsedStatement) -> bool:
     section = "Equities"
     saw_section = False
-    for ln in body.splitlines():
+    lines = body.splitlines()
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
         s = ln.strip()
+        i += 1
         if not s:
             continue
         # Sub-section headers
@@ -664,6 +909,22 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
         lower = s.lower()
         if lower.startswith("subtotal") or lower.startswith("total portfolio") or \
            lower.startswith("description") or lower.startswith("price at"):
+            continue
+        # Currency conversion footer of a USD portfolio block.
+        if "Canadian dollar equivalent" in s or "U.S. equals" in s:
+            continue
+        # Squeezed wire-confirmation receipt fragments under wire-settled
+        # redemptions: furniture, not holdings.
+        if _is_wire_confirmation_footer(s):
+            continue
+        # Page furniture (period line, previous-statement marker, page footer)
+        # repeats per page and is never row data.
+        if _is_page_furniture(s):
+            continue
+        # Disclosure/legal boilerplate and printer barcodes from the page
+        # footer are not holdings. Portfolio rows are securities, never prose
+        # or fee announcements, so skipping here cannot lose an event.
+        if s.startswith("HRI-") or _is_disclosure_boilerplate(s):
             continue
 
         if section == "Cash & Cash Equivalents":
@@ -679,6 +940,7 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
                         reason="unrecognized option portfolio row",
                     ))
                 continue
+            _, i = _take_name_continuations(lines, i)
             cp, root, mon3, dd, yr, strike_s, qty_s, book_s, mp_s, mv_s = mo.groups()
             expiry = _opt_expiry(mon3, dd, yr)
             qty = float(qty_s.replace(",", ""))
@@ -710,7 +972,10 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
                 ))
             continue
         qty_s, book_s, price_s, mv_s = m.group(1), m.group(2), m.group(3), m.group(4)
-        desc = s[:m.start()].strip()
+        # Wrapped name lines and the printed ``(SYM/EXCH)`` ticker line under
+        # the row identify the security; merge them into the description.
+        cont, i = _take_name_continuations(lines, i)
+        desc = " ".join([s[:m.start()].strip()] + cont).strip()
         if not desc:
             stmt.quarantine.append(ParsedQuarantine(
                 raw_line=ln,
@@ -719,10 +984,13 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
             continue
         atype = "equity"
         up = desc.upper()
-        if section == "Mutual Funds" or "FUND" in up:
-            atype = "mutual_fund"
-        elif "ETF" in up:
+        # A printed "... ETF" name is an ETF even when the issuer contains
+        # "FUND" (e.g. "SPROTT FUNDS TRUST ... MINERS ETF"); mutual-fund
+        # identity is otherwise held to the stricter broker-code standard.
+        if " ETF" in up:
             atype = "etf"
+        elif section == "Mutual Funds" or "FUND" in up:
+            atype = "mutual_fund"
         instr = _instr_from_desc(desc, currency)
         instr.asset_type = atype
         stmt.positions.append(ParsedPosition(
@@ -738,7 +1006,7 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
 # ----------------------------------------------------------------- Parser
 class CIBCParser:
     NAME = "cibc"
-    VERSION = "2.7.0"
+    VERSION = "2.8.4"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name.startswith("CIBC "):
@@ -750,12 +1018,14 @@ class CIBCParser:
     def parse(self, pdf: PdfText) -> ParseResult:
         result = ParseResult(parser_name=self.NAME, parser_version=self.VERSION)
         # Normalize pdfplumber font-fallback artifacts: 'ð' is its standard
-        # placeholder for em-dash in some CIBC e-Statements (older years).
+        # placeholder for em-dash in some CIBC e-Statements (older years), and
+        # 'ƒ' is a footnote marker ("book cost estimated from market value")
+        # that lands inside portfolio rows and breaks their column parsing.
         page_index = PageTextIndex.from_pdf(
             pdf,
             transform=lambda value: value.replace("\u00f0", "\u2014").replace(
                 "\u00d0", "\u2014"
-            ),
+            ).replace("\u0192", ""),
             include_page=lambda _number, page: not (
                 "Disclosures" in page
                 and "Account Activity" not in page

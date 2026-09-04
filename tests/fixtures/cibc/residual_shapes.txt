@@ -1,0 +1,32 @@
+# Synthetic fixture: residual CIBC activity shapes — the mutual-fund
+# residual flatten ("Shrs in xc 1000THS ..."), squeezed wire-confirmation
+# footer fragments, the fixed NON-RES TAX WITHHELD label, reinvested
+# dividends with blank cash cells, and the option-assignment CUSIP /
+# contract-echo wraps. No real customer data.
+Investor's Edge Investment Account
+Account # 555-77777
+July 1-July 31, 2026
+
+Account Activity — Canadian Dollars
+Jul 1 — Opening cash balance — — $1,000.00
+Jul 1 Dividend SAMPLE INCOME FUND CL F — 34.801 —
+REINVESTED DIV @ 15.7635
+Jul 16 Shrs in xc 1000THS SAMPLE DIVIDEND -2 — —
+INCOME FUND CL F
+FLATTEN RESIDUAL MFD
+1000THS=700,WIRE=SAMX0FL
+GA=288662.60; TF=6.95
+Jul 31 — Closing cash balance — — $1,000.00
+
+Account Activity — U.S. Dollars
+Jul 1 — Opening cash balance — — $5,000.00
+Jul 8 Assignment PUT HLC JUN 18 2026 22 2 — —
+SAMPLE MINING CO A/E 9GDQHF6 2
+Jul 10 Assignment PUT HLC JUN 18 2026 22 35 — —
+SAMPLE MINING CO
+A/E 9GDQHF6 35
+Jul 11 Bought SAMPLE MINING COMPANY 200 22.000 -$4,409.45
+ASSIGNMENT OF OPTION
+PUT HLC JUN 18 2026 22
+Jul 16 Tax NON-RES TAX WITHHELD — — -$22.23
+Jul 31 — Closing cash balance — — $4,977.77
