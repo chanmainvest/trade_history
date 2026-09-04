@@ -20,6 +20,7 @@ Statements/
 frontend/node_modules/
 frontend/dist/
 .env
+.minosa
 
 frontend/node_modules/
 frontend/dist/

@@ -4,9 +4,20 @@
       "id": "all",
       "name": "All accounts",
       "account_ids": []
+    },
+    {
+      "id": "grandma-current",
+      "name": "grandma current",
+      "account_ids": [
+        365,
+        387,
+        460,
+        459,
+        88
+      ]
     }
   ],
-  "active_portfolio": "all",
+  "active_portfolio": "grandma-current",
   "theme": "dark",
   "hide_money": false,
   "show_source_links": true,

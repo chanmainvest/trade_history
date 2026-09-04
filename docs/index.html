@@ -247,6 +247,21 @@ equations, including incomplete inputs and unexplained residuals. It does
 not alter reported quantities/amounts or create a balancing entry.</p>
 </li>
 <li>
+<p><em>(After statements with printed corporate-action legs)</em> Link merger /
+    exchange / split leg pairs and record their ratio:</p>
+<div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">pair-corporate-actions</span>
+</code></pre></div>
+<p>Both legs must print quantities on the same date; the rollforward then
+resolves them. Idempotent — already-linked legs are skipped.</p>
+</li>
+<li>
+<p><em>(Optional, read-only)</em> Report holding-quantity jumps between complete
+    checkpoints that the rollforward cannot explain, with any known market
+    split ratio as a candidate:</p>
+<div class="highlight"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">audit-splits</span>
+</code></pre></div>
+</li>
+<li>
 <p>Reload the browser. The Transactions tab should now have data.</p>
 </li>
 </ol>
@@ -263,6 +278,9 @@ not alter reported quantities/amounts or create a balancing entry.</p>
 <li><strong>Date range</strong>.</li>
 </ul>
 <p>Click a symbol cell to jump to the Research tab.
+The table renders only the rows near the viewport (fixed-height rows between
+two invisible spacers), so large ledgers load and scroll as fast as small
+ones; row striping and scroll-to-row snapping follow absolute row positions.
 Opening holdings inferred or reviewed before the first complete statement are
 shown as <strong>Initial position</strong> rows; they are read-only anchors, not fabricated
 transactions. When source icons are enabled, a transaction icon opens Verify
@@ -289,7 +307,8 @@ database, across all accounts in the active portfolio.</p>
   both the rate and its date; native-currency buckets remain the primary total.</li>
 <li>Columns are sortable; institution and account are visible, while the active
   portfolio is controlled by the top-bar dropdown instead of a repeated table
-  column. Ticker symbols link to Research.</li>
+  column. Ticker symbols link to Research. The table scrolls inside its card
+  and the header row stays pinned while rows scroll beneath it.</li>
 <li>When source icons are enabled, an icon appears only when the server has an
   exact/unique persisted rectangle. Reported rows link to their exact
   position/cash evidence. Reconstructed rows retain explicit checkpoint plus
@@ -335,6 +354,8 @@ the same read-only scope/reconciliation state. See
   ticker, asset type, or currency. The list scrolls at a max 2/3 viewport
   height so it stays usable on smaller screens.</li>
 <li><strong>Period</strong> buttons + daily/weekly/monthly resample.</li>
+<li>Every section card — price chart, financials, trade history — collapses and
+  expands from its title; the toggle is per visit and is not persisted.</li>
 <li>Candlestick with <strong>MA50 / MA200</strong> toggles, volume sub-chart. Moving averages
   are calculated from the full fetched history before the selected display
   period is clipped, so MA200 remains visible on shorter views when enough
@@ -346,7 +367,10 @@ the same read-only scope/reconciliation state. See
   show/hide. yfinance data is extended with SEC EDGAR Company Facts for
   US-listed symbols when available.</li>
 <li><strong>Trade history</strong> table at the bottom lists every transaction the
-  app has for this symbol, including account / description.</li>
+  app has for this symbol, including account / description. Click a column
+  header to sort; click again to reverse. Rows without a value in the sorted
+  column always sink to the bottom. The header stays pinned while the table
+  scrolls.</li>
 <li>When an ingested statement explicitly reports a ticker change, Research
   shows the dated old-to-new history. Searching either ticker opens one joined
   history: old prices are used only before the effective date, new prices after
@@ -377,30 +401,50 @@ The screen has two sides:</p>
 <ul>
 <li><strong>Left</strong> renders only the original physical PDF pages owned by the selected
   logical statement (via PDF.js), with evidence-specific rectangles. Green is
-  matched evidence and amber is the selected exact item.</li>
+  matched evidence and yellow marks quarantined rows; selection strengthens the
+  box's own colour — green for matched evidence, yellow for quarantine — with a
+  glow ring, never a different hue.</li>
 <li><strong>Right</strong> begins with one concise status, then groups Transactions, Positions,
-  Cash, and Summary totals by native currency. Cash shows opening and closing
-  separately; statement totals show printed opening, change, and closing when
-  the broker supplies them. Extraction issues, reconciliation equations,
+  Cash, and Summary totals by native currency. Cash opening and closing are
+  separate rows, each highlighting its own PDF line (legacy single-box
+  evidence shares one box); statement totals show printed opening, change, and
+  closing when
+  the broker supplies them. Option transactions and positions are labelled as
+  contracts with
+  their type, strike, expiry, and multiplier (multiplier shown when it is not
+  100), so they no longer look identical to the underlying stock line.
+  Extraction issues, reconciliation equations,
   parser diagnostics, and Quarantine rows are below the financial rows.</li>
 </ul>
 <p>Click a box on the left to reveal its item on the right without moving the PDF
-pane. Click an item on the right to highlight its box(es) and scroll only the
+pane; the row highlights in the same colour as its box. Click an item on the
+right to highlight its box(es) and scroll only the
 PDF pane to the first match. A source deep link selects its requested statement
 and row before the newest-statement default runs. Boxes come from persisted
 exact evidence links, not request-time fuzzy matching. Items with ambiguous,
 unmatched, or unavailable geometry are dimmed and never receive a guessed box.</p>
-<p>Pick which statement to view with the dropdown filters — <strong>Date</strong>,
-<strong>Institution</strong>, and <strong>Account</strong> — which narrow the statement list. The list
-defaults to the latest statement. <strong>Prev / next</strong> chevron buttons next to
-the date step through statements within the current filtered set (prev =
-older, next = newer).</p>
-<p>Use the <strong>Unresolved</strong>, <strong>Incomplete</strong>, and <strong>Unreconciled</strong> checkboxes to
-limit the picker to statements with a quarantined/unresolved identity, a
-partial or missing scope/input, or an unexplained residual. Cash and summary
-total rows use their persisted source evidence for PDF boxes when that evidence
-exists. A dimmed dot means the row has no defensible matching text line; it is
-not a zero or a fabricated source location.</p>
+<p>The toolbar has two rows. The navigation row picks what you are looking at:
+<strong>Institution</strong> narrows the <strong>Account</strong> list (each account shows its
+statement count, so empty combinations are impossible), the <strong>Period</strong>
+picker lists only the months the current selection has, grouped by year and
+labelled "March 2026" instead of raw dates, and the <strong>Statement</strong> picker
+lists every matching statement by name (account and month, grouped by year).
+The chevrons on either side of the Statement picker step to the newer/older
+statement, the position indicator shows where you are (for example
+<code>12 / 51</code>), and the ↑/↓ arrow keys step the same way (↑ newer, ↓ older).
+The list defaults to the latest statement.</p>
+<p>The filter row narrows the list: the <strong>Unresolved</strong>, <strong>Incomplete</strong>, and
+<strong>Unreconciled</strong> chips show live counts for the current institution/account
+scope and can be combined (statements matching any active chip are kept).
+Each active filter also appears as a removable chip, and <strong>Clear</strong> resets
+everything. Quality flags on the statement you are viewing appear as tags at
+the right-hand end of this row. <strong>Index</strong> opens a drawer listing every
+matching statement grouped by year — click a row to jump straight to it;
+Escape or a click outside closes it, and the current statement's row is
+highlighted and scrolled into view.</p>
+<p>Cash and summary total rows use their persisted source evidence for PDF boxes
+when that evidence exists. A dimmed dot means the row has no defensible
+matching text line; it is not a zero or a fabricated source location.</p>
 <h3 id="47-settings">4.7 Settings</h3>
 <p>The Settings tab manages <strong>portfolios</strong> — named groups of accounts. Example:</p>
 <ul>
@@ -439,6 +483,12 @@ MCP server's allowlisted CLI commands):</p>
 
 <span class="c"># rebuild name/transfer links, movement links, and reconciliation results after manual edits</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">reconcile</span>
+
+<span class="c"># link printed corporate-action leg pairs (merger/exchange/split) and record ratios</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">pair-corporate-actions</span>
+
+<span class="c"># read-only report of checkpoint quantity jumps the rollforward cannot explain</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="n">audit-splits</span>
 
 <span class="c"># repair symbols (resolve aliases, fund-code lookups, etc.)</span>
 <span class="n">uv</span> <span class="n">run</span> <span class="n">ledger</span> <span class="n">ingest</span> <span class="nb">repair-symbols</span>
@@ -1289,7 +1339,9 @@ or named/fingerprinted algorithms, not quantities that support arithmetic.</p>
 effects used by new consumers; <code>net_amount</code> remains a compatibility field.
 When a generic split, name change, spinoff, or merger has no explicit safe
 position effect, <code>position_delta</code> remains null rather than being fabricated as
-zero.
+zero; the rollforward can still resolve such legs when they are linked as
+counterparts of a printed corporate-action pair in <code>instrument_journal_pairs</code>
+(see <a href="#reconciliation">RECONCILIATION.md</a>).
 Resolution method/confidence, optional <code>resolution_source</code> (<code>auto</code> or
 <code>manual</code>), and an optional resolution-evidence link are also available. Phase 3
 writes these through its conservative staged resolver:
@@ -1319,6 +1371,11 @@ Both must have the same asset type/native currency and different symbols.</p>
 <code>complete</code>, <code>partial</code>, <code>absent</code>, or <code>unknown</code> completeness. Position snapshots
 are unique within <code>(snapshot_set_id, instrument_id)</code> and cash balances within a
 cash snapshot set. <code>can_clear_omitted</code> is true only for a complete set.
+<code>position_snapshots.security_description</code> carries the printed share-class /
+security-type text that RBC wraps under a holding row (e.g. <code>COM NEW</code>,
+<code>SUB VOTING CL B</code>, <code>AMERICAN DEPOSITARY SHARES ON EACH REPRESENTING TWO ORD
+SHS</code>). It is source-descriptive metadata only — instrument identity stays in
+<code>instruments</code> and is never joined on this text.
 Every <code>partial</code> or <code>unknown</code> parser scope has at least one blocking
 <code>snapshot_scope_issues</code> row with a stable issue code and optional links to its
 evidence/quarantine row. A complete scope cannot have a blocking issue.</p>
@@ -1906,6 +1963,14 @@ the prior checkpoint receives the moved quantity additively. The same source
 transaction is therefore an auditable negative component for the old instrument
 and positive component for the new one. It never derives a ticker relationship
 from the closing residual.</p>
+<p>Zero-cash DRIP reinvestment echoes (TD prints each month-end reinvestment on
+the next statement, dated the prior pay date — see <code>spec/parsers/TD.md</code>)
+settle inside the printing statement's checkpoint interval even though the
+printed date precedes the prior checkpoint. Interval replay and position
+movement attribution therefore include a pre-period <code>reinvest_dividend</code> row in
+the interval of the statement that recorded it, and exclude such rows from
+earlier intervals that merely contain the printed date. Cash-carrying echoes
+stay quarantined and never reach replay.</p>
 <p>For an empty scope, one scope-level result is stored. It records the same
 missing-prior or incomplete condition, or <code>not_applicable</code> when both complete
 checkpoints are known empty and no unresolved movement is present.</p>
@@ -1929,7 +1994,10 @@ the current printed opening balance. Its expected close is the prior reported
 close and its summed delta is zero. That continuity check is
 <code>missing_prior_checkpoint</code> for the first scope and <code>incomplete_input</code> whenever
 one of the adjacent scopes or balances is unavailable. It is also incomplete
-when the two statement periods are not consecutive calendar intervals.</p>
+when the two statement periods do not chain: the next period must start after
+the prior one ends and within one week of it, which tolerates brokers that cut
+periods on the last business day (CIBC Investor's Edge: May 29 -&gt; June 1)
+while still flagging an overlap or a missing statement period as unobserved.</p>
 <h3 id="statement-totals">Statement totals</h3>
 <p>Where <code>snapshot_sets.reported_total</code> is present, the engine stores a
 <code>statement_total</code> result:</p>
@@ -1969,8 +2037,10 @@ machine-readable <code>reason_code</code>. The UI groups scope-wide blockers by 
 fields while keeping instrument equations/components available for audit; it
 does not parse the reconciliation key or free-text reason to infer semantics.</p>
 <h2 id="ingest-reconcile-and-rebuild-behavior"><code>ingest reconcile</code> and rebuild behavior</h2>
-<p>The CLI command performs four separate derived-data passes:</p>
+<p>The CLI command performs five separate derived-data passes:</p>
 <ol>
+<li>link printed corporate-action leg pairs (below) so a re-ingest's fresh
+   transaction rows regain their counterpart links and recorded ratios;</li>
 <li>resolve defensible name-only buys/sells from observed holdings;</li>
 <li>pair unambiguous transfer counterparts;</li>
 <li>rebuild <code>position_transaction_links</code> for complete position scopes; and</li>
@@ -1992,6 +2062,37 @@ are enforced. Equally near candidates are skipped as ambiguous. Thus a
 DLR/DLR.U journal can pair at 1:1, while two listings that merely share an
 issuer/company name cannot. Reconciliation never treats different canonical
 keys as identical just to make an equation balance.</p>
+<h2 id="corporate-action-leg-pairs-in-the-position-rollforward">Corporate-action leg pairs in the position rollforward</h2>
+<p>The position rollforward resolves printed corporate-action leg pairs
+(merger, exchange, split, spinoff) instead of leaving them as missing
+deltas. Two shapes are supported, both requiring the legs to be linked as
+counterparts and to print quantities on the same day:</p>
+<ul>
+<li>same instrument: the printed equal-and-opposite quantities are the
+  deltas themselves; and</li>
+<li>different instruments: an active <code>instrument_journal_pairs</code> row must link
+  them, and the ratio must reconcile the printed quantities
+  (|in| = |out| x ratio within tolerance); the out leg loses its printed
+  quantity and the in leg gains it scaled by the ratio.</li>
+</ul>
+<p>Inconsistent ratios stay unresolved. <code>ingest pair-corporate-actions</code> links
+such printed leg pairs and records the derived ratio; it is idempotent
+and also runs automatically as the first <code>ingest reconcile</code> pass, so a
+re-ingest cannot lose the links. Two equal-and-opposite legs of one
+instrument pair regardless of other funds converting on the same date (a
+multi-fund class conversion prints one pair per fund); otherwise the date
+must hold exactly two unlinked legs of the same type, whose out leg is the
+negative printed quantity and whose derived ratio is recorded. The
+unresolved-instrument scope gate counts
+only rows with no cash effect: broker wire transfers that move cash with no
+security printed are cash events, not unknown security movements.</p>
+<p>In the cash activity equation, in-kind movement types (journal, option
+assignment/exercise/expiration, account transfers) whose cash cells printed
+blank are no-cash facts, not missing extractions: their empty em-dash cells
+are the print, so they are excluded from both the component sum and the
+missing-effects count. A row of one of those types that does print an amount
+stays a cash component, and cash-only types (dividends, buys, sells, taxes)
+still report a blank cash figure as incomplete input.</p>
 <h2 id="quantity-movement-rules">Quantity movement rules</h2>
 <p><code>quantity.quantity_delta()</code> converts transaction type plus parsed quantity:</p>
 <ul>
@@ -2219,9 +2320,17 @@ scrolls only the PDF pane; a PDF-box click leaves that pane fixed and reveals
 the right row. Only boxes containing that exact reference receive selected
 styling.</p>
 <p>Financial rows are grouped by native currency, then transactions, positions,
-cash, and statement totals. Cash shows opening and closing separately. Total
+cash, and statement totals. Cash renders opening and closing as separate
+rows: persisted evidence keeps the opening line under the <code>cash</code> reference
+kind and maps later lines to <code>cash_close</code>, so each balance row links to its
+own box; legacy single-box cash evidence has no separate closing line and its
+closing row falls back to the shared box. Total
 rows show printed opening, change, and closing values when available; missing
-printed values remain blank. This keeps dual-currency RBC review within one
+printed values remain blank. Transaction and position rows carry the
+instrument's asset type and, for option contracts, the option type, strike,
+expiry, and multiplier;
+Verify renders option contracts with that contract detail while equity and
+ETF rows keep the plain symbol form. This keeps dual-currency RBC review within one
 currency block.</p>
 <h2 id="configuration-shape">Configuration shape</h2>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
@@ -2289,7 +2398,10 @@ tabs show the price-data date and warn when it is a week or more stale.</p>
 <li>Use CSS variables for theme colors and <code>plotlyTheme()</code> for charts.</li>
 <li>Keep account filtering consistent with the active portfolio. Transactions
   exposes an explicit <strong>All accounts</strong> control when a portfolio is active so
-  users can bypass the portfolio filter without selecting individual accounts.</li>
+  users can bypass the portfolio filter without selecting individual accounts.
+  Verify narrows its statement list and its Institution/Account filter options
+  to the active portfolio's accounts (the portfolio picker's <strong>All accounts</strong>
+  entry restores the full list).</li>
 <li>Verify renders PDF pages lazily as they enter the viewport; evidence overlays
   size to the PDF.js viewport so boxes stay aligned with the rendered canvas.</li>
 <li>Source icons in Transactions and Monthly obey <code>show_source_links</code>; they deep
@@ -2332,6 +2444,7 @@ ledger audit extraction [--statements-dir PATH] [--output PATH]
 ledger ingest run [--institution FOLDER] [--limit N] [--force]
 ledger ingest enrich-layout [--source-file-id ID]
 ledger ingest resolve-instruments [--verify-yahoo]
+ledger ingest resolve-fund-lookup --file PATH
 ledger ingest infer-initials
 ledger ingest repair-symbols
 ledger ingest reconcile
@@ -2369,6 +2482,13 @@ unique strong match with non-empty price history, and persist the result for a
 subsequent deterministic re-ingest. It never sends account numbers, statement
 text, quantities, or amounts. <code>ledger market refresh</code> rechecks stored provider
 symbols and marks them verified/failed.</p>
+<p><code>ingest resolve-fund-lookup</code> applies the reviewed fund identities in a JSON
+file (the shipped record is <code>data/fund_lookups.json</code>) to
+<code>instrument_identifier_lookups</code>. Statements that print no fund code stay
+pending until a human or agent researches the identity from issuer-published
+fund codes and records it there with evidence; the command validates every
+symbol shape and writes nothing when an entry is malformed. Re-run ingest
+afterwards so the staged resolver picks the identities up.</p>
 <p>The extraction audit is read-only with respect to SQLite. It accepts either
 source PDFs or stored <code>.txt</code> dumps, overwrites a deterministic JSONL report
 (default <code>logs/extraction_audit.jsonl</code>), and omits raw statement text. Use
@@ -2525,7 +2645,15 @@ workflow is not a substitute for checking docs in a normal pull request.</p>
 <ul>
 <li>The first unresolved fund name is recorded in <code>instrument_identifier_lookups</code> with <code>status = 'pending'</code>.</li>
 <li>A reviewed lookup can be marked <code>resolved</code> with <code>resolved_symbol</code>, optional <code>resolved_exchange</code>, <code>resolved_name</code>, <code>evidence_url</code>, and notes.</li>
-<li>After a row is resolved, <code>ledger ingest repair-symbols</code> rewrites matching mutual-fund transactions and snapshots to the reviewed code.</li>
+<li>The review surface shared by humans and agents is <code>data/fund_lookups.json</code>, applied with
+  <code>ledger ingest resolve-fund-lookup --file data/fund_lookups.json</code>. Each entry carries the
+  normalized printed name, currency, institution codes, the researched symbol, and its evidence
+  URLs; the command validates every symbol shape and applies nothing when an entry is malformed.
+  Research the identity from the issuer's published fund codes or an independent fund-code
+  vendor — never from the statement, which prints no code.</li>
+<li>After a row is resolved, the staged resolver applies it as <code>reviewed_fund_lookup</code> on the next
+  ingest (holdings persist, transactions keep the instrument), and <code>ledger ingest repair-symbols</code>
+  can rewrite already-persisted rows.</li>
 <li>Until reviewed, keep the printed fund-name instrument so the row stays auditable and no fabricated fund code enters the ledger.</li>
 </ul>
 <h2 id="transfers-and-journals">Transfers And Journals</h2>
@@ -2575,7 +2703,7 @@ workflow is not a substitute for checking docs in a normal pull request.</p>
 <li><code>DISTRIB. TEXAS PACIFIC LAND CORPORATION</code> resolves to <code>TPL</code>.</li>
 <li><code>OSISKO GOLD ROYALTIES LTD</code> resolves to <code>OR</code>.</li>
 <li><code>SANDSTORM GOLD LTD</code> resolves to <code>SAND</code> in USD and <code>SSL</code> in CAD.</li>
-<li>CIBC fund names remain pending fund-code lookups unless reviewed in <code>instrument_identifier_lookups</code>.</li>
+<li>CIBC fund names resolve only through reviewed <code>instrument_identifier_lookups</code> rows; the reviewed identities live in <code>data/fund_lookups.json</code> (CIBC Dividend/Monthly Income funds, FundServ codes, applied 2026-09).</li>
 </ul>
 </div>
 
@@ -2583,7 +2711,7 @@ workflow is not a substitute for checking docs in a normal pull request.</p>
   <div class="section-banner">Parser: CIBC</div>
   <h1 id="cibc-parser">CIBC parser</h1>
 <p>Implementation: <code>src/ledger/parsers/cibc.py</code>, parser name <code>cibc</code>, current
-version <code>2.7.0</code>.</p>
+version <code>2.8.4</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>The parser handles the configured CIBC Imperial Service, Investor's Edge, and
 TFSA folders/text. It extracts <code>###-#####</code> account numbers from text or a
@@ -2598,7 +2726,15 @@ separate positions and cash snapshot scopes.</p>
   current currency and portfolio/activity section.</li>
 <li>A no-date activity line is never assigned blindly to the preceding
   transaction. Numeric/activity-like lines are quarantined, which keeps page
-  headers and unrelated fund/corporate-action text out of transfer evidence.</li>
+  headers and unrelated fund/corporate-action text out of transfer evidence.
+  The per-page furniture CIBC prints on every page — the statement's own
+  period line ("July 1-July 31, 2026"), the "(previous statement …)" marker,
+  and the page footer that starts with a deposit number before "account #" —
+  is recognized structurally and skipped rather than quarantined. Disclosure
+  and legal footer prose (fee announcements, GST/HST/QST registration,
+  reserved-rights text, the CIBC World Markets address and toll-free line,
+  <code>HRI-*</code> printer barcodes) is likewise skipped inside portfolio sections;
+  those fragments are matched by fixed legal markers, never by amounts.</li>
 <li>Account-transfer direction words followed by an account number (<code>TO</code> and
   <code>FROM</code>) are not instruments or tickers.</li>
 <li>An en dash immediately before a money value is normalized as a negative
@@ -2617,11 +2753,68 @@ separate positions and cash snapshot scopes.</p>
   securities (for example, Barrick <code>ABX</code> in CAD and <code>GOLD</code> in USD).</li>
 <li><code>EFT DEBIT BANK ACCOUNT</code> is cash entering the brokerage account. Signed
   <code>Contrib TRANSFER TO/FROM</code> rows retain their account-transfer direction and
-  never turn <code>TO</code>/<code>FROM</code> into an instrument. A dated row with two explicit
+  never turn <code>TO</code>/<code>FROM</code> into an instrument. The account reference's journal
+  suffix (<code>TRANSFER FROM 588-58964-22</code>) is masked before number-tail
+  extraction so it cannot be read as a negative quantity: such a row is a
+  cash transfer, not a position movement. A dated row with two explicit
   blank security cells and a signed cash value is retained as a generic
   adjustment when CIBC prints no activity subtype.</li>
 <li>Explicit name/symbol/ticker-change verbs are retained for the shared v3
   contract; only a printed <code>FROM &lt;old&gt; TO &lt;new&gt;</code> pair becomes a dated lineage.</li>
+<li>Wrapped security-name lines and the printed <code>(SYM/EXCH)</code> ticker
+  continuation line under a row are merged into that row's identity, so a
+  holding like <code>VANECK ETF TRUST</code> + <code>(NLR/US)</code> resolves to its printed
+  symbol; a printed "… ETF" name types the row as an ETF even when the
+  issuer contains "FUND" (e.g. <code>SPROTT FUNDS TRUST</code>); digit-free
+  corporate-action note lines are absorbed as description evidence.
+  Digit-bearing note sub-lines under a row attach to it as well when they
+  match the keyword-anchored note vocabulary — <code>TRANSFER TO</code>/<code>FROM &lt;acct&gt;</code>,
+  <code>REC</code>/<code>PAY</code> dividend dates,
+  <code>CASH DIV ON &lt;n&gt; SHS</code>, <code>DIST ON &lt;n&gt; SHS</code>, <code>REINVESTED DIV @ &lt;price&gt;</code>
+  (plus bare <code>@ &lt;price&gt;</code> continuation lines), <code>FA</code>/<code>ADJ</code> split ratios, and
+  <code>VALUE $…</code> value/par text (e.g. <code>VALUE $0.001 PER SHARE</code>), the
+  option-assignment underlying CUSIP wrap (<code>HECLA MINING CO A/E 9GDQHF6 2</code>,
+  split as <code>HECLA MINING CO</code> + <code>A/E 9GDQHF6 35</code>), and the bare contract echo
+  CIBC reprints under <code>ASSIGNMENT OF OPTION</code> note lines
+  (<code>PUT HL JUN 18 2026 22</code>); they may fuse with the wrapped name's last word
+  (<code>CORP COM CASH DIV ON 3500 SHS</code>).
+  The lines are row-local evidence, never new rows: activity rows begin
+  with a <code>Mon DD</code> date prefix and portfolio rows end in a numeric column
+  tail. Any other digit-bearing line without a date prefix still
+  quarantines as <code>unclaimed activity-like row</code>.</li>
+<li>The CAD-converted presentation total <code>Total closing cash balance in
+  Canadian dollars</code> printed under the currency-conversion footer is
+  furniture: FX conversion is presentation-only and the native-currency
+  closing balance is recorded from the dated closing-balance row. The
+  squeezed wire-confirmation receipt fragments printed under large wire-
+  settled fund redemptions — <code>1000THS=700,WIRE=AAMX0FL</code> and
+  <code>GA=288662.60; TF=6.95</code> (wire reference, gross amount, transfer fee) —
+  are the same furniture class: they repeat the settled row's proceeds and
+  carry no date or row shape, so they are skipped rather than quarantined.</li>
+<li>The pdfplumber <code>ƒ</code> glyph (a "book cost estimated from market value"
+  footnote marker embedded in portfolio rows) is stripped before column
+  parsing, like the older <code>ð</code> em-dash artifact.</li>
+<li>Corporate-action verbs from the 2026 Investor's Edge layout: printed
+  <code>Assignment</code> (noun form of an assigned option event), <code>Shrs in xc</code>
+  (option-contract exchange after a corporate action — a <code>journal</code> movement
+  with ±printed contracts and blank price/amount cells), and <code>Merger</code> legs
+  (quantity, blank price cell, signed cash value). Adjusted option roots may
+  carry digits (for example <code>SOXS1</code> after a reverse split). The plain stock/
+  dividend verb path knows <code>Shrs in xc</code> too, so a mutual-fund residual
+  flatten (<code>Shrs in xc 1000THS &lt;FUND&gt; -2 — —</code> with wrapped fund-name
+  continuations) records a <code>journal</code> movement of the printed units: its
+  identity stays unresolvable (no tradable symbol), so the transaction is
+  persisted with <code>resolution_method = unresolved_printed_identity</code> instead
+  of either dropping the movement or inventing a token.</li>
+<li>A dividend whose note line prints a reinvest price with a blank cash cell
+  (<code>REINVESTED DIV @ 15.7635</code>, or the squeezed legacy <code>REINVEST. JAN 29 2016
+  @ 9.0419</code> shape) is an in-kind reinvestment: it is recorded as
+  <code>reinvest_dividend</code> with the printed share count, not as a cash dividend.
+  A printed amount keeps the row a cash dividend regardless of its notes.</li>
+<li><code>NON-RES TAX WITHHELD</code> is a fixed label with no security columns (the em
+  dashes are the blank symbol cells): the row is a pure cash event and is
+  recorded without an unresolved-identity marker. Tax rows that do print a
+  security name keep resolving it.</li>
 <li>A recognized portfolio section is declared <code>complete</code>; a cash scope is
   complete only after a valid printed closing balance and no unsupported dated
   numeric activity. Invalid/missing numeric fields and unclaimed numeric rows
@@ -2643,9 +2836,13 @@ separate positions and cash snapshot scopes.</p>
   reconciliation against every printed portfolio total.</li>
 </ul>
 <p>Fixtures cover dual currencies, options, funds, EFT/contribution cash rows,
-unlabelled signed adjustments, incomplete cash scopes, source evidence, and a
-TFSA option holding. See <a href="#parser-contract">PARSER-CONTRACT.md</a> for the
-shared output rules.</p>
+unlabelled signed adjustments, incomplete cash scopes, source evidence, a
+TFSA option holding, the 2026 corporate-action layout (<code>Shrs in xc</code>,
+<code>Assignment</code>, <code>Merger</code>, wrapped ticker continuations, the <code>ƒ</code> glyph), and
+the residual shapes (fund residual flatten, wire-confirmation footer,
+<code>NON-RES TAX WITHHELD</code>, reinvested dividends, option CUSIP/contract-echo
+wraps). See <a href="#parser-contract">PARSER-CONTRACT.md</a> for the shared
+output rules.</p>
 </div>
 
 <div class="doc-section" id="parser-hsbc">
@@ -2712,7 +2909,7 @@ continued account pages, cash, and source evidence. See
   <div class="section-banner">Parser: RBC</div>
   <h1 id="rbc-parser">RBC parser</h1>
 <p>Implementation: <code>src/ledger/parsers/rbc.py</code>, parser name <code>rbc</code>, current
-version <code>2.7.0</code>.</p>
+version <code>2.8.2</code>.</p>
 <h2 id="recognition-and-account-shape">Recognition and account shape</h2>
 <p>The parser handles monthly Direct Investing statements and annual investment
 performance reports. Monthly text is split at <code>CDN $</code> / <code>U.S. $</code> blocks; annual
@@ -2728,10 +2925,51 @@ overwrite the first currency while writing the second.</p>
   Continued page markers are ignored and continuation text remains attached to
   the open activity row rather than becoming a new verb. Historical compact
   extraction such as <code>AUG.10</code>, <code>OpeningBalance(...)</code>, and
-  <code>ClosingBalance(...)</code> is accepted. Activity ends at the printed closing
-  balance so dated rows under Open Orders are not recorded as executions.</li>
+  <code>ClosingBalance(...)</code> is accepted. Activity dates print either month form —
+  abbreviated (<code>AUG. 10</code>) or full (<code>JULY 31</code>) — and both parse; a dated row
+  whose date falls outside the statement period is quarantined, never
+  recorded. Activity ends at the printed closing
+  balance so dated rows under Open Orders are not recorded as executions.
+  The per-page furniture ("Cdn./U.S. Dollar Statement <year>",
+  "Your Account Number: … n of m", and the repeated
+  "Order Execution Only <MMM. DD>" page header) is skipped in both sections
+  rather than quarantined.</li>
+<li>Corporate-action legs print in-kind quantities with no cash: <code>MGR</code>/
+  <code>MERGER</code> rows become merger legs and <code>EXCHANGE</code> rows become in-kind
+  journals. When the wrapped description carries the printed broker fund
+  code — <code>(648)</code>, the same number Asset Review prints as <code>RBF648</code> — the leg
+  resolves to that fund symbol (<code>printed_fund_code</code>); the dividend path
+  falls back to the same code when the fund is no longer held. A currency
+  block with an Asset Review but no printed Account Activity (a month with
+  no trades in that currency) still declares its positions scope.</li>
 <li>Printed call/put, root, expiry, strike, multiplier, and quantity form the
-  option identity. Unknown numeric holding/activity rows are quarantined.</li>
+  option identity. 2021-2022 statements lose spaces in text extraction: the
+  verb prints squeezed to its root (<code>CALLSHOP</code>, <code>CALL.NTR</code>) and the FX-rate
+  and section-total furniture prints without any spaces
+  (<code>(Exchangerate1USD=...)</code>, <code>TotalValueofOther</code>); the optional verb space
+  and squeezed-furniture match keep both parseable. Unknown numeric
+  holding/activity rows are quarantined.
+  The Asset Review "Other" section is not options-only: rows that do not
+  match the option grammar fall through to the standard holding-row grammar
+  (for example BHP depositary shares printed next to a PUT contract), and
+  only rows matching neither grammar quarantine.
+  Footnote markers printed inside a holding row — <code>#</code> marks a book cost
+  obtained from a source other than RBC — are furniture: the marker is
+  dropped before matching, the amounts still parse, and the quarantined or
+  stored <code>raw_line</code> keeps the printed row verbatim.</li>
+<li>A holding row may wrap: RBC prints the share-class / security-type text
+  under the holding line and restates the quantity — <code>COM NEW 1,500</code> or a
+  bare <code>2,000</code> under a Common Shares row, <code>AMERICAN DEPOSITARY SHARES ON
+  1,700</code> plus <code>ECH RPSNTNG TWO ORD SHS</code> for a two-line depositary wrap, or
+  the option underlying's issuer name under an option row. The wrapped text
+  attaches to the previous holding row as its printed security description
+  (stored as <code>position_snapshots.security_description</code>); the restated
+  quantity is duplicate evidence retained in <code>raw_line</code>, never a second
+  position. Page-break furniture between wrapped lines — the
+  <code>-CONTINUEDONNEXTPAGE-</code> marker and the footnotes block — is skipped so it
+  cannot attach to the open holding. A restated number that disagrees with
+  the holding row quarantines as <code>continuation quantity does not match the
+  holding row</code>.</li>
 <li>Debit/credit direction uses page-word geometry from RBC's printed columns.
   When one row contains both withholding debit and gross-income credit, its
   cash effect is the net credit minus debit. Printed signs remain fallback
@@ -2830,9 +3068,19 @@ scope.</p>
   <code>Disposition</code>, Web Banking transfers, paper-statement fees, cheques,
   interest rebates, cash-in-lieu, and capital-gain distributions retain their
   printed cash effects.</li>
+<li>Month-end DRIP reinvestments print once, on the statement after their pay
+  date: <code>&lt;prior-month-end&gt; Dividend &lt;fund&gt; &lt;units&gt; 0.00 &lt;balance&gt;</code> followed by
+  <code>Reinvestment Plan VALUE = &lt;n&gt;</code>. The row is the only appearance of that
+  dividend, so it is recorded on the printing statement as
+  <code>reinvest_dividend</code> with the printed date (before the period), the printed
+  units, and zero cash; the validator warns instead of failing on its date.
+  Cash-carrying rows echoed from the prior period are duplicates and still
+  quarantine as out-of-period.</li>
 <li>Stock splits map to the canonical <code>stock_split</code> type. Buy/sell, option
   buy/sell, known fees/taxes, and known income events receive canonical cash
-  directions when TD prints an unsigned debit/credit amount.</li>
+  directions only when TD prints an unsigned debit/credit amount; a printed
+  sign (for example negative debit interest on an income row) is source
+  evidence and is preserved as printed.</li>
 <li>Missing/invalid quantities or closing cash values, and unrecognized numeric
   candidate rows, are quarantined rather than converted to zero. A cash scope
   containing an unsupported dated numeric event is <code>unknown</code>, not complete.
