@@ -6,8 +6,11 @@ Margin - Long
 Order Execution Only JAN. 30
 Date of Last Statement: DEC. 31, 2025
 Asset Review
+Cdn. Dollar Statement 2026
+Your Account Number: 111-22222-3-4 3 of 4
 Common Shares
 ALPHA CORP AAA 10 20.000 200.00 $200.00
+Your Account Number: 111-22222-3-4 3 of 5
 Mutual Funds
 SYNTHETIC FUND SYNF 100 10.000 1,000.00 $1,000.00
 Account Activity
@@ -30,6 +33,8 @@ Margin - Long
 Order Execution Only JAN. 30
 Date of Last Statement: DEC. 31, 2025
 Asset Review
+U.S. Dollar Statement 2026
+Your Account Number: 111-22222-3-4 3 of 4
 Foreign Securities
 BETA CORP BBB 5 30.000 150.00 $150.00
 Other
@@ -37,6 +42,13 @@ CALL .BBB 02/20/26 35 1 2.000 100.00 200.00
 Account Activity
 Opening Balance (Dec. 31) $500.00
 JAN. 06 BOUGHT CALL .BBB 02/20/26 35 1 2.000 200.00
+JAN. 10 MGR SAMPLE FUND A 1,000-
+EQUITY FUND CL F (123)
+SHRS SURRENDERED - MERGER
+JAN. 10 MGR SAMPLE FUND B 1,583
+(124)
+SHRS RECEIVED THRU MERGER
+JAN. 11 EXCHANGE SAMPLE FUND B 0.021-
 JAN. 19 EXERCISE CALL .TRP 01/16/26 65 20-
 Closing Balance (Jan. 30) $300.00
 FOOTNOTES

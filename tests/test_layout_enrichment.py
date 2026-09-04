@@ -260,6 +260,25 @@ def test_layout_enrichment_links_ordered_noncontiguous_cash_lines(tmp_path):
     }
     assert link_count == 2
 
+    pages = _persisted_boxes(
+        Path("unused-because-page-metadata-is-persisted.pdf"),
+        source_file_id=source_id,
+        references=[
+            {
+                "kind": "cash",
+                "id": 55,
+                "label": "cash",
+                "raw_line": "Beginning cash balance $100.00\nEnding cash balance $80.00",
+                "evidence_id": evidence_id,
+            }
+        ],
+        path=db_path,
+    )
+    assert pages is not None
+    # Opening keeps the cash kind; the closing line is separately linkable.
+    assert [line["refs"][0]["kind"] for line in pages[0]["lines"]] == ["cash", "cash_close"]
+    assert [line["refs"][0]["id"] for line in pages[0]["lines"]] == [55, 55]
+
 
 def test_layout_token_match_prefers_unique_narrowest_line_window():
     texts = [

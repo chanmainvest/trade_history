@@ -313,6 +313,101 @@ Ending cash balance $1,513.00""",
     assert validate_parse_result(result).is_valid
 
 
+def test_td_income_preserves_printed_sign_and_canonicalizes_unsigned():
+    pdf = load_fixture("td/modern_monthly.txt")
+    pdf.pages = [
+        page.replace(
+            "Ending cash balance $360.00",
+            """Oct 20 Interest INTEREST TO OCT 20 -21.08 338.92
+Oct 21 Dividend BETA CORP (BBB) 10.00 348.92
+Ending cash balance $348.92""",
+        )
+        for page in pdf.pages
+    ]
+
+    result = TDParser().parse(pdf)
+    usd = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "USD"
+    )
+    interest = next(
+        row for row in usd.transactions if row.txn_type == "interest_income"
+    )
+    dividend = next(row for row in usd.transactions if row.txn_type == "dividend")
+
+    # The printed -21.08 is source evidence; the unsigned dividend keeps the
+    # canonical inflow direction.
+    assert interest.net_amount == -21.08
+    assert dividend.net_amount == 10.0
+    assert validate_parse_result(result).is_valid
+
+
+def test_td_drip_echo_recorded_as_reinvestment_on_printing_statement():
+    pdf = load_fixture("td/modern_monthly.txt")
+    # TD prints each month-end DRIP reinvestment once, on the next month's
+    # statement, dated the prior pay date with $0.00 cash. It is the only
+    # appearance of that row, so it is recorded here rather than quarantined.
+    pdf.pages = [
+        page.replace(
+            "Beginning cash balance $500.00\nOct 6 Sell",
+            """Beginning cash balance $500.00
+Sep 30 Dividend TD DIV INCM-D /NL'FRAC 2.526 0.00 500.00
+Reinvestment Plan VALUE = 47.86
+Oct 6 Sell""",
+        )
+        for page in pdf.pages
+    ]
+
+    result = TDParser().parse(pdf)
+    usd = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "USD"
+    )
+    echo = next(
+        row for row in usd.transactions if row.txn_type == "reinvest_dividend"
+    )
+    assert echo.trade_date == "2025-09-30"
+    assert echo.quantity == 2.526
+    assert echo.net_amount == 0.0
+    assert echo.instrument is not None
+    assert echo.instrument.asset_type == "mutual_fund"
+    assert "Reinvestment Plan VALUE = 47.86" in (echo.description or "")
+    assert all("TD DIV INCM" not in (row.raw_line or "") for row in usd.quarantine)
+    assert validate_parse_result(result).is_valid
+
+
+def test_td_cash_dividend_echo_still_quarantines_out_of_period():
+    pdf = load_fixture("td/modern_monthly.txt")
+    # A cash-carrying echo repeats a dividend the prior statement already
+    # recorded, so it stays in quarantine as a duplicate.
+    pdf.pages = [
+        page.replace(
+            "Ending cash balance $360.00",
+            """Sep 29 Dividends TORONTO DOMINION BANK 100 40.00 400.00
+Ending cash balance $400.00""",
+        )
+        for page in pdf.pages
+    ]
+
+    result = TDParser().parse(pdf)
+    usd = next(
+        statement
+        for statement in result.statements
+        if statement.account.base_currency == "USD"
+    )
+    assert not any(
+        row.txn_type == "dividend" and row.raw_line.startswith("Sep 29")
+        for row in usd.transactions
+    )
+    quarantined = next(
+        row for row in usd.quarantine if "TORONTO DOMINION" in (row.raw_line or "")
+    )
+    assert "outside the statement period" in quarantined.reason
+    assert validate_parse_result(result).is_valid
+
+
 def test_td_unknown_numeric_activity_marks_cash_scope_incomplete():
     pdf = load_fixture("td/modern_monthly.txt")
     pdf.pages = [

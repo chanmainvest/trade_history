@@ -113,6 +113,7 @@ class ParsedPosition:
     market_value: float | None
     unrealized_pnl: float | None
     currency: str
+    security_description: str | None = None
     raw_line: str | None = None
     source_span: SourceSpan | None = None
     scope_key: str = "default"

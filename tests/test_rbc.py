@@ -1,6 +1,7 @@
 """Self-contained tests for the RBC parser."""
 from ledger.db import sqlite as sqlite_db
 from ledger.ingest.identity_resolution import resolve_parse_result
+from ledger.ingest.pipeline import _record_source_file, _write_statement
 from ledger.parsers.rbc import RBCParser
 from ledger.parsers.validation import validate_parse_result
 from ledger.pdf_text import PdfLine, PdfWord
@@ -50,6 +51,26 @@ def test_rbc_compact_month_day_activity_is_not_dropped():
     assert all(row.txn_type != "adjustment" for row in statement.transactions)
     assert statement.cash_balances[0].opening_balance == 425490.05
     assert statement.cash_balances[0].closing_balance == 1642.4
+
+
+def test_rbc_full_month_name_activity_is_not_dropped():
+    pdf = load_fixture("rbc/monthly_dual_currency.txt")
+    # Some statement months print the full month name in activity dates
+    # ("JULY 31 DIVIDEND ..."). Those rows must parse, not silently vanish.
+    pdf.pages = [
+        page.replace(
+            "JAN. 05 DIVIDEND ALPHA CORP 50.00",
+            "JANUARY 05 DIVIDEND ALPHA CORP 50.00",
+        )
+        for page in pdf.pages
+    ]
+    result = RBCParser().parse(pdf)
+    assert result.errors == []
+    statement = result.statements[0]
+    dividends = [row for row in statement.transactions if row.txn_type == "dividend"]
+    assert [(row.trade_date, row.net_amount) for row in dividends] == [
+        ("2026-01-05", 50.0),
+    ]
 
 
 def test_rbc_holdings_dividend_option_and_cash():
@@ -366,3 +387,316 @@ def test_rbc_layout_parses_transfer_reference_and_unlabelled_cash():
     assert transfer.net_amount == 50_000.0
     assert adjustment.txn_type == "adjustment"
     assert adjustment.net_amount == 1189.99
+
+
+def test_rbc_asset_review_skips_page_furniture():
+    result = RBCParser().parse(load_fixture("rbc/monthly_dual_currency.txt"))
+    assert result.errors == []
+    statement = result.statements[0]
+    # Statement-year and account-number/page lines inside Asset Review are
+    # page furniture: never quarantined, never row data.
+    assert all(
+        "Dollar Statement" not in row.raw_line
+        and "Your Account Number" not in row.raw_line
+        for row in statement.quarantine
+    )
+    # The holdings printed around the furniture still parse.
+    assert {pos.instrument.symbol for pos in statement.positions} >= {
+        "AAA", "SYNF", "BBB",
+    }
+
+
+def test_rbc_asset_review_ignores_order_execution_only_header():
+    pdf = load_fixture("rbc/monthly_dual_currency.txt")
+    # On multi-page holdings the repeated "Order Execution Only <MMM. DD>"
+    # page header lands inside Asset Review; its date makes it a numeric
+    # candidate, but it is page furniture, never a holding row.
+    pdf.pages = [
+        page.replace(
+            "Mutual Funds\n",
+            "Order Execution Only APR. 30\nMutual Funds\n",
+        )
+        for page in pdf.pages
+    ]
+    result = RBCParser().parse(pdf)
+    assert result.errors == []
+    statement = result.statements[0]
+    assert all(
+        "Order Execution Only" not in row.raw_line
+        for row in statement.quarantine
+    )
+    assert {pos.instrument.symbol for pos in statement.positions} >= {
+        "AAA", "SYNF", "BBB",
+    }
+
+
+def test_rbc_holding_line_ignores_footnote_marker():
+    pdf = load_fixture("rbc/monthly_dual_currency.txt")
+    # RBC prints footnote markers between the value columns (e.g. "#" marks a
+    # book cost obtained from a non-RBC source); the row must still parse as
+    # a holding and the printed line is preserved verbatim.
+    pdf.pages = [
+        page.replace(
+            "ALPHA CORP AAA 10 20.000 200.00 $200.00",
+            "ALPHA CORP AAA 10 20.000 200.00 # $200.00",
+        )
+        for page in pdf.pages
+    ]
+    result = RBCParser().parse(pdf)
+    assert result.errors == []
+    statement = result.statements[0]
+    alpha = next(
+        pos for pos in statement.positions if pos.instrument.symbol == "AAA"
+    )
+    assert (alpha.book_value, alpha.market_value) == (200.0, 200.0)
+    assert "ALPHA CORP" not in " ".join(
+        row.raw_line or "" for row in statement.quarantine
+    )
+    assert alpha.raw_line.endswith("# $200.00")
+
+
+def test_rbc_other_section_holds_securities_beside_options():
+    pdf = load_fixture("rbc/monthly_dual_currency.txt")
+    # RBC prints miscellaneous securities (e.g. BHP depositary shares) in
+    # the standard holding-row shape under "Other", next to option
+    # contracts; the section is not options-only.
+    pdf.pages = [
+        page.replace(
+            "Other\nCALL .BBB",
+            "Other\nBHP GROUP LIMITED BHP 5 30.000 150.00 $150.00\nCALL .BBB",
+        )
+        for page in pdf.pages
+    ]
+    result = RBCParser().parse(pdf)
+    assert result.errors == []
+    statement = result.statements[0]
+    bhp = next(
+        pos for pos in statement.positions
+        if pos.instrument and pos.instrument.symbol == "BHP"
+    )
+    assert bhp.instrument.asset_type == "equity"
+    assert (bhp.quantity, bhp.market_value) == (5.0, 150.0)
+    # The option printed in the same section still parses as an option.
+    call = next(
+        pos for pos in statement.positions
+        if pos.instrument and pos.instrument.asset_type == "option"
+    )
+    assert call.instrument.option_root == "BBB"
+    assert all("BHP" not in (row.raw_line or "") for row in statement.quarantine)
+
+
+def test_rbc_merger_and_exchange_legs_print_in_kind_quantities():
+    result = RBCParser().parse(load_fixture("rbc/monthly_dual_currency.txt"))
+    statement = result.statements[0]
+
+    mergers = [row for row in statement.transactions if row.txn_type == "merger"]
+    assert sorted(row.quantity for row in mergers) == [-1000.0, 1583.0]
+    assert all(row.net_amount is None for row in mergers)
+    assert all(row.cash_delta == 0.0 for row in mergers)
+    # The printed verb is stripped from the security identity.
+    assert all(
+        not (row.instrument and row.instrument.name or "").startswith("MGR")
+        for row in mergers
+    )
+    # The surrendered leg identifies its fund by the printed broker code.
+    out_leg = next(row for row in mergers if row.quantity < 0)
+    assert out_leg.instrument.symbol == "RBF123"
+    assert out_leg.instrument.asset_type == "mutual_fund"
+    assert out_leg.instrument.resolution_method == "printed_fund_code"
+
+    exchanges = [row for row in statement.transactions if row.txn_type == "journal"]
+    assert len(exchanges) == 1
+    # Text-only fixtures carry no debit/credit columns, so the in-kind journal
+    # quantity arrives via layout effects in production; the verb itself and
+    # the printed value still parse here through the amount fallback.
+    assert exchanges[0].net_amount == -0.021
+
+
+def test_rbc_asset_review_without_activity_still_owns_positions():
+    pdf = load_fixture("rbc/monthly_dual_currency.txt")
+    # A month with no CAD trades prints no Account Activity for the currency;
+    # the Asset Review block must still declare the CAD positions scope.
+    pdf.pages = [
+        page.replace(
+            "Account Activity\nOpening Balance (Dec. 31) $1,000.00\n"
+            "JAN. 05 DIVIDEND ALPHA CORP 50.00",
+            "",
+        ).replace(
+            "Account Activity\nJAN. 06 INTEREST CASH 5.00\n"
+            "Closing Balance (Jan. 30) $1,055.00",
+            "",
+        )
+        for page in pdf.pages
+    ]
+    result = RBCParser().parse(pdf)
+    assert result.errors == []
+    statement = result.statements[0]
+    scopes = {
+        (scope.currency, scope.section_type): scope.completeness
+        for scope in statement.snapshot_sets
+    }
+    assert scopes[("CAD", "positions")] == "complete"
+    assert {pos.instrument.symbol for pos in statement.positions} >= {"AAA", "SYNF"}
+
+
+def _pages_with(pdf, old, new):
+    pdf.pages = [page.replace(old, new) for page in pdf.pages]
+    return pdf
+
+
+def test_rbc_wrapped_share_class_attaches_to_holding_row():
+    # RBC wraps the share-class / security-type text under the holding row
+    # and restates the quantity (live shapes: "COM NEW 1,500", bare "2,000").
+    # The text belongs to the holding row; the restated number is duplicate
+    # evidence kept in raw_line, never a second position.
+    pdf = _pages_with(
+        load_fixture("rbc/monthly_dual_currency.txt"),
+        "ALPHA CORP AAA 10 20.000 200.00 $200.00",
+        "ALPHA CORP AAA 10 20.000 200.00 $200.00\nCOM NEW 10\n10",
+    )
+    result = RBCParser().parse(pdf)
+    assert result.errors == []
+    statement = result.statements[0]
+    aaa = next(pos for pos in statement.positions if pos.instrument.symbol == "AAA")
+    assert aaa.security_description == "COM NEW"
+    assert aaa.quantity == 10.0
+    assert (aaa.raw_line or "").splitlines() == [
+        "ALPHA CORP AAA 10 20.000 200.00 $200.00",
+        "COM NEW 10",
+        "10",
+    ]
+    assert [pos.instrument.symbol for pos in statement.positions].count("AAA") == 1
+    assert not [row for row in statement.quarantine if "asset-review" in row.reason]
+
+
+def test_rbc_wrapped_quantity_mismatch_quarantines():
+    # A restated number that disagrees with the holding row is real evidence
+    # of a misread and must quarantine, never be dropped or attached.
+    pdf = _pages_with(
+        load_fixture("rbc/monthly_dual_currency.txt"),
+        "ALPHA CORP AAA 10 20.000 200.00 $200.00",
+        "ALPHA CORP AAA 10 20.000 200.00 $200.00\nCOM 9",
+    )
+    result = RBCParser().parse(pdf)
+    statement = result.statements[0]
+    aaa = next(pos for pos in statement.positions if pos.instrument.symbol == "AAA")
+    assert aaa.security_description is None
+    mismatches = [
+        row for row in statement.quarantine
+        if row.reason == "continuation quantity does not match the holding row"
+    ]
+    assert [(row.raw_line, row.reason) for row in mismatches] == [
+        ("COM 9", "continuation quantity does not match the holding row"),
+    ]
+
+
+def test_rbc_other_section_wraps_cover_depositary_and_option_underlying():
+    # BHP-style depositary shares wrap over two printed lines; option rows
+    # carry the underlying issuer name on the next line. Both texts attach to
+    # their holding row as security descriptions.
+    pdf = _pages_with(
+        load_fixture("rbc/monthly_dual_currency.txt"),
+        "Other\nCALL .BBB 02/20/26 35 1 2.000 100.00 200.00",
+        "Other\n"
+        "BHP GROUP LIMITED BHP 5 30.000 150.00 $150.00\n"
+        "AMERICAN DEPOSITARY SHARES ON 5\n"
+        "ECH RPSNTNG TWO ORD SHS\n"
+        "CALL .BBB 02/20/26 35 1 2.000 100.00 200.00\n"
+        "MOSAIC COMPANY (THE)",
+    )
+    result = RBCParser().parse(pdf)
+    assert result.errors == []
+    statement = result.statements[0]
+    bhp = next(pos for pos in statement.positions if pos.instrument.symbol == "BHP")
+    assert bhp.security_description == (
+        "AMERICAN DEPOSITARY SHARES ON ECH RPSNTNG TWO ORD SHS"
+    )
+    assert bhp.quantity == 5.0
+    call = next(
+        pos for pos in statement.positions if pos.instrument.asset_type == "option"
+    )
+    assert call.security_description == "MOSAIC COMPANY (THE)"
+    assert all("AMERICAN" not in (row.raw_line or "") for row in statement.quarantine)
+
+
+def test_rbc_page_break_furniture_inside_a_wrap_is_skipped():
+    # A wrap that crosses a page break prints the continuation marker and the
+    # footnotes block before the wrapped text; furniture is neither attached
+    # to the open holding nor quarantined.
+    pdf = _pages_with(
+        load_fixture("rbc/monthly_dual_currency.txt"),
+        "ALPHA CORP AAA 10 20.000 200.00 $200.00",
+        "ALPHA CORP AAA 10 20.000 200.00 $200.00\n"
+        "-CONTINUEDONNEXTPAGE- FOOTNOTES *- Indicates fully paid\n"
+        "COM 10",
+    )
+    result = RBCParser().parse(pdf)
+    statement = result.statements[0]
+    aaa = next(pos for pos in statement.positions if pos.instrument.symbol == "AAA")
+    assert aaa.security_description == "COM"
+    assert not [row for row in statement.quarantine if "asset-review" in row.reason]
+
+
+def test_rbc_legacy_squeezed_option_rows_and_furniture():
+    # 2021-2022 statements lose spaces in text extraction: option verbs print
+    # squeezed to their root ("CALLSHOP", "CALL.NTR") and the FX-rate and
+    # section-total furniture prints without any spaces. The options still
+    # parse; the furniture is skipped, not quarantined.
+    pdf = _pages_with(
+        load_fixture("rbc/monthly_dual_currency.txt"),
+        "Other\nCALL .BBB 02/20/26 35 1 2.000 100.00 200.00",
+        "Other\n"
+        "(Exchangerate1USD=1.24705CADasofJULY30,2021)\n"
+        "CALL.NTR 04/14/22 120 3- 10.450 4,501.30- $3,135.00-\n"
+        "CALLSHOP 01/20/23 700 1 138.000 14,661.20 $13,800.00\n"
+        "CALLSHOP 01/20/23 70 10 0.600 920.00 ² $600.00\n"
+        "TotalValueofOther 4,501.30- $3,135.00-\n"
+        "TotalValueofAllSecurities 6,872.44 $5,800.00\n"
+        "CALL .BBB 02/20/26 35 1 2.000 100.00 200.00",
+    )
+    result = RBCParser().parse(pdf)
+    assert result.errors == []
+    statement = result.statements[0]
+    assert statement.quarantine == []
+    options = {
+        (pos.instrument.option_root, pos.instrument.option_strike): pos
+        for pos in statement.positions if pos.instrument.asset_type == "option"
+    }
+    ntr = options[("NTR", 120.0)]
+    assert ntr.quantity == -3.0
+    assert ntr.book_value == -4501.30
+    shop700 = options[("SHOP", 700.0)]
+    assert (shop700.quantity, shop700.market_value) == (1.0, 13800.0)
+    shop70 = options[("SHOP", 70.0)]
+    assert (shop70.quantity, shop70.market_value) == (10.0, 600.0)
+
+
+def test_rbc_security_description_persists_to_position_snapshots(tmp_path):
+    pdf_text = load_fixture("rbc/monthly_dual_currency.txt")
+    pdf = _pages_with(
+        load_fixture("rbc/monthly_dual_currency.txt"),
+        "ALPHA CORP AAA 10 20.000 200.00 $200.00",
+        "ALPHA CORP AAA 10 20.000 200.00 $200.00\nCOM NEW 10",
+    )
+    result = RBCParser().parse(pdf)
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        source_file_id = _record_source_file(
+            conn,
+            pdf_text,
+            parser_name="rbc",
+            parser_version="2.8.0",
+            parse_status="ok",
+        )
+        for statement in result.statements:
+            _write_statement(
+                conn,
+                source_file_id=source_file_id,
+                institution_code="RBC_DI",
+                stmt=statement,
+            )
+        rows = conn.execute(
+            "SELECT security_description FROM position_snapshots WHERE quantity = 10"
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [("COM NEW",)]

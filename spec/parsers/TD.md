@@ -51,9 +51,19 @@ scope.
   `Disposition`, Web Banking transfers, paper-statement fees, cheques,
   interest rebates, cash-in-lieu, and capital-gain distributions retain their
   printed cash effects.
+- Month-end DRIP reinvestments print once, on the statement after their pay
+  date: `<prior-month-end> Dividend <fund> <units> 0.00 <balance>` followed by
+  `Reinvestment Plan VALUE = <n>`. The row is the only appearance of that
+  dividend, so it is recorded on the printing statement as
+  `reinvest_dividend` with the printed date (before the period), the printed
+  units, and zero cash; the validator warns instead of failing on its date.
+  Cash-carrying rows echoed from the prior period are duplicates and still
+  quarantine as out-of-period.
 - Stock splits map to the canonical `stock_split` type. Buy/sell, option
   buy/sell, known fees/taxes, and known income events receive canonical cash
-  directions when TD prints an unsigned debit/credit amount.
+  directions only when TD prints an unsigned debit/credit amount; a printed
+  sign (for example negative debit interest on an income row) is source
+  evidence and is preserved as printed.
 - Missing/invalid quantities or closing cash values, and unrecognized numeric
   candidate rows, are quarantined rather than converted to zero. A cash scope
   containing an unsupported dated numeric event is `unknown`, not complete.

@@ -530,6 +530,27 @@ def _activity_identity(desc: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+def _apply_reinvestment_plan_continuation(cur: ParsedTxn, line: str) -> None:
+    """Convert a zero-cash dividend into a DRIP reinvestment.
+
+    TD prints "Reinvestment Plan VALUE = <n>" under dividend rows whose cash
+    amount bought fund units instead of paying out. The units column then
+    carries the purchased quantity, so the row describes a security movement
+    rather than a cash dividend. The printed VALUE stays in the description;
+    nothing is fabricated beyond the printed columns.
+    """
+    if cur.txn_type != "dividend" or cur.net_amount not in (None, 0.0):
+        return
+    if not re.search(r"Reinvestment\s+Plan\s+VALUE\s*=\s*\$?[\d,]+(?:\.\d+)?", line, re.IGNORECASE):
+        return
+    numbers = re.findall(r"-?[\d,]+(?:\.\d+)?", (cur.raw_line or "").splitlines()[0])
+    quantity = parse_money(numbers[-3]) if len(numbers) >= 3 else None
+    if quantity is None:
+        return
+    cur.txn_type = "reinvest_dividend"
+    cur.quantity = quantity
+
+
 def _instrument_from_description(desc: str, currency: str) -> ParsedInstrument | None:
     sm = RE_TRAIL_SYM.search(desc)
     if sm:
@@ -956,6 +977,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
                 )
             if cur is not None:
                 cur.description = (cur.description or "") + " | " + s
+                _apply_reinvestment_plan_continuation(cur, s)
             elif re.search(r"\d", s):
                 stmt.quarantine.append(ParsedQuarantine(
                     raw_line=ln,
@@ -1003,6 +1025,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
         # Pull instrument + numbers
         instrument: ParsedInstrument | None = None
         qty = price = amount = None
+        printed_signed = False
         nums = re.findall(r"-?[\d,]+(?:\.\d+)?", desc)
         # An option token in description?
         m_opt = RE_OPT_TOKEN.search(desc)
@@ -1131,6 +1154,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
                 # effect instead of treating the quantity as dollars.
                 qty = parse_money(numeric_tail.group(1))
                 amount = parse_money(numeric_tail.group(2))
+                printed_signed = numeric_tail.group(2).lstrip().startswith("-")
                 instrument = _instrument_from_description(
                     desc[:numeric_tail.start()].strip(),
                     currency,
@@ -1139,16 +1163,20 @@ def _parse_activity(body: str, currency: str, year_end: int,
                     qty = None
             if instrument is None and nums:
                 amount = parse_money(nums[-2]) if len(nums) >= 2 else parse_money(nums[-1])
+                printed_signed = (nums[-2] if len(nums) >= 2 else nums[-1]).startswith("-")
         elif txn_type in {"dividend", "distribution", "interest_income",
                           "tax_withholding", "return_of_capital"} and nums:
             # Last number is running cash balance; second-last is amount.
             if len(nums) >= 2:
                 amount = parse_money(nums[-2])
+                printed_signed = nums[-2].startswith("-")
             else:
                 amount = parse_money(nums[-1])
+                printed_signed = nums[-1].startswith("-")
             instrument = _instrument_from_description(desc, currency)
         elif nums:
             amount = parse_money(nums[-2]) if len(nums) >= 2 else parse_money(nums[-1])
+            printed_signed = (nums[-2] if len(nums) >= 2 else nums[-1]).startswith("-")
 
         if amount is not None:
             if verb_key and verb_key.casefold() == "web banking":
@@ -1157,10 +1185,13 @@ def _parse_activity(body: str, currency: str, year_end: int,
                     txn_type = "transfer_out"
                 else:
                     txn_type = "transfer_in"
-            if txn_type in _CASH_OUTFLOW_TYPES:
-                amount = -abs(amount)
-            elif txn_type in _CASH_INFLOW_TYPES:
-                amount = abs(amount)
+            # Canonical cash directions apply only when TD prints an unsigned
+            # amount; a printed sign is source evidence and is preserved.
+            if not printed_signed:
+                if txn_type in _CASH_OUTFLOW_TYPES:
+                    amount = -abs(amount)
+                elif txn_type in _CASH_INFLOW_TYPES:
+                    amount = abs(amount)
 
         cur = ParsedTxn(
             trade_date=trade_date, settle_date=None, txn_type=txn_type,

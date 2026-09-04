@@ -238,9 +238,11 @@ def quarantine_unsupported_rows(result: ParseResult) -> None:
 
     Statement activity can include pending rows dated outside its declared
     period, and an extraction can identify an option while losing part of its
-    contract. Until those variants have an explicit representation, retaining
-    them as ordinary rows would make the parse invalid or fabricate identity.
-    Move only rows with their printed raw evidence into quarantine instead.
+    contract. Out-of-period zero-cash reinvestment echoes have an explicit
+    representation (they belong to the printing statement's checkpoint
+    interval — see spec/parsers/TD.md); every other out-of-period row still
+    quarantines until it has one. Move only rows with their printed raw
+    evidence into quarantine instead.
     """
     for statement in result.statements:
         try:
@@ -258,10 +260,22 @@ def quarantine_unsupported_rows(result: ParseResult) -> None:
             except ValueError:
                 trade_date = None
             if trade_date and not period_start <= trade_date <= period_end:
-                reasons.append(
-                    "transaction date is outside the statement period; "
-                    "pending-row model unavailable"
+                # A DRIP reinvestment TD prints on the statement after its pay
+                # date is the only appearance of that row: the dividend's cash
+                # bought units, so recording it here with its printed date is
+                # the pending-row representation (see spec/parsers/TD.md).
+                # Cash-carrying echoes repeat the prior statement's rows and
+                # still quarantine as duplicates.
+                drip_echo = (
+                    transaction.txn_type == "reinvest_dividend"
+                    and not transaction.net_amount
+                    and transaction.quantity is not None
                 )
+                if not drip_echo:
+                    reasons.append(
+                        "transaction date is outside the statement period; "
+                        "pending-row model unavailable"
+                    )
             option_reason = _incomplete_option_reason(transaction.instrument)
             if option_reason:
                 reasons.append(option_reason)

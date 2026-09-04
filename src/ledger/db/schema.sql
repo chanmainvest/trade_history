@@ -591,6 +591,8 @@ CREATE TABLE IF NOT EXISTS position_snapshots (
     unrealized_pnl    REAL,
     currency          TEXT NOT NULL REFERENCES currencies(code),
     raw_line          TEXT,
+    security_description TEXT,            -- printed share-class/security-type
+                                       -- text from wrapped holding rows
     UNIQUE(snapshot_set_id, instrument_id)
 );
 

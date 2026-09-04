@@ -967,6 +967,10 @@ def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
 def _migrate_existing_schema(conn: sqlite3.Connection) -> None:
     if "notes" not in _table_columns(conn, "initial_cash"):
         conn.execute("ALTER TABLE initial_cash ADD COLUMN notes TEXT")
+    if "security_description" not in _table_columns(conn, "position_snapshots"):
+        conn.execute(
+            "ALTER TABLE position_snapshots ADD COLUMN security_description TEXT"
+        )
     if "opened_on" not in _table_columns(conn, "accounts"):
         conn.execute("ALTER TABLE accounts ADD COLUMN opened_on TEXT")
     if "closed_on" not in _table_columns(conn, "accounts"):

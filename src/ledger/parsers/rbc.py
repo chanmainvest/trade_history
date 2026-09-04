@@ -35,6 +35,7 @@ from .layout import (
     declare_snapshot_scopes,
     quarantine_unsupported_rows,
 )
+from .name_resolver import strip_leading_verbs
 from .registry import register
 from .types import (
     ParsedAccount,
@@ -51,7 +52,9 @@ from .types import (
 _MONTH_ABBR = {
     "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
     "JUL": 7, "AUG": 8, "SEP": 9, "SEPT": 9, "OCT": 10, "NOV": 11, "DEC": 12,
-    "JUNE": 6, "JULY": 7,
+    "JANUARY": 1, "FEBRUARY": 2, "MARCH": 3, "APRIL": 4, "JUNE": 6,
+    "JULY": 7, "AUGUST": 8, "SEPTEMBER": 9, "OCTOBER": 10, "NOVEMBER": 11,
+    "DECEMBER": 12,
 }
 
 
@@ -75,8 +78,11 @@ RE_ACCT_TYPE = re.compile(r"^\s*(Margin|Cash|RRSP|TFSA|RRIF|RESP|LIRA)\s*-\s*(Lo
                           re.IGNORECASE | re.MULTILINE)
 
 # Activity row: "JAN. 06 BOUGHT NUTRIEN LTD ..." — we capture date prefix.
+# Activity rows print either month form: "AUG. 10 BUY ..." or the full
+# "JULY 31 DIVIDEND ..." this statement family also uses.
 RE_ACT_DATE = re.compile(
-    r"^(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\.?\s*(\d{1,2})\s+"
+    r"^((?:JANUARY|FEBRUARY|MARCH|APRIL|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER|"
+    r"JUNE|JULY|SEPT|JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC))\.?\s*(\d{1,2})\s+"
     r"([A-Z][A-Z0-9 .'/&-]+?)\s+(.*)$",
     re.IGNORECASE,
 )
@@ -85,7 +91,10 @@ RE_CLOSING_BAL = re.compile(r"Closing\s*Balance\s*\([^)]+\)\s+\$?\s*\(?(-?[\d,]+
 
 # RBC option position: "CALL .BCE 09/20/24 54   40   0.020   80.00 ²   $80.00"
 RE_RBC_OPT_POS = re.compile(
-    r"^(CALL|PUT)\s+\.?([A-Z]{1,6})\s+(\d{2}/\d{2}/\d{2})\s+(\d+(?:\.\d+)?)\s+"
+    # Older RBC statements lose the space between the verb and the root in
+    # text extraction ("CALLSHOP", "CALL.NTR"); the optional space keeps them
+    # parseable while the six-number tail still guards against false hits.
+    r"^(CALL|PUT)\s*\.?([A-Z]{1,6})\s+(\d{2}/\d{2}/\d{2})\s+(\d+(?:\.\d+)?)\s+"
     r"(-?\d[\d,]*-?)\s+(\d+(?:\.\d+)?)\s+(-?\$?[\d,]+(?:\.\d+)?-?)\s*[#²³¤*]?\s+"
     r"(-?\$?[\d,]+(?:\.\d+)?-?)"
 )
@@ -122,6 +131,11 @@ ACT_VERBS = {
     "NAME CHANGE": "name_change",
     "SYMBOL CHANGE": "name_change",
     "TICKER CHANGE": "name_change",
+    # Corporate-action legs: merger/exchange legs print an in-kind quantity
+    # with no cash, so they flow through the security-transfer row path.
+    "MGR": "merger",
+    "MERGER": "merger",
+    "EXCHANGE": "journal",
 }
 
 
@@ -406,26 +420,46 @@ def _classify_activity(verb: str, desc: str = "") -> str | None:
 def _parse_asset_review(body: str, currency: str, stmt: ParsedStatement) -> bool:
     section = "Common Shares"
     saw_section = False
+    # The holding row a continuation line may still extend, plus that row's
+    # printed quantity for the duplicate-number check.
+    open_pos: ParsedPosition | None = None
+    open_qty: float | None = None
     for ln in body.splitlines():
         s = ln.strip()
+        # The same page furniture the activity parser skips (statement-year
+        # line, account-number/page footer) also lands inside Asset Review.
+        # The repeated page header "Order Execution Only <MMM. DD>" carries a
+        # date and would otherwise quarantine as an unrecognized numeric row.
+        # A holding that wraps across a page break prints the page-continuation
+        # marker and the footnotes block between its lines; both are furniture
+        # and must neither attach to the open holding nor quarantine it.
+        # 2021-2022 statements lose spaces in text extraction, so the FX-rate
+        # and section-total furniture also appears squeezed
+        # ("(Exchangerate1USD=...)", "TotalValueofOther"); match that too.
+        squeezed = s.replace(" ", "")
         if not s or s.startswith("___") or s.startswith("Total ") or "Asset Review" in s \
-           or s.startswith("SECURITY") or s.startswith("SYMBOL") or "Exchange rate" in s:
+           or s.startswith("SECURITY") or s.startswith("SYMBOL") or "Exchange rate" in s \
+           or s.startswith("Cdn. Dollar Statement") or s.startswith("U.S. Dollar Statement") \
+           or s.startswith("Your Account Number:") or s.startswith("Page ") \
+           or s.startswith("Order Execution Only") \
+           or s.startswith("-CONTINUEDONNEXTPAGE-") or s.startswith("FOOTNOTES") \
+           or s.startswith("*-") \
+           or "Exchangerate" in squeezed or squeezed.startswith("TotalValueof"):
             continue
         if s in {"Common Shares", "Preferred Shares", "Foreign Securities",
                   "Mutual Funds", "Fixed Income", "Other"}:
             section = s
             saw_section = True
+            open_pos = None
             continue
 
-        if section == "Other":
-            mo = RE_RBC_OPT_POS.match(s)
-            if not mo:
-                if re.search(r"\d", s):
-                    stmt.quarantine.append(ParsedQuarantine(
-                        raw_line=ln,
-                        reason="unrecognized option asset-review row",
-                    ))
-                continue
+        # Footnote markers such as "#" (book cost obtained from a source other
+        # than RBC) are printed between the value columns. They are furniture
+        # and never part of a symbol or amount, so drop them before matching;
+        # raw_line keeps the printed row unchanged.
+        s = s.replace("#", " ")
+
+        if section == "Other" and (mo := RE_RBC_OPT_POS.match(s)):
             cp, root, ddstr, strike_s, qty_s, mp_s, book_s, mv_s = mo.groups()
             expiry = parse_option_expiry(ddstr)
             instr = ParsedInstrument(
@@ -439,15 +473,21 @@ def _parse_asset_review(body: str, currency: str, stmt: ParsedStatement) -> bool
                     raw_line=ln,
                     reason="option holding has no valid quantity",
                 ))
+                open_pos = None
                 continue
-            stmt.positions.append(ParsedPosition(
+            pos = ParsedPosition(
                 instrument=instr,
                 quantity=quantity,
                 avg_cost=None, book_value=parse_money(book_s),
                 market_price=parse_money(mp_s), market_value=parse_money(mv_s),
                 unrealized_pnl=None, currency=currency, raw_line=ln,
-            ))
+            )
+            stmt.positions.append(pos)
+            open_pos, open_qty = pos, quantity
             continue
+        # A non-option row under "Other" falls through: the section also
+        # carries miscellaneous securities printed in the standard
+        # holding-row shape (e.g. BHP depositary shares).
 
         # Equity / mutual-fund holding line:
         # e.g. "CAMECO CORP CCO 3,022 168.410 155,728.83 $508,935.02"
@@ -458,11 +498,41 @@ def _parse_asset_review(body: str, currency: str, stmt: ParsedStatement) -> bool
             s,
         )
         if not m:
-            if re.search(r"\d", s):
-                stmt.quarantine.append(ParsedQuarantine(
-                    raw_line=ln,
-                    reason="unrecognized asset-review row",
-                ))
+            # Wrapped holding row: RBC prints the share-class / security-type
+            # text under the holding line and restates the quantity — e.g.
+            # "COM NEW 1,500" or a bare "2,000" under a Common Shares row,
+            # "AMERICAN DEPOSITARY SHARES ON 1,700" plus "ECH RPSNTNG TWO ORD
+            # SHS" for a two-line depositary wrap. The text belongs to the
+            # previous holding row and the restated number is duplicate
+            # evidence: it is preserved in raw_line only, never recorded as a
+            # second position. A number that disagrees with the holding row
+            # quarantines instead of being dropped.
+            if open_pos is None:
+                if re.search(r"\d", s):
+                    stmt.quarantine.append(ParsedQuarantine(
+                        raw_line=ln,
+                        reason="unrecognized asset-review row",
+                    ))
+                continue
+            trailing = s.split()[-1] if s.split() else ""
+            text = s
+            if re.fullmatch(r"-?[\d,]+(?:\.\d+)?-?", trailing):
+                wrapped_qty = parse_money(trailing)
+                if wrapped_qty is None or open_qty is None or wrapped_qty != open_qty:
+                    stmt.quarantine.append(ParsedQuarantine(
+                        raw_line=ln,
+                        reason="continuation quantity does not match the holding row",
+                    ))
+                    continue
+                text = s[: s.rfind(trailing)].strip()
+            text = " ".join(text.split())
+            if text:
+                open_pos.security_description = " ".join(
+                    part for part in (open_pos.security_description, text) if part
+                )[:200]
+            open_pos.raw_line = "\n".join(
+                part for part in (open_pos.raw_line, ln) if part
+            )
             continue
         name, sym, qty_s, price_s, book_s, mv_s = m.groups()
         atype = ("mutual_fund" if section == "Mutual Funds" else
@@ -486,13 +556,16 @@ def _parse_asset_review(body: str, currency: str, stmt: ParsedStatement) -> bool
                 raw_line=ln,
                 reason="holding has no valid quantity",
             ))
+            open_pos = None
             continue
-        stmt.positions.append(ParsedPosition(
+        pos = ParsedPosition(
             instrument=instr, quantity=quantity,
             avg_cost=None, book_value=parse_money(book_s),
             market_price=parse_money(price_s), market_value=parse_money(mv_s),
             unrealized_pnl=None, currency=currency, raw_line=ln,
-        ))
+        )
+        stmt.positions.append(pos)
+        open_pos, open_qty = pos, quantity
     return saw_section
 
 
@@ -569,6 +642,38 @@ def _parse_activity(
                     )
                     if holding is not None:
                         last.instrument = holding.instrument
+                    elif last.instrument is None or last.instrument.resolution_method == "unresolved_printed_identity":
+                        # The fund may no longer be held (e.g. it merged away
+                        # this period); the printed broker code still names it.
+                        last.instrument = ParsedInstrument(
+                            asset_type="mutual_fund",
+                            symbol=f"RBF{fund_code.group(1)}",
+                            currency=currency,
+                            name=strip_leading_verbs(
+                                re.sub(r"\s*\(\d{3,4}\)", "", last.description or "")
+                            )[:120],
+                            resolution_method="printed_fund_code",
+                            resolution_confidence=0.9,
+                        )
+                elif (
+                    fund_code
+                    and last.txn_type in {"merger", "journal", "transfer_in", "transfer_out",
+                                          "buy", "sell"}
+                    and (last.instrument is None or last.instrument.resolution_method
+                         == "unresolved_printed_identity")
+                ):
+                    # In-kind corporate-action and fund-trade legs identify the
+                    # fund by the printed broker code — the same number the
+                    # Asset Review prints as the RBFNNN symbol.
+                    cleaned_name = re.sub(r"\s*\(\d{3,4}\)", "", last.description or "")
+                    last.instrument = ParsedInstrument(
+                        asset_type="mutual_fund",
+                        symbol=f"RBF{fund_code.group(1)}",
+                        currency=currency,
+                        name=strip_leading_verbs(cleaned_name)[:120],
+                        resolution_method="printed_fund_code",
+                        resolution_confidence=0.9,
+                    )
                 reinvest = re.search(
                     r"\bREINVEST(?:ED)?\s*@\s*\$?([\d,]+(?:\.\d+)?)",
                     s,
@@ -644,8 +749,8 @@ def _parse_activity(
         nums = re.findall(r"-?\$?[\d,]+(?:\.\d+)?-?", full)
         qty = price = amount = None
         security_transfer = (
-            txn_type in {"transfer_in", "transfer_out", "journal"}
-            and cash_effect == 0.0
+            txn_type in {"transfer_in", "transfer_out", "journal", "merger"}
+            and (cash_effect == 0.0 or (txn_type == "merger" and cash_effect is None))
             and bool(nums)
         )
         # If the description contains an option token, treat as option txn.
@@ -742,7 +847,7 @@ def _parse_activity(
         if security_transfer:
             qty = parse_money(nums[-1])
             amount = None
-            if txn_type != "journal" and qty is not None:
+            if txn_type in {"transfer_in", "transfer_out"} and qty is not None:
                 txn_type = "transfer_out" if qty < 0 else "transfer_in"
 
         if cash_effect is not None:
@@ -761,11 +866,8 @@ def _parse_activity(
                 # Strip leading verbs (BOUGHT/SOLD/DIVIDEND/...) so the first
                 # token isn't mistaken for a ticker. Then try a known-name map
                 # before falling back to a synthetic symbol.
-                from .name_resolver import (
-                    resolve_ticker,
-                    strip_leading_verbs,
-                    synthetic_symbol,
-                )
+                from .name_resolver import resolve_ticker, synthetic_symbol
+
                 cleaned = strip_leading_verbs(desc_only)
                 known = resolve_ticker(cleaned, currency)
                 if known is not None:
@@ -809,7 +911,7 @@ def _parse_activity(
 # ----------------------------------------------------------------- Parser
 class RBCParser:
     NAME = "rbc"
-    VERSION = "2.7.0"
+    VERSION = "2.8.2"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "RBC Invest Direct":
@@ -915,6 +1017,12 @@ class RBCParser:
                     cash_effects,
                 ):
                     cash_scopes[block.currency] = "complete"
+            elif ar:
+                # A currency block can carry holdings with no printed activity
+                # (a month with no trades in that currency); the Asset Review
+                # still owns the positions scope.
+                if _parse_asset_review(block.text[ar.end():], block.currency, stmt):
+                    position_scopes[block.currency] = "complete"
 
         for key, stmt in statements.items():
             position_scopes, cash_scopes = scope_state[key]

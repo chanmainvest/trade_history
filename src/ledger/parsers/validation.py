@@ -440,6 +440,14 @@ def _validate_statement(
             and period_end
             and not (period_start <= trade_date <= period_end)
         ):
+            # A zero-cash reinvestment echo printed after its pay date is the
+            # documented pending-row representation (spec/parsers/TD.md): the
+            # printed date is source evidence, so it warns instead of failing.
+            drip_echo = (
+                transaction.txn_type == "reinvest_dividend"
+                and not transaction.net_amount
+                and transaction.quantity is not None
+            )
             _issue(
                 report,
                 "transaction_date_outside_period",
@@ -447,6 +455,7 @@ def _validate_statement(
                     f"transaction date {transaction.trade_date} is outside "
                     f"{statement.period_start}..{statement.period_end}"
                 ),
+                severity="warning" if drip_echo else "error",
                 statement_index=statement_index,
                 row_kind=row_kind,
                 row_index=row_index,

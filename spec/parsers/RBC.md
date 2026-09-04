@@ -1,7 +1,7 @@
 # RBC parser
 
 Implementation: `src/ledger/parsers/rbc.py`, parser name `rbc`, current
-version `2.7.0`.
+version `2.8.2`.
 
 ## Recognition and account shape
 
@@ -21,10 +21,51 @@ overwrite the first currency while writing the second.
   Continued page markers are ignored and continuation text remains attached to
   the open activity row rather than becoming a new verb. Historical compact
   extraction such as `AUG.10`, `OpeningBalance(...)`, and
-  `ClosingBalance(...)` is accepted. Activity ends at the printed closing
+  `ClosingBalance(...)` is accepted. Activity dates print either month form —
+  abbreviated (`AUG. 10`) or full (`JULY 31`) — and both parse; a dated row
+  whose date falls outside the statement period is quarantined, never
+  recorded. Activity ends at the printed closing
   balance so dated rows under Open Orders are not recorded as executions.
+  The per-page furniture ("Cdn./U.S. Dollar Statement <year>",
+  "Your Account Number: … n of m", and the repeated
+  "Order Execution Only <MMM. DD>" page header) is skipped in both sections
+  rather than quarantined.
+- Corporate-action legs print in-kind quantities with no cash: `MGR`/
+  `MERGER` rows become merger legs and `EXCHANGE` rows become in-kind
+  journals. When the wrapped description carries the printed broker fund
+  code — `(648)`, the same number Asset Review prints as `RBF648` — the leg
+  resolves to that fund symbol (`printed_fund_code`); the dividend path
+  falls back to the same code when the fund is no longer held. A currency
+  block with an Asset Review but no printed Account Activity (a month with
+  no trades in that currency) still declares its positions scope.
 - Printed call/put, root, expiry, strike, multiplier, and quantity form the
-  option identity. Unknown numeric holding/activity rows are quarantined.
+  option identity. 2021-2022 statements lose spaces in text extraction: the
+  verb prints squeezed to its root (`CALLSHOP`, `CALL.NTR`) and the FX-rate
+  and section-total furniture prints without any spaces
+  (`(Exchangerate1USD=...)`, `TotalValueofOther`); the optional verb space
+  and squeezed-furniture match keep both parseable. Unknown numeric
+  holding/activity rows are quarantined.
+  The Asset Review "Other" section is not options-only: rows that do not
+  match the option grammar fall through to the standard holding-row grammar
+  (for example BHP depositary shares printed next to a PUT contract), and
+  only rows matching neither grammar quarantine.
+  Footnote markers printed inside a holding row — `#` marks a book cost
+  obtained from a source other than RBC — are furniture: the marker is
+  dropped before matching, the amounts still parse, and the quarantined or
+  stored `raw_line` keeps the printed row verbatim.
+- A holding row may wrap: RBC prints the share-class / security-type text
+  under the holding line and restates the quantity — `COM NEW 1,500` or a
+  bare `2,000` under a Common Shares row, `AMERICAN DEPOSITARY SHARES ON
+  1,700` plus `ECH RPSNTNG TWO ORD SHS` for a two-line depositary wrap, or
+  the option underlying's issuer name under an option row. The wrapped text
+  attaches to the previous holding row as its printed security description
+  (stored as `position_snapshots.security_description`); the restated
+  quantity is duplicate evidence retained in `raw_line`, never a second
+  position. Page-break furniture between wrapped lines — the
+  `-CONTINUEDONNEXTPAGE-` marker and the footnotes block — is skipped so it
+  cannot attach to the open holding. A restated number that disagrees with
+  the holding row quarantines as `continuation quantity does not match the
+  holding row`.
 - Debit/credit direction uses page-word geometry from RBC's printed columns.
   When one row contains both withholding debit and gross-income credit, its
   cash effect is the net credit minus debit. Printed signs remain fallback

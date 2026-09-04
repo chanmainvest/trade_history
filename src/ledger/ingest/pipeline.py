@@ -542,8 +542,9 @@ def _write_statement(
             """INSERT INTO position_snapshots
             (statement_id, snapshot_set_id, evidence_id, account_id, as_of_date,
              instrument_id, quantity, avg_cost, book_value, market_price,
-             market_value, unrealized_pnl, currency, raw_line)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             market_value, unrealized_pnl, currency, raw_line,
+             security_description)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(snapshot_set_id, instrument_id) DO UPDATE SET
                 quantity = CASE
                     WHEN COALESCE(position_snapshots.raw_line, '') =
@@ -599,6 +600,17 @@ def _write_statement(
                     THEN position_snapshots.raw_line
                     ELSE COALESCE(position_snapshots.raw_line || char(10), '') ||
                          COALESCE(excluded.raw_line, '')
+                END,
+                security_description = CASE
+                    WHEN COALESCE(position_snapshots.raw_line, '') =
+                         COALESCE(excluded.raw_line, '')
+                    THEN position_snapshots.security_description
+                    WHEN position_snapshots.security_description IS NULL
+                    THEN excluded.security_description
+                    WHEN excluded.security_description IS NULL
+                    THEN position_snapshots.security_description
+                    ELSE position_snapshots.security_description || ' ' ||
+                         excluded.security_description
                 END""",
             (
                 statement_id,
@@ -606,6 +618,7 @@ def _write_statement(
                 evidence_id, acct_id, stmt.period_end, instr_id, p.quantity,
                 p.avg_cost, p.book_value, p.market_price, p.market_value,
                 p.unrealized_pnl, p.currency, p.raw_line,
+                p.security_description,
             ),
         )
 
