@@ -72,9 +72,17 @@ the right row. Only boxes containing that exact reference receive selected
 styling.
 
 Financial rows are grouped by native currency, then transactions, positions,
-cash, and statement totals. Cash shows opening and closing separately. Total
+cash, and statement totals. Cash renders opening and closing as separate
+rows: persisted evidence keeps the opening line under the `cash` reference
+kind and maps later lines to `cash_close`, so each balance row links to its
+own box; legacy single-box cash evidence has no separate closing line and its
+closing row falls back to the shared box. Total
 rows show printed opening, change, and closing values when available; missing
-printed values remain blank. This keeps dual-currency RBC review within one
+printed values remain blank. Transaction and position rows carry the
+instrument's asset type and, for option contracts, the option type, strike,
+expiry, and multiplier;
+Verify renders option contracts with that contract detail while equity and
+ETF rows keep the plain symbol form. This keeps dual-currency RBC review within one
 currency block.
 
 ## Configuration shape
@@ -154,6 +162,9 @@ tabs show the price-data date and warn when it is a week or more stale.
 - Keep account filtering consistent with the active portfolio. Transactions
   exposes an explicit **All accounts** control when a portfolio is active so
   users can bypass the portfolio filter without selecting individual accounts.
+  Verify narrows its statement list and its Institution/Account filter options
+  to the active portfolio's accounts (the portfolio picker's **All accounts**
+  entry restores the full list).
 - Verify renders PDF pages lazily as they enter the viewport; evidence overlays
   size to the PDF.js viewport so boxes stay aligned with the rendered canvas.
 - Source icons in Transactions and Monthly obey `show_source_links`; they deep

@@ -8,6 +8,7 @@ import duckdb
 from ledger import holdings as holdings_service
 from ledger.api.routes import config as config_route
 from ledger.api.routes import monthly as monthly_route
+from ledger.api.routes import statements as statements_route
 from ledger.api.routes import transactions as transactions_route
 from ledger.api.routes import viz as viz_route
 from ledger.api.routes.monthly import _holdings_at
@@ -126,6 +127,69 @@ def test_transactions_include_opening_positions_without_fake_source_links(
     assert initial["statement_id"] is None
     assert initial["transaction_id"] is None
     assert initial["source_ref"] is None
+
+
+def test_statement_boxes_rows_carry_option_contract_fields(tmp_path, monkeypatch):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id, source_id = _seed_account(conn)
+        statement_id = _seed_statement(conn, account_id, source_id, "2024-01-31")
+        stock_id = sqlite_db.upsert_instrument(
+            conn, asset_type="equity", symbol="ABC", currency="USD"
+        )
+        option_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="option",
+            symbol="ABC",
+            currency="USD",
+            option_root="ABC",
+            option_expiry="2024-03-15",
+            option_strike=150.0,
+            option_type="CALL",
+            option_multiplier=100,
+        )
+        seed_position(
+            conn, statement_id=statement_id, instrument_id=stock_id,
+            quantity=10, currency="USD",
+        )
+        seed_position(
+            conn, statement_id=statement_id, instrument_id=option_id,
+            quantity=-1, currency="USD",
+        )
+        conn.execute(
+            """
+            INSERT INTO transactions(
+                account_id, statement_id, trade_date, txn_type,
+                instrument_id, quantity, price, net_amount, currency
+            ) VALUES (?, ?, '2024-01-10', 'option_sell_to_open', ?, -1, 2.5, 250.0, 'USD')
+            """,
+            (account_id, statement_id, option_id),
+        )
+    monkeypatch.setattr(statements_route.sqlite_db, "SQLITE_PATH", db_path)
+
+    loaded = statements_route._load_statement_rows(statement_id)
+
+    by_asset = {row["asset_type"]: row for row in loaded["positions"]}
+    stock_row = by_asset["equity"]
+    option_row = by_asset["option"]
+    assert stock_row["symbol"] == "ABC"
+    assert stock_row["option_type"] is None
+    assert stock_row["option_strike"] is None
+    assert option_row["symbol"] == "ABC"
+    assert option_row["option_type"] == "CALL"
+    assert option_row["option_strike"] == 150.0
+    assert option_row["option_expiry"] == "2024-03-15"
+    assert option_row["option_multiplier"] == 100
+    option_txn = next(
+        row for row in loaded["transactions"]
+        if row["txn_type"] == "option_sell_to_open"
+    )
+    assert option_txn["symbol"] == "ABC"
+    assert option_txn["option_type"] == "CALL"
+    assert option_txn["option_strike"] == 150.0
+    assert option_txn["option_expiry"] == "2024-03-15"
+    assert option_txn["option_multiplier"] == 100
 
 
 def _seed_account(conn, *, source_relpath: str = "Statements/Test/sample.pdf"):

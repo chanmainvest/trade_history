@@ -5,6 +5,9 @@ import Plot from "react-plotly.js";
 import { api } from "../api";
 import { plotlyTheme } from "../theme";
 import { useI18n } from "../i18n";
+import { CollapsibleCard } from "../CollapsibleCard";
+import { sortTrades } from "../tradeSort";
+import type { TradeCol } from "../tradeSort";
 
 type Freq = "D" | "W" | "M";
 type Period = "1d" | "1w" | "1m" | "3m" | "6m" | "1y" | "3y" | "5y" | "10y" | "max";
@@ -115,6 +118,20 @@ export default function Research() {
     return allTrades.filter((t: any) => t.trade_date >= cutoff);
   }, [allTrades, cutoff]);
 
+  const [tradeSortCol, setTradeSortCol] = useState<TradeCol | null>(null);
+  const [tradeSortDir, setTradeSortDir] = useState<"asc" | "desc">("asc");
+  const sortedTrades = useMemo(
+    () => sortTrades(allTrades, tradeSortCol, tradeSortDir),
+    [allTrades, tradeSortCol, tradeSortDir],
+  );
+  function toggleTradeSort(c: TradeCol) {
+    if (c === tradeSortCol) setTradeSortDir(tradeSortDir === "asc" ? "desc" : "asc");
+    else { setTradeSortCol(c); setTradeSortDir("asc"); }
+  }
+  function tradeArrow(c: TradeCol) {
+    return c === tradeSortCol ? (tradeSortDir === "asc" ? " ▲" : " ▼") : "";
+  }
+
   function isBuy(t: any): boolean {
     return t.txn_type.startsWith("buy") || t.txn_type === "option_buy_to_open" || t.txn_type === "option_buy_to_close";
   }
@@ -180,7 +197,6 @@ export default function Research() {
 
   return (
     <>
-      <h2>{t("nav.research")} {symbol && <>— {symbol}</>}</h2>
       {(pricesQ.data?.ticker_changes?.length ?? 0) > 0 && (
         <p className="muted">
           {t("research.tickerHistory")}: {pricesQ.data!.ticker_changes.map((change) =>
@@ -249,7 +265,7 @@ export default function Research() {
       )}
 
       {symbol && (
-        <div className="card">
+        <CollapsibleCard title={t("research.price_chart")}>
           <Plot
             data={[
               {
@@ -323,13 +339,12 @@ export default function Research() {
             }}
             style={{ width: "100%" }} useResizeHandler
           />
-        </div>
+        </CollapsibleCard>
       )}
 
       {symbol && (
-        <div className="card">
+        <CollapsibleCard title={t("research.financials")}>
           <div className="filters">
-            <h3 style={{ marginRight: 12 }}>{t("research.financials")}</h3>
             <button className={finPeriod === "quarterly" ? "active" : ""}
                     onClick={() => setFinPeriod("quarterly")}>{t("research.quarterly")}</button>
             <button className={finPeriod === "annual" ? "active" : ""}
@@ -359,24 +374,27 @@ export default function Research() {
             }}
             style={{ width: "100%" }} useResizeHandler
           />
-        </div>
+        </CollapsibleCard>
       )}
 
       {symbol && (
-        <div className="card">
-          <h3>{interpolate(t("research.trade_history"), { symbol })}</h3>
-          <div style={{ overflow: "auto", maxHeight: 320 }}>
-            <table>
+        <CollapsibleCard title={interpolate(t("research.trade_history"), { symbol })}>
+          <div className="research-table-wrap">
+            <table className="research-table">
               <thead>
                 <tr>
-                  <th>Date</th><th>Type</th>
-                  <th className="num">Qty</th><th className="num">Price</th>
-                  <th className="num">Amount</th><th>Ccy</th>
-                  <th>Account</th><th>Description</th>
+                  <th onClick={() => toggleTradeSort("trade_date")}>Date{tradeArrow("trade_date")}</th>
+                  <th onClick={() => toggleTradeSort("txn_type")}>Type{tradeArrow("txn_type")}</th>
+                  <th className="num" onClick={() => toggleTradeSort("quantity")}>Qty{tradeArrow("quantity")}</th>
+                  <th className="num" onClick={() => toggleTradeSort("price")}>Price{tradeArrow("price")}</th>
+                  <th className="num" onClick={() => toggleTradeSort("net_amount")}>Amount{tradeArrow("net_amount")}</th>
+                  <th onClick={() => toggleTradeSort("currency")}>Ccy{tradeArrow("currency")}</th>
+                  <th onClick={() => toggleTradeSort("account")}>Account{tradeArrow("account")}</th>
+                  <th onClick={() => toggleTradeSort("description")}>Description{tradeArrow("description")}</th>
                 </tr>
               </thead>
               <tbody>
-                {allTrades.map((t: any, i: number) => (
+                {sortedTrades.map((t: any, i: number) => (
                   <tr key={i}>
                     <td>{t.trade_date}</td>
                     <td>{t.txn_type}</td>
@@ -388,13 +406,13 @@ export default function Research() {
                     <td style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis" }}>{t.description}</td>
                   </tr>
                 ))}
-                {allTrades.length === 0 && (
+                {sortedTrades.length === 0 && (
                   <tr><td colSpan={8} className="muted">{t("research.no_trades")}</td></tr>
                 )}
               </tbody>
             </table>
           </div>
-        </div>
+        </CollapsibleCard>
       )}
     </>
   );

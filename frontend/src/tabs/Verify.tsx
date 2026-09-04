@@ -8,18 +8,23 @@ import {
   api,
   EvidenceBox,
   StatementBoxes,
+  StatementPosition,
   StatementQualityFlag,
   StatementReconciliation,
   StatementRow,
   StatementScope,
 } from "../api";
 import { useI18n } from "../i18n";
+import { usePortfolio } from "../portfolio";
+import { groupMonthsByYear, monthLabel } from "../verifyFilters";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = PdfWorker;
 
 // Render scale: PDF points → device pixels. 1.4 keeps bank statements legible
 // without making multi-page statements enormous to scroll.
 const RENDER_SCALE = 1.4;
+
+const QUALITY_FLAGS: StatementQualityFlag[] = ["unresolved", "incomplete", "unreconciled"];
 
 type SelectedKey = string;
 type SelectionOrigin = "deep_link" | "right_list" | "pdf_box" | "statement_change";
@@ -39,7 +44,7 @@ function requestedSelection(searchParams: URLSearchParams): {
 } {
   const statementId = Number(searchParams.get("statement"));
   const key = searchParams.get("ref");
-  const validKey = key && /^(transaction|position|cash|summary|scope_issue|quarantine):\d+$/.test(key);
+  const validKey = key && /^(transaction|position|cash|cash_close|summary|scope_issue|quarantine):\d+$/.test(key);
   return {
     statementId: Number.isInteger(statementId) && statementId > 0 ? statementId : null,
     key: validKey ? key : null,
@@ -67,7 +72,8 @@ function boxIndexForRefs(pages: StatementBoxes["pages"]): Map<SelectedKey, { pag
 }
 
 export default function Verify() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const { activeAccountIds } = usePortfolio();
   const [searchParams] = useSearchParams();
   const initialRequest = useMemo(() => requestedSelection(searchParams), []);
   const [selectedId, setSelectedId] = useState<number | null>(initialRequest.statementId);
@@ -80,6 +86,8 @@ export default function Verify() {
   const [bankFilter, setBankFilter] = useState("");
   const [acctFilter, setAcctFilter] = useState("");
   const [qualityFilters, setQualityFilters] = useState<StatementQualityFlag[]>([]);
+  const [indexOpen, setIndexOpen] = useState(false);
+  const indexRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const requested = requestedSelection(searchParams);
@@ -99,13 +107,14 @@ export default function Verify() {
 
   // Statement picker list + client-side filters.
   const listQ = useQuery({ queryKey: ["statements-all"], queryFn: () => api.statements(2000) });
-  const allRows: StatementRow[] = listQ.data?.rows ?? [];
-
-  const dateOpts = useMemo(() => {
-    const s = new Set<string>();
-    for (const r of allRows) s.add(r.period_end);
-    return Array.from(s).sort((a, b) => (a < b ? 1 : -1));
-  }, [allRows]);
+  // An active portfolio narrows the whole page — statement list and the
+  // institution/account filter options — to its accounts, like Transactions.
+  const allRows: StatementRow[] = useMemo(() => {
+    const rows = listQ.data?.rows ?? [];
+    if (activeAccountIds.length === 0) return rows;
+    const allowed = new Set(activeAccountIds);
+    return rows.filter((row) => allowed.has(row.account_id));
+  }, [listQ.data, activeAccountIds]);
 
   const bankOpts = useMemo(() => {
     const m = new Map<string, string>();
@@ -113,27 +122,69 @@ export default function Verify() {
     return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [allRows]);
 
-  const acctOpts = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const r of allRows) {
-      m.set(`${r.institution_code}::${r.account_number}`, `${r.institution_code} • ${r.account_number}`);
+  // Account options follow the chosen institution so empty combinations are
+  // impossible; each option carries its statement count.
+  const accountOptions = useMemo(() => {
+    const rows = bankFilter ? allRows.filter((r) => r.institution_code === bankFilter) : allRows;
+    const m = new Map<string, { key: string; label: string; count: number }>();
+    for (const r of rows) {
+      const key = `${r.institution_code}::${r.account_number}`;
+      const entry = m.get(key) ?? {
+        key,
+        label: `${r.institution_code} ${r.account_number}`,
+        count: 0,
+      };
+      entry.count += 1;
+      m.set(key, entry);
     }
-    return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [allRows]);
+    return Array.from(m.values()).sort((a, b) => a.key.localeCompare(b.key));
+  }, [allRows, bankFilter]);
+
+  // Statements matching institution/account only: drives the period picker
+  // and the quality-chip counts, independent of date and quality filters.
+  const scopeRows = useMemo(() => {
+    let rows = allRows;
+    if (bankFilter) rows = rows.filter((r) => r.institution_code === bankFilter);
+    if (acctFilter) rows = rows.filter((r) => `${r.institution_code}::${r.account_number}` === acctFilter);
+    return rows;
+  }, [allRows, bankFilter, acctFilter]);
+
+  const monthGroups = useMemo(
+    () => groupMonthsByYear(scopeRows.map((r) => r.period_end), lang),
+    [scopeRows, lang],
+  );
+
+  const chipCounts = useMemo(() => {
+    const counts = { all: scopeRows.length } as Record<string, number>;
+    for (const flag of QUALITY_FLAGS) {
+      counts[flag] = scopeRows.filter((r) => r.quality_flags.includes(flag)).length;
+    }
+    return counts;
+  }, [scopeRows]);
 
   const filtered = useMemo(() => {
-    let rows = allRows;
+    let rows = scopeRows;
     if (dateFilter) rows = rows.filter((r) => r.period_end === dateFilter);
-    if (bankFilter) rows = rows.filter((r) => r.institution_code === bankFilter);
-    if (acctFilter) {
-      rows = rows.filter((r) => `${r.institution_code}::${r.account_number}` === acctFilter);
-    }
     if (qualityFilters.length) {
       rows = rows.filter((r) => r.quality_flags.some((flag) => qualityFilters.includes(flag)));
     }
     // allRows is already ordered by period_end DESC; keep that order.
     return rows;
-  }, [allRows, dateFilter, bankFilter, acctFilter, qualityFilters]);
+  }, [scopeRows, dateFilter, qualityFilters]);
+
+  // Index drawer rows grouped by calendar year (filtered is newest first).
+  const indexGroups = useMemo(() => {
+    const groups = new Map<string, StatementRow[]>();
+    for (const r of filtered) {
+      const year = r.period_end.slice(0, 4);
+      const list = groups.get(year) ?? [];
+      list.push(r);
+      groups.set(year, list);
+    }
+    return [...groups.entries()]
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+      .map(([year, rows]) => ({ year, rows }));
+  }, [filtered]);
 
   // Default to the latest statement once the list arrives.
   useEffect(() => {
@@ -162,21 +213,53 @@ export default function Verify() {
 
   const currentIndex = filtered.findIndex((r) => r.statement_id === selectedId);
   const current = currentIndex >= 0 ? filtered[currentIndex] : null;
-  // List is period_end DESC: index 0 is newest. "Next" = newer = lower index.
-  const hasPrev = currentIndex >= 0 && currentIndex < filtered.length - 1; // older exists
-  const hasNext = currentIndex > 0; // newer exists
 
-  function goPrev() {
-    if (hasPrev) {
-      setSelectedId(filtered[currentIndex + 1].statement_id);
-      setSelection((currentSelection) => ({ key: null, origin: "statement_change", requestToken: currentSelection.requestToken + 1 }));
-    }
+  function resetSelection() {
+    setSelection((currentSelection) => ({
+      key: null,
+      origin: "statement_change",
+      requestToken: currentSelection.requestToken + 1,
+    }));
   }
-  function goNext() {
-    if (hasNext) {
-      setSelectedId(filtered[currentIndex - 1].statement_id);
-      setSelection((currentSelection) => ({ key: null, origin: "statement_change", requestToken: currentSelection.requestToken + 1 }));
-    }
+
+  // List is period_end DESC: index 0 is newest. delta -1 = newer, +1 = older.
+  function step(delta: number) {
+    const next = currentIndex + delta;
+    if (currentIndex < 0 || next < 0 || next >= filtered.length) return;
+    setSelectedId(filtered[next].statement_id);
+    resetSelection();
+  }
+  const goNext = () => step(-1); // newer
+  const goPrev = () => step(1); // older
+
+  // Change handlers drop dependent filters when the chosen value makes them
+  // meaningless (e.g. a month the selected account does not have).
+  function scopeCoversDate(institution: string, account: string, periodEnd: string): boolean {
+    return allRows.some((r) =>
+      (!institution || r.institution_code === institution)
+      && (!account || `${r.institution_code}::${r.account_number}` === account)
+      && r.period_end === periodEnd);
+  }
+
+  function changeInstitution(code: string) {
+    setBankFilter(code);
+    const nextAccount = code && acctFilter && !acctFilter.startsWith(`${code}::`)
+      ? ""
+      : acctFilter;
+    if (nextAccount !== acctFilter) setAcctFilter("");
+    if (dateFilter && !scopeCoversDate(code, nextAccount, dateFilter)) setDateFilter("");
+    resetSelection();
+  }
+
+  function changeAccount(key: string) {
+    setAcctFilter(key);
+    if (dateFilter && !scopeCoversDate(bankFilter, key, dateFilter)) setDateFilter("");
+    resetSelection();
+  }
+
+  function changePeriod(periodEnd: string) {
+    setDateFilter(periodEnd);
+    resetSelection();
   }
 
   function clearFilters() {
@@ -192,61 +275,198 @@ export default function Verify() {
       : [...currentFilters, flag]);
   }
 
+  // Arrow keys step through statements (↑ newer, ↓ older) unless the user is
+  // typing in a form control; Escape closes the index drawer.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "SELECT"
+        || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      if (e.key === "Escape") {
+        setIndexOpen(false);
+        return;
+      }
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      e.preventDefault();
+      step(e.key === "ArrowUp" ? -1 : 1);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  // Clicking outside the index drawer closes it; while it is open the
+  // current statement's row stays scrolled into view.
+  useEffect(() => {
+    if (!indexOpen) return;
+    function onPointerDown(e: MouseEvent) {
+      if (indexRef.current && !indexRef.current.contains(e.target as Node)) setIndexOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [indexOpen]);
+
+  useEffect(() => {
+    if (!indexOpen) return;
+    indexRef.current?.querySelector(".verify-index-row.selected")
+      ?.scrollIntoView({ block: "nearest" });
+  }, [indexOpen, selectedId]);
+
+  const bankLabel = bankOpts.find(([code]) => code === bankFilter)?.[1] || bankFilter;
+  const acctLabel = accountOptions.find((a) => a.key === acctFilter)?.label || acctFilter;
+  const hasActiveFilters = Boolean(dateFilter || bankFilter || acctFilter || qualityFilters.length);
+
   return (
     <>
-      <h2>{t("nav.verify")}</h2>
-      <div className="filters">
-        <label>{t("f.date")}:&nbsp;
-          <select value={dateFilter} onChange={(e) => { setDateFilter(e.target.value); setSelection((currentSelection) => ({ key: null, origin: "statement_change", requestToken: currentSelection.requestToken + 1 })); }}>
-            <option value="">{t("verify.all")}</option>
-            {dateOpts.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
-        </label>
-        <label>{t("f.institution")}:&nbsp;
-          <select value={bankFilter} onChange={(e) => { setBankFilter(e.target.value); setSelection((currentSelection) => ({ key: null, origin: "statement_change", requestToken: currentSelection.requestToken + 1 })); }}>
-            <option value="">{t("verify.all")}</option>
-            {bankOpts.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
-          </select>
-        </label>
-        <label>{t("f.account")}:&nbsp;
-          <select value={acctFilter} onChange={(e) => { setAcctFilter(e.target.value); setSelection((currentSelection) => ({ key: null, origin: "statement_change", requestToken: currentSelection.requestToken + 1 })); }}>
-            <option value="">{t("verify.all")}</option>
-            {acctOpts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
-        </label>
-        {(["unresolved", "incomplete", "unreconciled"] as StatementQualityFlag[]).map((flag) => (
-          <label key={flag} className="quality-filter">
-            <input
-              type="checkbox"
-              checked={qualityFilters.includes(flag)}
-              onChange={() => toggleQualityFilter(flag)}
-            />&nbsp;{qualityFlagLabel(t, flag)}
+      <div className="filters verify-toolbar">
+        <div className="verify-toolbar-row">
+          <label>{t("f.institution")}:&nbsp;
+            <select value={bankFilter} onChange={(e) => changeInstitution(e.target.value)}>
+              <option value="">{t("verify.all")}</option>
+              {bankOpts.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+            </select>
           </label>
-        ))}
-        <span className="verify-pager">
-          {/* "next" (newer statement) is on the left, since newer is higher in the list */}
-          <button className="icon-btn" onClick={goNext} disabled={!hasNext} title={t("verify.next")} aria-label={t("verify.next")}>
-            <ChevronLeftIcon />
-          </button>
-          <span className="verify-date">
-            {current ? `${current.period_start} → ${current.period_end}` : "—"}
-          </span>
-          <button className="icon-btn" onClick={goPrev} disabled={!hasPrev} title={t("verify.prev")} aria-label={t("verify.prev")}>
-            <ChevronRightIcon />
-          </button>
-        </span>
-        {current && (
-          <>
-            <span className="tag">{current.institution_code} {current.account_number}</span>
-            {current.quality_flags.map((flag) => (
-              <span key={flag} className={`quality-tag ${flag}`}>{qualityFlagLabel(t, flag)}</span>
+          <label>{t("f.account")}:&nbsp;
+            <select value={acctFilter} onChange={(e) => changeAccount(e.target.value)}>
+              <option value="">{t("verify.all")}</option>
+              {accountOptions.map((a) => (
+                <option key={a.key} value={a.key}>{a.label} · {a.count}</option>
+              ))}
+            </select>
+          </label>
+          <select
+            className="verify-month-select"
+            value={dateFilter}
+            title={t("verify.period")}
+            aria-label={t("verify.period")}
+            onChange={(e) => changePeriod(e.target.value)}
+          >
+            <option value="">{t("verify.all_months")}</option>
+            {monthGroups.map((group) => (
+              <optgroup key={group.year} label={group.year}>
+                {group.months.map((m) => (
+                  <option key={m.periodEnd} value={m.periodEnd}>{m.label}</option>
+                ))}
+              </optgroup>
             ))}
-          </>
-        )}
-        <span className="muted">{filtered.length} {t("verify.statements")}</span>
-        {(dateFilter || bankFilter || acctFilter || qualityFilters.length) && (
-          <button onClick={clearFilters}>{t("f.clear")}</button>
-        )}
+          </select>
+          <span className="verify-stepper">
+            {/* "next" (newer statement) is on the left, since newer is higher in the list */}
+            <button className="icon-btn" onClick={goNext} disabled={currentIndex <= 0}
+                    title={t("verify.next")} aria-label={t("verify.next")}>
+              <ChevronLeftIcon />
+            </button>
+            <select
+              className="verify-statement-select"
+              value={selectedId ?? ""}
+              title={t("verify.statement")}
+              aria-label={t("verify.statement")}
+              onChange={(e) => {
+                setSelectedId(Number(e.target.value));
+                resetSelection();
+              }}
+            >
+              {indexGroups.map((group) => (
+                <optgroup key={group.year} label={group.year}>
+                  {group.rows.map((r) => (
+                    <option key={r.statement_id} value={r.statement_id}>
+                      {r.institution_code} {r.account_number} · {monthLabel(r.period_end, lang)}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <button className="icon-btn" onClick={goPrev}
+                    disabled={currentIndex < 0 || currentIndex >= filtered.length - 1}
+                    title={t("verify.prev")} aria-label={t("verify.prev")}>
+              <ChevronRightIcon />
+            </button>
+          </span>
+          <span className="verify-position">
+            {filtered.length ? `${currentIndex + 1} / ${filtered.length}` : "—"}
+          </span>
+        </div>
+        <div className="verify-toolbar-row">
+          <span className="verify-chip-row">
+            <span className="verify-chip-label">{t("verify.show")}:</span>
+            <button
+              className={`verify-chip ${qualityFilters.length === 0 ? "active" : ""}`}
+              onClick={() => setQualityFilters([])}
+            >
+              {t("verify.all")} {chipCounts.all}
+            </button>
+            {QUALITY_FLAGS.map((flag) => (
+              <button
+                key={flag}
+                className={`verify-chip ${qualityFilters.includes(flag) ? "active" : ""}`}
+                onClick={() => toggleQualityFilter(flag)}
+              >
+                {qualityFlagLabel(t, flag)} {chipCounts[flag]}
+              </button>
+            ))}
+          </span>
+          {bankFilter && (
+            <button className="verify-filter-chip" onClick={() => changeInstitution("")}>
+              {bankLabel} ✕
+            </button>
+          )}
+          {acctFilter && (
+            <button className="verify-filter-chip" onClick={() => changeAccount("")}>
+              {acctLabel} ✕
+            </button>
+          )}
+          {dateFilter && (
+            <button className="verify-filter-chip" onClick={() => changePeriod("")}>
+              {monthLabel(dateFilter, lang)} ✕
+            </button>
+          )}
+          {hasActiveFilters && <button onClick={clearFilters}>{t("f.clear")}</button>}
+          <span className="verify-flex-spacer" />
+          {current?.quality_flags.map((flag) => (
+            <span key={flag} className={`quality-tag ${flag}`}>{qualityFlagLabel(t, flag)}</span>
+          ))}
+          <span className="muted">{filtered.length} {t("verify.statements")}</span>
+          <div className="verify-index" ref={indexRef}>
+            <button
+              className={indexOpen ? "active" : ""}
+              aria-expanded={indexOpen}
+              onClick={() => setIndexOpen((open) => !open)}
+            >
+              {t("verify.index")} ({filtered.length}) {indexOpen ? "▾" : "▸"}
+            </button>
+            {indexOpen && (
+              <div className="verify-index-drawer">
+                {indexGroups.map((group) => (
+                  <div key={group.year}>
+                    <div className="verify-index-year">{group.year}</div>
+                    {group.rows.map((r) => (
+                      <div
+                        key={r.statement_id}
+                        className={`verify-index-row ${r.statement_id === selectedId ? "selected" : ""}`}
+                        title={`${r.institution_code} ${r.account_number}`}
+                        onClick={() => {
+                          setSelectedId(r.statement_id);
+                          resetSelection();
+                          setIndexOpen(false);
+                        }}
+                      >
+                        <span className="verify-index-month">{monthLabel(r.period_end, lang)}</span>
+                        <span className="verify-index-account">{r.institution_code} {r.account_number}</span>
+                        <span className="verify-index-flags">
+                          {r.quality_flags.map((flag) => (
+                            <span key={flag} className={`flag-dot ${flag}`} title={qualityFlagLabel(t, flag)} />
+                          ))}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                {filtered.length === 0 && (
+                  <p className="muted verify-index-empty">{t("verify.no_statements")}</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
       {listQ.isLoading && <p className="muted">{t("viz.loading")}</p>}
       {listQ.error && <p className="inline-status status-error">{String(listQ.error)}</p>}
@@ -368,6 +588,7 @@ function VerifyPane({
     ...data.transactions.map((row) => refKey("transaction", row.transaction_id)),
     ...data.positions.map((row) => refKey("position", row.snapshot_id)),
     ...data.cash_balances.map((row) => refKey("cash", row.cash_balance_id)),
+    ...data.cash_balances.map((row) => refKey("cash_close", row.cash_balance_id)),
     ...data.summary_totals.map((row) => refKey("summary", row.snapshot_set_id)),
     ...data.scope_issues.map((row) => refKey("scope_issue", row.scope_issue_id)),
     ...data.quarantine.map((row) => refKey("quarantine", row.quarantine_id)),
@@ -411,7 +632,8 @@ function VerifyPane({
             <ItemsGroup
               title={t("verify.transactions")}
               rows={data.transactions.filter((row) => row.currency === currency)}
-              render={(r) => `${r.trade_date} ${r.txn_type} ${r.symbol || ""} ${fmt(r.net_amount)} ${r.currency || ""}`}
+              render={(r) => [r.trade_date, r.txn_type, r.symbol || "", contractLabel(r), fmt(r.net_amount), r.currency || ""]
+                .filter(Boolean).join(" ")}
               kind="transaction" idOf={(r) => r.transaction_id}
               titleOf={(r) => r.description || ""} selectedKey={selectedKey}
               onSelect={(key) => onSelect(key, "right_list")}
@@ -420,7 +642,7 @@ function VerifyPane({
             <ItemsGroup
               title={t("verify.positions")}
               rows={data.positions.filter((row) => row.currency === currency)}
-              render={(r) => `${r.symbol || ""} ${fmt(r.quantity, 0)} ${fmt(r.market_value)} ${r.currency || ""}`}
+              render={renderPosition}
               kind="position" idOf={(r) => r.snapshot_id}
               titleOf={(r) => r.raw_line || ""} selectedKey={selectedKey}
               onSelect={(key) => onSelect(key, "right_list")}
@@ -428,10 +650,21 @@ function VerifyPane({
             />
             <ItemsGroup
               title={t("verify.cash")}
-              rows={data.cash_balances.filter((row) => row.currency === currency)}
-              render={(r) => `${t("verify.opening")} ${fmt(r.opening_balance)} · ${t("verify.closing")} ${fmt(r.closing_balance)} ${r.currency || ""}`}
-              kind="cash" idOf={(r) => r.cash_balance_id}
-              titleOf={(r) => r.raw_line || ""} selectedKey={selectedKey}
+              rows={data.cash_balances
+                .filter((row) => row.currency === currency)
+                .flatMap((row) => [{ part: "opening" as const, row }, { part: "closing" as const, row }])}
+              render={(r) => r.part === "opening"
+                ? `${t("verify.opening")} ${fmt(r.row.opening_balance)} ${r.row.currency || ""}`
+                : `${t("verify.closing")} ${fmt(r.row.closing_balance)} ${r.row.currency || ""}`}
+              kind="cash" idOf={(r) => r.row.cash_balance_id}
+              keyOf={(r) => {
+                if (r.part === "opening") return refKey("cash", r.row.cash_balance_id);
+                const closingKey = refKey("cash_close", r.row.cash_balance_id);
+                // Legacy single-box evidence has no separate closing line;
+                // its one box still contains the closing amount.
+                return firstBoxByRef.has(closingKey) ? closingKey : refKey("cash", r.row.cash_balance_id);
+              }}
+              titleOf={(r) => r.row.raw_line || ""} selectedKey={selectedKey}
               onSelect={(key) => onSelect(key, "right_list")}
               matchedKeys={firstBoxByRef} itemRefs={itemRefs}
             />
@@ -479,6 +712,30 @@ function VerifyPane({
 function fmt(n: number | null | undefined, dec = 2): string {
   if (n === null || n === undefined || Number.isNaN(n)) return "";
   return n.toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+
+/** Option contract detail shared by transaction and position rows. */
+function contractLabel(r: {
+  option_type?: string | null;
+  option_strike?: number | null;
+  option_expiry?: string | null;
+  option_multiplier?: number | null;
+}): string {
+  if (!r.option_type) return "";
+  return [
+    r.option_type,
+    fmt(r.option_strike),
+    r.option_expiry || "",
+    r.option_multiplier && r.option_multiplier !== 100 ? `×${r.option_multiplier}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+/** Positions render as option contracts (type/strike/expiry/multiplier) or plain shares. */
+function renderPosition(r: StatementPosition): string {
+  const parts = [r.symbol || "", fmt(r.quantity, 0)];
+  if (r.option_type) parts.push(contractLabel(r));
+  parts.push(fmt(r.market_value), r.currency || "");
+  return parts.filter(Boolean).join(" ");
 }
 
 /**
@@ -726,6 +983,7 @@ function BoxDiv({
   const selected = selectedKey === key;
 
   const cls = ["verify-box"];
+  if (box.ref.kind === "quarantine") cls.push("quarantine");
   if (selected) cls.push("selected");
 
   function onClick(e: React.MouseEvent) {
@@ -754,6 +1012,7 @@ function ItemsGroup({
   render,
   kind,
   idOf,
+  keyOf,
   titleOf,
   selectedKey,
   onSelect,
@@ -765,6 +1024,8 @@ function ItemsGroup({
   render: (r: any) => string;
   kind: string;
   idOf: (r: any) => number;
+  /** Overrides the default `kind:id` selection key (used by split cash rows). */
+  keyOf?: (r: any) => SelectedKey;
   titleOf: (r: any) => string;
   selectedKey: SelectedKey | null;
   onSelect: (k: SelectedKey | null) => void;
@@ -777,11 +1038,12 @@ function ItemsGroup({
       <h4>{title} <span className="muted">({rows.length})</span></h4>
       {rows.map((r) => {
         const id = idOf(r);
-        const key = refKey(kind, id);
+        const key = keyOf ? keyOf(r) : refKey(kind, id);
         const isSelected = selectedKey === key;
         const hasBox = matchedKeys.has(key);
         const geometryStatus = r.geometry_status || "unavailable";
         const cls = ["verify-item"];
+        if (kind === "quarantine") cls.push("quarantine");
         if (isSelected) cls.push("selected");
         if (!hasBox) cls.push("no-box");
         return (

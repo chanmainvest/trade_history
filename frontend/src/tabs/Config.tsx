@@ -58,8 +58,6 @@ export default function Config() {
 
   return (
     <>
-      <h2>Portfolios</h2>
-
       <div className="card">
         <h3>{t("settings.extraction_links")}</h3>
         <label>

@@ -195,7 +195,6 @@ export default function Performance() {
 
   return (
     <>
-      <h2>{t("nav.performance")}</h2>
       <div className="filters">
         {PERIODS.map((p) => (
           <button key={p} className={p === period ? "active" : ""}

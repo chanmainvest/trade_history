@@ -116,7 +116,7 @@ function performanceColor(value: number | null | undefined) {
 }
 
 export default function Viz() {
-  const { activeAccountIds, activePortfolio, accounts } = usePortfolio();
+  const { activeAccountIds, accounts } = usePortfolio();
   const { t } = useI18n();
   const [view, setView] = useState<View>("rrg");
   const [benchmark, setBenchmark] = useState("SPY");
@@ -174,7 +174,6 @@ export default function Viz() {
 
   return (
     <>
-      <h2>{t("nav.viz")} <span className="tag">{activePortfolio?.name}</span></h2>
       <div className="filters">
         {(["rrg", "treemap", "correlation"] as View[]).map((v) =>
           <button key={v} className={v === view ? "active" : ""} onClick={() => setView(v)}>{t(`viz.${v}`)}</button>

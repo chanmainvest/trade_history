@@ -196,7 +196,25 @@ just close the terminal.
     equations, including incomplete inputs and unexplained residuals. It does
     not alter reported quantities/amounts or create a balancing entry.
 
-7. Reload the browser. The Transactions tab should now have data.
+7. *(After statements with printed corporate-action legs)* Link merger /
+    exchange / split leg pairs and record their ratio:
+
+    ```powershell
+    uv run ledger ingest pair-corporate-actions
+    ```
+
+    Both legs must print quantities on the same date; the rollforward then
+    resolves them. Idempotent — already-linked legs are skipped.
+
+8. *(Optional, read-only)* Report holding-quantity jumps between complete
+    checkpoints that the rollforward cannot explain, with any known market
+    split ratio as a candidate:
+
+    ```powershell
+    uv run ledger ingest audit-splits
+    ```
+
+9. Reload the browser. The Transactions tab should now have data.
 
 ## 4. The tabs
 
@@ -213,6 +231,9 @@ Every event the parser produced, filterable by:
 - **Date range**.
 
 Click a symbol cell to jump to the Research tab.
+The table renders only the rows near the viewport (fixed-height rows between
+two invisible spacers), so large ledgers load and scroll as fast as small
+ones; row striping and scroll-to-row snapping follow absolute row positions.
 Opening holdings inferred or reviewed before the first complete statement are
 shown as **Initial position** rows; they are read-only anchors, not fabricated
 transactions. When source icons are enabled, a transaction icon opens Verify
@@ -241,7 +262,8 @@ database, across all accounts in the active portfolio.
   both the rate and its date; native-currency buckets remain the primary total.
 - Columns are sortable; institution and account are visible, while the active
   portfolio is controlled by the top-bar dropdown instead of a repeated table
-  column. Ticker symbols link to Research.
+  column. Ticker symbols link to Research. The table scrolls inside its card
+  and the header row stays pinned while rows scroll beneath it.
 - When source icons are enabled, an icon appears only when the server has an
   exact/unique persisted rectangle. Reported rows link to their exact
   position/cash evidence. Reconstructed rows retain explicit checkpoint plus
@@ -290,6 +312,8 @@ Per-symbol deep dive.
   ticker, asset type, or currency. The list scrolls at a max 2/3 viewport
   height so it stays usable on smaller screens.
 - **Period** buttons + daily/weekly/monthly resample.
+- Every section card — price chart, financials, trade history — collapses and
+  expands from its title; the toggle is per visit and is not persisted.
 - Candlestick with **MA50 / MA200** toggles, volume sub-chart. Moving averages
   are calculated from the full fetched history before the selected display
   period is clipped, so MA200 remains visible on shorter views when enough
@@ -301,7 +325,10 @@ Per-symbol deep dive.
   show/hide. yfinance data is extended with SEC EDGAR Company Facts for
   US-listed symbols when available.
 - **Trade history** table at the bottom lists every transaction the
-  app has for this symbol, including account / description.
+  app has for this symbol, including account / description. Click a column
+  header to sort; click again to reverse. Rows without a value in the sorted
+  column always sink to the bottom. The header stays pinned while the table
+  scrolls.
 - When an ingested statement explicitly reports a ticker change, Research
   shows the dated old-to-new history. Searching either ticker opens one joined
   history: old prices are used only before the effective date, new prices after
@@ -334,32 +361,53 @@ The screen has two sides:
 
 - **Left** renders only the original physical PDF pages owned by the selected
   logical statement (via PDF.js), with evidence-specific rectangles. Green is
-  matched evidence and amber is the selected exact item.
+  matched evidence and yellow marks quarantined rows; selection strengthens the
+  box's own colour — green for matched evidence, yellow for quarantine — with a
+  glow ring, never a different hue.
 - **Right** begins with one concise status, then groups Transactions, Positions,
-  Cash, and Summary totals by native currency. Cash shows opening and closing
-  separately; statement totals show printed opening, change, and closing when
-  the broker supplies them. Extraction issues, reconciliation equations,
+  Cash, and Summary totals by native currency. Cash opening and closing are
+  separate rows, each highlighting its own PDF line (legacy single-box
+  evidence shares one box); statement totals show printed opening, change, and
+  closing when
+  the broker supplies them. Option transactions and positions are labelled as
+  contracts with
+  their type, strike, expiry, and multiplier (multiplier shown when it is not
+  100), so they no longer look identical to the underlying stock line.
+  Extraction issues, reconciliation equations,
   parser diagnostics, and Quarantine rows are below the financial rows.
 
 Click a box on the left to reveal its item on the right without moving the PDF
-pane. Click an item on the right to highlight its box(es) and scroll only the
+pane; the row highlights in the same colour as its box. Click an item on the
+right to highlight its box(es) and scroll only the
 PDF pane to the first match. A source deep link selects its requested statement
 and row before the newest-statement default runs. Boxes come from persisted
 exact evidence links, not request-time fuzzy matching. Items with ambiguous,
 unmatched, or unavailable geometry are dimmed and never receive a guessed box.
 
-Pick which statement to view with the dropdown filters — **Date**,
-**Institution**, and **Account** — which narrow the statement list. The list
-defaults to the latest statement. **Prev / next** chevron buttons next to
-the date step through statements within the current filtered set (prev =
-older, next = newer).
+The toolbar has two rows. The navigation row picks what you are looking at:
+**Institution** narrows the **Account** list (each account shows its
+statement count, so empty combinations are impossible), the **Period**
+picker lists only the months the current selection has, grouped by year and
+labelled "March 2026" instead of raw dates, and the **Statement** picker
+lists every matching statement by name (account and month, grouped by year).
+The chevrons on either side of the Statement picker step to the newer/older
+statement, the position indicator shows where you are (for example
+`12 / 51`), and the ↑/↓ arrow keys step the same way (↑ newer, ↓ older).
+The list defaults to the latest statement.
 
-Use the **Unresolved**, **Incomplete**, and **Unreconciled** checkboxes to
-limit the picker to statements with a quarantined/unresolved identity, a
-partial or missing scope/input, or an unexplained residual. Cash and summary
-total rows use their persisted source evidence for PDF boxes when that evidence
-exists. A dimmed dot means the row has no defensible matching text line; it is
-not a zero or a fabricated source location.
+The filter row narrows the list: the **Unresolved**, **Incomplete**, and
+**Unreconciled** chips show live counts for the current institution/account
+scope and can be combined (statements matching any active chip are kept).
+Each active filter also appears as a removable chip, and **Clear** resets
+everything. Quality flags on the statement you are viewing appear as tags at
+the right-hand end of this row. **Index** opens a drawer listing every
+matching statement grouped by year — click a row to jump straight to it;
+Escape or a click outside closes it, and the current statement's row is
+highlighted and scrolled into view.
+
+Cash and summary total rows use their persisted source evidence for PDF boxes
+when that evidence exists. A dimmed dot means the row has no defensible
+matching text line; it is not a zero or a fabricated source location.
 
 ### 4.7 Settings
 
@@ -405,6 +453,12 @@ uv run ledger ingest infer-initials
 
 # rebuild name/transfer links, movement links, and reconciliation results after manual edits
 uv run ledger ingest reconcile
+
+# link printed corporate-action leg pairs (merger/exchange/split) and record ratios
+uv run ledger ingest pair-corporate-actions
+
+# read-only report of checkpoint quantity jumps the rollforward cannot explain
+uv run ledger ingest audit-splits
 
 # repair symbols (resolve aliases, fund-code lookups, etc.)
 uv run ledger ingest repair-symbols

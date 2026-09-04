@@ -284,6 +284,42 @@ tbody tr:hover td { background: var(--row-hover); }
 .table-scroll {
   overflow: auto;
 }
+.card.monthly-table-wrap {
+  overflow: auto;
+  max-height: calc(100vh - 280px);
+  padding: 0;
+}
+.monthly-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.monthly-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  box-shadow: 0 1px 0 var(--border);
+}
+.card-collapse-header { margin: 0 0 8px; }
+.card-collapse-header > button {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent; border: none; padding: 0;
+  color: var(--fg); font: inherit; font-weight: 600;
+  cursor: pointer; user-select: none;
+}
+.card-collapse-header > button:hover { color: var(--accent); }
+.card-collapse-glyph {
+  display: inline-block; color: var(--fg-dim);
+  transition: transform 0.15s ease;
+}
+.card-collapse-glyph.is-open { transform: rotate(90deg); }
+.research-table-wrap { overflow: auto; max-height: 320px; }
+.research-table { border-collapse: separate; border-spacing: 0; }
+.research-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  box-shadow: 0 1px 0 var(--border);
+}
 .card.transactions-table-wrap {
   max-height: calc(100vh - 220px);
   padding: 0;
@@ -358,6 +394,15 @@ tbody tr:hover td { background: var(--row-hover); }
   scroll-snap-align: start;
   scroll-margin-top: var(--transactions-header-height, 40px);
 }
+/* Zebra striping is explicit per absolute row index (virtualization mounts a
+   window of rows between two spacer rows, so nth-child parity lies). */
+.transactions-table tbody tr:nth-child(even) > td { background: transparent; }
+.transactions-table tbody tr.row-alt-row > td { background: var(--row-alt); }
+.transactions-table tbody tr:hover > td { background: var(--row-hover); }
+.transactions-table tbody tr.virtual-pad > td {
+  padding: 0;
+  border-bottom: none;
+}
 .transactions-table .description-cell {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -414,7 +459,6 @@ button.danger:hover { background: var(--neg); border-color: var(--neg); color: w
   border: 1px solid currentColor;
   border-radius: 4px;
 }
-h2 { margin: 0 0 12px 0; font-size: 18px; color: var(--fg-strong); }
 h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
 .row { display: flex; gap: 12px; flex-wrap: wrap; }
 .col { flex: 1; min-width: 320px; }
@@ -664,11 +708,26 @@ h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
   background: rgba(43,191,115,0.30);
   border-color: var(--accent-2);
 }
+/* Quarantined rows review in yellow so they never read as matched evidence. */
+.verify-box.quarantine {
+  border-color: rgba(230, 184, 0, 0.85);
+  background: rgba(230, 184, 0, 0.16);
+}
+.verify-box.quarantine:hover {
+  border-color: rgba(230, 184, 0, 1);
+  background: rgba(230, 184, 0, 0.30);
+}
 .verify-box.selected {
-  border-color: var(--warn);
-  background: rgba(212,168,67,0.28);
-  box-shadow: 0 0 0 2px rgba(212,168,67,0.45);
+  border-color: var(--pos);
+  background: rgba(43,191,115,0.34);
+  box-shadow: 0 0 0 2px rgba(43,191,115,0.45);
   z-index: 2;
+}
+/* A selected quarantine keeps its yellow so it never reads as matched evidence. */
+.verify-box.quarantine.selected {
+  border-color: rgba(230, 184, 0, 1);
+  background: rgba(230, 184, 0, 0.32);
+  box-shadow: 0 0 0 2px rgba(230, 184, 0, 0.45);
 }
 
 /* Right pane: parsed-item lists */
@@ -692,13 +751,83 @@ h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
 }
 .verify-diagnostics { margin-top: 10px; color: var(--fg-dim); font-size: 11px; }
 .verify-diagnostics summary { cursor: pointer; margin-bottom: 6px; }
-.quality-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  color: var(--fg-dim);
-  font-size: 12px;
+/* Verify page toolbar: navigation row (institution → account → period →
+   statement stepper) plus a filter row (count chips, removable filter chips,
+   current-statement quality tags, and the statement index drawer). */
+.verify-toolbar { flex-direction: column; align-items: stretch; gap: 6px; }
+.verify-toolbar-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.verify-toolbar-row label { color: var(--fg-dim); display: inline-flex; align-items: center; gap: 4px; }
+.verify-toolbar-row select {
+  background: var(--bg-2); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px;
+  font: inherit;
 }
+.verify-stepper { display: inline-flex; align-items: center; gap: 4px; }
+.verify-month-select { min-width: 170px; }
+.verify-statement-select { min-width: 240px; }
+.verify-position { color: var(--fg-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.verify-chip-row { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.verify-chip-label { color: var(--fg-dim); font-size: 12px; }
+.verify-chip {
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--panel-2); color: var(--fg-dim);
+  padding: 2px 10px; font-size: 12px; line-height: 1.5;
+}
+.verify-chip:hover { border-color: var(--accent); color: var(--fg); }
+.verify-chip.active { background: var(--accent); border-color: var(--accent); color: white; }
+.verify-filter-chip {
+  border: 1px solid var(--accent); border-radius: 999px;
+  background: transparent; color: var(--accent);
+  padding: 2px 10px; font-size: 12px; line-height: 1.5;
+}
+.verify-filter-chip:hover { background: var(--accent); color: white; }
+.verify-flex-spacer { flex: 1; }
+.verify-index { position: relative; }
+.verify-index > button { white-space: nowrap; }
+.verify-index-drawer {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 380px;
+  max-width: 90vw;
+  max-height: min(60vh, 480px);
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  padding: 4px 6px 8px;
+  z-index: 40;
+}
+.verify-index-year {
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin: 8px 6px 2px;
+  text-transform: uppercase;
+}
+.verify-index-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.verify-index-row:hover { background: var(--row-hover); }
+.verify-index-row.selected { background: var(--accent); color: white; }
+.verify-index-month { flex: 0 0 110px; font-variant-numeric: tabular-nums; }
+.verify-index-account { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; }
+.verify-index-row.selected .verify-index-account { color: rgba(255, 255, 255, 0.85); }
+.verify-index-flags { margin-left: auto; display: inline-flex; gap: 3px; }
+.flag-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.flag-dot.unresolved,
+.flag-dot.incomplete,
+.flag-dot.unreconciled { background: var(--warn); }
+.verify-index-row.selected .flag-dot { outline: 1px solid rgba(255, 255, 255, 0.6); }
+.verify-index-empty { padding: 8px; }
 .quality-tag {
   display: inline-flex;
   align-items: center;
@@ -808,9 +937,15 @@ h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
   border: 1px solid transparent;
 }
 .verify-item:hover { background: var(--row-hover); }
+/* Selected rows mirror the PDF box color: green for matched evidence, yellow
+   for quarantined rows. */
 .verify-item.selected {
-  background: rgba(212,168,67,0.22);
-  border-color: var(--warn);
+  background: rgba(43,191,115,0.26);
+  border-color: var(--pos);
+}
+.verify-item.quarantine.selected {
+  background: rgba(230, 184, 0, 0.26);
+  border-color: rgba(230, 184, 0, 1);
 }
 .verify-item.no-box { opacity: 0.6; }
 .verify-item-kind {
@@ -834,12 +969,7 @@ h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
 }
 .verify-item-nobox { color: var(--fg-dim); }
 
-/* Pager (prev/next icons around the date) */
-.verify-pager {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
+/* Stepper chevron buttons (newer/older statement) */
 .icon-btn {
   display: inline-grid;
   place-items: center;
@@ -897,12 +1027,6 @@ h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
   height: 20px;
   padding: 0;
   opacity: 0.8;
-}
-.verify-date {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  min-width: 200px;
-  text-align: center;
 }
 
 @media (max-width: 980px) {

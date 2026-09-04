@@ -22,6 +22,11 @@ const MONEY_THRESHOLDS = [
   { value: 1_000_000, label: "≥ $1M" },
 ];
 
+// Virtualization: rows are fixed-height single lines (nowrap + ellipsis), so
+// only the slice near the viewport is mounted between two spacer rows.
+const ROW_OVERSCAN = 8;
+const FALLBACK_ROW_HEIGHT = 29;
+
 type TxnColumnKey =
   | "source"
   | "date"
@@ -87,6 +92,11 @@ export default function Transactions() {
   const [columnWidths, setColumnWidths] = useState<Record<TxnColumnKey, number>>(
     () => ({ ...DEFAULT_TRANSACTION_COLUMN_WIDTHS }),
   );
+  const [rowHeight, setRowHeight] = useState(FALLBACK_ROW_HEIGHT);
+  const [virtualRange, setVirtualRange] = useState({ start: 0, end: 0 });
+  const rowHeightRef = useRef(FALLBACK_ROW_HEIGHT);
+  const rowCountRef = useRef(0);
+  const scrollRafRef = useRef<number | undefined>(undefined);
   const showSourceLinks = config?.show_source_links ?? true;
   const visibleColumnSpecs = useMemo(
     () => TRANSACTION_COLUMN_SPECS.filter((spec) => showSourceLinks || spec.key !== "source"),
@@ -136,10 +146,48 @@ export default function Transactions() {
       }),
   });
 
+  const rows = txnsQ.data?.rows ?? [];
+  rowCountRef.current = rows.length;
+
+  const updateVirtualRange = () => {
+    const node = tableWrapRef.current;
+    if (!node) return;
+    const total = rowCountRef.current;
+    const height = rowHeightRef.current;
+    const start = Math.max(0, Math.floor(node.scrollTop / height) - ROW_OVERSCAN);
+    const end = Math.min(
+      total,
+      Math.ceil((node.scrollTop + node.clientHeight) / height) + ROW_OVERSCAN,
+    );
+    setVirtualRange((current) =>
+      current.start === start && current.end === end ? current : { start, end },
+    );
+  };
+
+  const measureRowHeight = () => {
+    const node = tableWrapRef.current;
+    if (!node) return;
+    const dataRow = node.querySelector<HTMLTableRowElement>("tbody tr:not(.virtual-pad)");
+    const measured = dataRow?.getBoundingClientRect().height ?? 0;
+    if (measured > 0 && measured !== rowHeightRef.current) {
+      rowHeightRef.current = measured;
+      setRowHeight(measured);
+    }
+  };
+
+  const handleTableScroll = () => {
+    scheduleTransactionsSnap();
+    if (scrollRafRef.current !== undefined) return;
+    scrollRafRef.current = window.requestAnimationFrame(() => {
+      scrollRafRef.current = undefined;
+      updateVirtualRange();
+    });
+  };
+
   const snapTransactionsToRow = () => {
     const node = tableWrapRef.current;
     if (!node) return;
-    const firstRow = node.querySelector<HTMLTableRowElement>("tbody tr");
+    const firstRow = node.querySelector<HTMLTableRowElement>("tbody tr:not(.virtual-pad)");
     const rowHeight = firstRow?.getBoundingClientRect().height ?? 0;
     if (rowHeight <= 0) return;
 
@@ -211,13 +259,20 @@ export default function Transactions() {
     syncTransactionsHeaderHeight();
     if (headerCell) resizeObserver?.observe(headerCell);
     window.addEventListener("resize", syncTransactionsHeaderHeight);
+    measureRowHeight();
+    updateVirtualRange();
     snapTransactionsToRow();
     return () => {
       window.clearTimeout(scrollSnapTimerRef.current);
+      if (scrollRafRef.current !== undefined) {
+        window.cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = undefined;
+      }
       resizeObserver?.disconnect();
       window.removeEventListener("resize", syncTransactionsHeaderHeight);
     };
-  }, [txnsQ.data?.rows.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length]);
 
   const instOptions = useMemo(() => {
     const set = new Set<string>();
@@ -281,7 +336,6 @@ export default function Transactions() {
 
   return (
     <>
-      <h2>{t("nav.transactions")}</h2>
       <div className="filters">
         <input type="date" value={start} onChange={(e) => setStart(e.target.value)} title={t("f.start")} />
         <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} title={t("f.end")} />
@@ -340,7 +394,7 @@ export default function Transactions() {
         </div>
       )}
 
-      <div className="card table-scroll transactions-table-wrap" ref={tableWrapRef} onScroll={scheduleTransactionsSnap}>
+      <div className="card table-scroll transactions-table-wrap" ref={tableWrapRef} onScroll={handleTableScroll}>
         <table className="transactions-table" style={{ minWidth: `${tableMinWidth}px` }}>
           <colgroup>
             {visibleColumnSpecs.map((columnSpec) => (
@@ -368,8 +422,15 @@ export default function Transactions() {
             </tr>
           </thead>
           <tbody>
-            {txnsQ.data?.rows.map((row: TxnRow) => (
-              <tr key={row.row_id}>
+            {virtualRange.start > 0 && (
+              <tr className="virtual-pad" aria-hidden="true">
+                <td colSpan={visibleColumnSpecs.length} style={{ height: virtualRange.start * rowHeight }} />
+              </tr>
+            )}
+            {rows.slice(virtualRange.start, virtualRange.end).map((row: TxnRow, index: number) => {
+              const absoluteIndex = virtualRange.start + index;
+              return (
+              <tr key={row.row_id} className={absoluteIndex % 2 === 1 ? "row-alt-row" : undefined}>
                 {showSourceLinks && (
                   <td>
                     {row.source_ref?.linkable ? (
@@ -396,7 +457,13 @@ export default function Transactions() {
                   {row.description}
                 </td>
               </tr>
-            ))}
+              );
+            })}
+            {rows.length - virtualRange.end > 0 && (
+              <tr className="virtual-pad" aria-hidden="true">
+                <td colSpan={visibleColumnSpecs.length} style={{ height: (rows.length - virtualRange.end) * rowHeight }} />
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

@@ -317,7 +317,6 @@ export default function Monthly() {
 
   return (
     <>
-      <h2>{t("nav.monthly")}</h2>
       <div className="filters">
         <label className="snapshot-group">
           <span>{t("monthly.snapshot")}</span>
@@ -401,8 +400,8 @@ export default function Monthly() {
         </div>
       </div>
 
-      <div className="card" style={{ overflow: "auto", maxHeight: "calc(100vh - 280px)" }}>
-        <table>
+      <div className="card monthly-table-wrap">
+        <table className="monthly-table">
           <thead>
             <tr>
               {showSourceLinks && <th aria-label={t("source.column")} />}

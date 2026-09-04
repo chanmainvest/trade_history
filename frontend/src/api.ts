@@ -330,6 +330,24 @@ export type LineBox = {
   refs: BoxRef[];
 };
 
+/** One position row in the Verify right panel. */
+export type StatementPosition = {
+  snapshot_id: number;
+  as_of_date: string;
+  quantity: number;
+  market_value: number | null;
+  currency: string | null;
+  raw_line: string | null;
+  evidence_id: number | null;
+  /** Underlying root for options, printed broker symbol otherwise. */
+  symbol: string | null;
+  asset_type: string | null;
+  option_type: "CALL" | "PUT" | null;
+  option_strike: number | null;
+  option_expiry: string | null;
+  option_multiplier: number | null;
+};
+
 /** Per-page line boxes response from /statements/{id}/boxes. */
 export type StatementBoxes = {
   statement: {
@@ -360,7 +378,7 @@ export type StatementBoxes = {
     boxes: EvidenceBox[];
   }[];
   transactions: any[];
-  positions: any[];
+  positions: StatementPosition[];
   cash_balances: (any & { cash_balance_id: number; raw_line: string | null })[];
   summary_totals: StatementScope[];
   scopes: StatementScope[];

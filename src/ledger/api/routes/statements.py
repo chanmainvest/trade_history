@@ -339,6 +339,12 @@ def _persisted_boxes(
                         },
                     )
                     reference = ref_by_evidence[evidence_id]
+                    # Cash evidence spans an opening line and a closing line in
+                    # stored order; later lines belong to the closing balance
+                    # so each balance row can link to its own box.
+                    ref_kind = reference["kind"]
+                    if ref_kind == "cash" and int(row["ordinal"]) > 0:
+                        ref_kind = "cash_close"
                     rect = [
                         float(row["x0"]),
                         float(row["top"]),
@@ -362,7 +368,7 @@ def _persisted_boxes(
                             pass
                     line["refs"].append(
                         {
-                            "kind": reference["kind"],
+                            "kind": ref_kind,
                             "id": reference["id"],
                             "label": reference["label"],
                             "match_status": row["status"],
@@ -523,7 +529,9 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
             SELECT t.transaction_id, t.trade_date, t.txn_type, t.quantity, t.price,
                    t.net_amount, t.currency, t.description, {transaction_raw_line} AS raw_line,
                    {transaction_evidence_id} AS evidence_id,
-                   COALESCE(inst.option_root, inst.symbol) AS symbol
+                   COALESCE(inst.option_root, inst.symbol) AS symbol,
+                   inst.asset_type, inst.option_type, inst.option_strike,
+                   inst.option_expiry, inst.option_multiplier
               FROM transactions t
               LEFT JOIN instruments inst ON inst.instrument_id = t.instrument_id
               {transaction_join}
@@ -541,9 +549,12 @@ def _load_statement_rows(statement_id: int, *, path: Path | str | None = None):
         positions = [dict(r) for r in conn.execute(
             f"""
             SELECT ps.snapshot_id, ps.as_of_date, ps.quantity, ps.market_value,
-                   ps.currency, {position_raw_line} AS raw_line,
+                   ps.currency, ps.security_description,
+                   {position_raw_line} AS raw_line,
                    {position_evidence_id} AS evidence_id,
-                   COALESCE(inst.option_root, inst.symbol) AS symbol
+                   COALESCE(inst.option_root, inst.symbol) AS symbol,
+                   inst.asset_type, inst.option_type, inst.option_strike,
+                   inst.option_expiry, inst.option_multiplier
               FROM position_snapshots ps
               JOIN instruments inst ON inst.instrument_id = ps.instrument_id
               {position_join}
