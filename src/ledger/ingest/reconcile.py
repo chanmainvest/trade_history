@@ -5,11 +5,12 @@ import re
 import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 from ..db import sqlite as sqlite_db
 from ..quantity import (
+    IN_KIND_BLANK_CASH_TYPES,
     LEGACY_UNDERIVABLE_POSITION_TYPES,
     NON_CASH_TXN_TYPES,
     POSITION_AFFECTING_TYPES,
@@ -25,6 +26,10 @@ RECONCILIATION_KEY_PREFIX = "recon:v1:"
 EXACT_TOLERANCE = 1e-9
 POSITION_TOLERANCE = 1e-8
 CASH_TOLERANCE = 0.01
+# Broker periods end on the last business day, so consecutive checkpoint
+# periods may start a few calendar days after the prior period ends. A gap
+# beyond this many days means a statement period is unobserved.
+MAX_PERIOD_GAP_DAYS = 7
 POSITION_EFFECT_TYPES = POSITION_AFFECTING_TYPES
 AUTOMATIC_NAME_METHODS = {"account_holding_name", "portfolio_holding_name"}
 
@@ -40,13 +45,20 @@ def _statement_periods_are_adjacent(
     prior: sqlite3.Row,
     current: sqlite3.Row,
 ) -> bool:
-    """Return whether two statement scopes cover consecutive calendar days."""
+    """Return whether two statement scopes cover consecutive checkpoint periods.
+
+    Brokers cut periods on the last business day, so the next period may
+    begin a few calendar days after the prior one ends (CIBC Investor's Edge:
+    May 29 -> June 1). Such a short gap still chains the checkpoints; an
+    overlap or a gap longer than a week leaves a statement period unobserved.
+    """
     try:
         prior_end = date.fromisoformat(str(prior["period_end"]))
         current_start = date.fromisoformat(str(current["period_start"]))
     except (KeyError, TypeError, ValueError):
         return False
-    return current_start == prior_end + timedelta(days=1)
+    gap_days = (current_start - prior_end).days
+    return 0 < gap_days <= MAX_PERIOD_GAP_DAYS
 _BROKER_REFERENCE_RE = re.compile(r"\b[A-Z]{2}-\d{6}\b")
 _NAME_TOKEN_RE = re.compile(r"[A-Z0-9]+")
 _NAME_STOP_WORDS = {
@@ -254,12 +266,12 @@ def _add_name_observation(
 def resolve_trade_instruments_from_holdings(
     path: Path | str | None = None,
 ) -> dict[str, int]:
-    """Resolve name-only buys/sells from observed, canonical position names.
+    """Resolve name-only buys/sells and DRIP reinvestments from holdings.
 
     This is a rebuildable reconciliation pass, not a public-symbol guesser.
-    It considers only equity/ETF identities already printed in this ledger,
-    requires native-currency agreement, prefers the same account, and leaves
-    every ambiguous or generic family name unresolved.
+    It considers only equity/ETF/mutual-fund identities already printed in
+    this ledger, requires native-currency agreement, prefers the same
+    account, and leaves every ambiguous or generic family name unresolved.
     """
     db_path = path if path is not None else sqlite_db.SQLITE_PATH
     sqlite_db.init_db(db_path)
@@ -273,7 +285,7 @@ def resolve_trade_instruments_from_holdings(
                        resolution_method = 'unresolved_printed_identity',
                        resolution_confidence = 0.0,
                        resolution_evidence_id = evidence_id
-                 WHERE txn_type IN ('buy', 'sell')
+                 WHERE txn_type IN ('buy', 'sell', 'reinvest_dividend')
                    AND resolution_method IN ({method_placeholders})
                    AND COALESCE(resolution_source, 'auto') = 'auto'
                 """,
@@ -290,7 +302,7 @@ def resolve_trade_instruments_from_holdings(
                    ps.as_of_date, ps.raw_line, i.name
               FROM position_snapshots ps
               JOIN instruments i ON i.instrument_id = ps.instrument_id
-             WHERE i.asset_type IN ('equity', 'etf')
+             WHERE i.asset_type IN ('equity', 'etf', 'mutual_fund')
                AND {canonical_statement_clause('ps.statement_id')}
              ORDER BY ps.account_id, ps.currency, ps.as_of_date, ps.snapshot_id
             """
@@ -303,7 +315,7 @@ def resolve_trade_instruments_from_holdings(
             f"""
             SELECT transaction_id, account_id, trade_date, currency, description
               FROM transactions
-             WHERE txn_type IN ('buy', 'sell')
+             WHERE txn_type IN ('buy', 'sell', 'reinvest_dividend')
                AND instrument_id IS NULL
                AND resolution_method = 'unresolved_printed_identity'
                AND {canonical_statement_clause('statement_id')}
@@ -648,11 +660,16 @@ def rebuild_position_transaction_links(path: Path | str | None = None) -> dict:
                 str(snapshot["instrument_key"]),
                 str(snapshot["currency"]),
             )
-            params: list = [snapshot["account_id"], snapshot["instrument_key"], snapshot["as_of_date"]]
+            params: list = [
+                snapshot["account_id"],
+                snapshot["instrument_key"],
+                snapshot["as_of_date"],
+                snapshot["statement_id"],
+            ]
             previous_date = previous_snapshot_date.get(key)
             previous_clause = ""
             if previous_date is not None:
-                previous_clause = "AND trade_date > ?"
+                previous_clause = "AND t.trade_date > ?"
                 params.append(previous_date)
             transactions = conn.execute(
                 f"""
@@ -660,9 +677,23 @@ def rebuild_position_transaction_links(path: Path | str | None = None) -> dict:
                        t.position_delta
                   FROM transactions t
                   JOIN instruments i ON i.instrument_id = t.instrument_id
+                  LEFT JOIN statements ts ON ts.statement_id = t.statement_id
                  WHERE t.account_id = ?
                    AND i.instrument_key = ?
-                   AND t.trade_date <= ?
+                   AND (
+                        (t.trade_date <= ?
+                         AND NOT (
+                             t.txn_type = 'reinvest_dividend'
+                             AND ts.period_start IS NOT NULL
+                             AND t.trade_date < ts.period_start
+                         ))
+                     OR (
+                            t.txn_type = 'reinvest_dividend'
+                        AND ts.period_start IS NOT NULL
+                        AND t.trade_date < ts.period_start
+                        AND t.statement_id = ?
+                     )
+                    )
                    AND {canonical_statement_clause("t.statement_id")}
                    {previous_clause}
                  ORDER BY trade_date, transaction_id
@@ -828,6 +859,58 @@ def _position_rows_by_key(
     }
 
 
+def _paired_leg_delta(row: sqlite3.Row) -> float | None:
+    """Derive the signed movement of one leg of a paired corporate action.
+
+    Two defensible shapes exist:
+
+    - same instrument: the legs print equal-and-opposite quantities, so the
+      printed values are the deltas themselves;
+    - different instruments: the pair ratio must reconcile the printed
+      quantities (|in quantity| == |out quantity| * ratio within position
+      tolerance); the out leg — the pair's from-instrument — loses its
+      printed quantity and the in leg gains the same magnitude scaled by
+      the ratio.
+
+    Derivations are independent of leg order, so both legs resolve
+    deterministically. Anything inconsistent stays unresolved.
+    """
+    own = abs(float(row["quantity"])) if row["quantity"] is not None else None
+    other = (
+        abs(float(row["counterpart_quantity"]))
+        if row["counterpart_quantity"] is not None
+        else None
+    )
+    if own is None or other is None:
+        return None
+    same_instrument = (
+        row["counterpart_instrument_id"] is not None
+        and row["instrument_id"] is not None
+        and int(row["counterpart_instrument_id"]) == int(row["instrument_id"])
+    )
+    if same_instrument:
+        if abs(own - other) > POSITION_TOLERANCE:
+            return None
+        is_out = row["quantity"] is not None and float(row["quantity"]) < 0
+        return -own if is_out else own
+    if row["pair_ratio"] is None:
+        return None
+    ratio = float(row["pair_ratio"])
+    is_out = (
+        row["pair_from_id"] is not None
+        and row["instrument_id"] is not None
+        and int(row["pair_from_id"]) == int(row["instrument_id"])
+    )
+    if is_out:
+        if abs(other - own * ratio) > POSITION_TOLERANCE:
+            return None
+        return -own
+    delta = other * ratio
+    if abs(own - delta) > POSITION_TOLERANCE:
+        return None
+    return delta
+
+
 def _position_interval_replay(
     conn: sqlite3.Connection,
     *,
@@ -836,36 +919,89 @@ def _position_interval_replay(
     prior_checkpoint: str,
     current_checkpoint: str,
     prior_rows: dict[str, tuple[int, float]],
+    scope_statement_id: int | None = None,
 ) -> tuple[
     dict[str, float],
     dict[str, list[tuple[int, float]]],
     dict[str, int],
     dict[str, int],
 ]:
-    """Replay one checkpoint interval, including whole-position ticker moves."""
+    """Replay one checkpoint interval, including whole-position ticker moves.
+
+    Zero-cash reinvestment echoes (DRIP rows printed on the statement after
+    their pay date) settle inside this interval even though their printed date
+    precedes it, so they are attributed to the interval of the statement that
+    recorded them and excluded from earlier intervals that merely contain the
+    printed date. See spec/parsers/TD.md and spec/RECONCILIATION.md.
+    """
     rows = conn.execute(
         f"""
         SELECT t.transaction_id, t.txn_type, t.quantity, t.position_delta,
                i.instrument_id, i.instrument_key,
                tc.conversion_ratio,
                successor.instrument_key AS successor_key,
-               successor.instrument_id AS successor_id
+               successor.instrument_id AS successor_id,
+               t.counterpart_txn_id,
+               c.quantity AS counterpart_quantity,
+               c.instrument_id AS counterpart_instrument_id,
+               pair.conversion_ratio AS pair_ratio,
+               pair.from_instrument_id AS pair_from_id
           FROM transactions t
           LEFT JOIN instruments i ON i.instrument_id = t.instrument_id
+          LEFT JOIN statements ts ON ts.statement_id = t.statement_id
           LEFT JOIN instrument_ticker_change_sources source
                  ON source.transaction_id = t.transaction_id
           LEFT JOIN instrument_ticker_changes tc
                  ON tc.ticker_change_id = source.ticker_change_id
           LEFT JOIN instruments successor
                  ON successor.instrument_id = tc.to_instrument_id
+          LEFT JOIN transactions c
+                 ON c.transaction_id = t.counterpart_txn_id
+          LEFT JOIN (
+               SELECT from_instrument_id, to_instrument_id,
+                      conversion_ratio,
+                      ROW_NUMBER() OVER (
+                          PARTITION BY from_instrument_id, to_instrument_id
+                          ORDER BY journal_pair_id DESC
+                      ) AS rn
+                 FROM instrument_journal_pairs
+                WHERE status IN ('catalog', 'reviewed')
+          ) pair
+                 ON pair.rn = 1
+                AND t.instrument_id IS NOT NULL
+                AND c.instrument_id IS NOT NULL
+                AND ((pair.from_instrument_id = t.instrument_id
+                      AND pair.to_instrument_id = c.instrument_id)
+                  OR (pair.to_instrument_id = t.instrument_id
+                      AND pair.from_instrument_id = c.instrument_id))
          WHERE t.account_id = ?
            AND t.currency = ?
-           AND t.trade_date > ?
-           AND t.trade_date <= ?
+           AND (
+                (t.trade_date > ? AND t.trade_date <= ?
+                 AND NOT (
+                     t.txn_type = 'reinvest_dividend'
+                     AND ts.period_start IS NOT NULL
+                     AND t.trade_date < ts.period_start
+                 ))
+             OR (
+                    t.txn_type = 'reinvest_dividend'
+                AND ts.period_start IS NOT NULL
+                AND t.trade_date < ts.period_start
+                AND t.statement_id = ?
+                AND t.trade_date <= ?
+             )
+           )
            AND {canonical_statement_clause("t.statement_id")}
          ORDER BY t.trade_date, t.transaction_id
         """,
-        (account_id, currency, prior_checkpoint, current_checkpoint),
+        (
+            account_id,
+            currency,
+            prior_checkpoint,
+            current_checkpoint,
+            scope_statement_id,
+            current_checkpoint,
+        ),
     ).fetchall()
     balances: dict[int, float] = {
         instrument_id: value for _key, (instrument_id, value) in prior_rows.items()
@@ -901,6 +1037,23 @@ def _position_interval_replay(
                 components[id_to_key[successor_id]].append((transaction_id, new_delta))
             continue
         effect = _position_effect(row)
+        same_instrument_counterpart = (
+            row["counterpart_txn_id"] is not None
+            and row["counterpart_instrument_id"] is not None
+            and row["instrument_id"] is not None
+            and int(row["counterpart_instrument_id"]) == int(row["instrument_id"])
+        )
+        if (
+            effect is None
+            and str(row["txn_type"]) in LEGACY_UNDERIVABLE_POSITION_TYPES
+            and row["counterpart_txn_id"] is not None
+            and (row["pair_ratio"] is not None or same_instrument_counterpart)
+        ):
+            # A printed corporate-action leg pair (merger, spinoff, exchange,
+            # split) whose counterpart is recorded — and whose ratio is known
+            # for cross-instrument pairs — has a defensible effect even though
+            # a raw quantity alone would not.
+            effect = _paired_leg_delta(row)
         effect = contextual_position_delta(
             str(row["txn_type"]),
             row["quantity"],
@@ -931,6 +1084,12 @@ def _unresolved_position_effect_count(
     prior_checkpoint: str,
     current_checkpoint: str,
 ) -> int:
+    """Count rows that move an unknown security within the interval.
+
+    Rows carrying a real cash effect are cash events, not unknown security
+    movements (broker wire transfers print no security at all), so only
+    zero/absent-cash rows are counted as unresolved positions.
+    """
     placeholders = ",".join("?" * len(POSITION_EFFECT_TYPES))
     row = conn.execute(
         f"""
@@ -942,6 +1101,7 @@ def _unresolved_position_effect_count(
            AND t.trade_date > ?
            AND t.trade_date <= ?
            AND t.txn_type IN ({placeholders})
+           AND (t.cash_delta IS NULL OR t.cash_delta = 0)
            AND {canonical_statement_clause("t.statement_id")}
         """,
         (
@@ -953,6 +1113,242 @@ def _unresolved_position_effect_count(
         ),
     ).fetchone()
     return int(row[0]) if row else 0
+
+
+def pair_corporate_action_legs(conn: sqlite3.Connection) -> dict[str, int]:
+    """Link printed corporate-action leg pairs and record their ratios.
+
+    Candidates are persisted legacy-underivable rows (merger, name change,
+    spinoff, generic split) that share account, currency, trade date, and
+    statement, carry printed quantities and instruments, and are unlinked.
+    Two equal-and-opposite legs of one instrument pair regardless of other
+    funds converting on the same date; otherwise the date must hold exactly
+    two unlinked legs, whose out leg is the negative printed quantity and
+    whose derived ratio is recorded in ``instrument_journal_pairs`` for the
+    rollforward. Already-linked legs and dates without an unambiguous
+    pairing are left untouched.
+    """
+    placeholders = ",".join("?" * len(LEGACY_UNDERIVABLE_POSITION_TYPES))
+    rows = conn.execute(
+        f"""
+        SELECT t.transaction_id, t.account_id, t.currency, t.trade_date,
+               t.statement_id, t.txn_type, t.quantity, t.instrument_id
+          FROM transactions t
+         WHERE t.txn_type IN ({placeholders})
+           AND t.counterpart_txn_id IS NULL
+           AND t.quantity IS NOT NULL
+           AND t.instrument_id IS NOT NULL
+           AND {canonical_statement_clause("t.statement_id")}
+         ORDER BY t.account_id, t.currency, t.trade_date, t.transaction_id
+        """,
+        [*sorted(LEGACY_UNDERIVABLE_POSITION_TYPES)],
+    ).fetchall()
+    groups: dict[tuple[int, str, str, int], list[sqlite3.Row]] = defaultdict(list)
+    for row in rows:
+        groups[
+            (
+                int(row["account_id"]),
+                str(row["currency"]),
+                str(row["trade_date"]),
+                int(row["statement_id"]),
+            )
+        ].append(row)
+    stats = {"pairs": 0, "legs_linked": 0, "ambiguous_dates": 0, "unpaired_legs": 0}
+    for (account_id, currency, trade_date, statement_id), legs in groups.items():
+        del account_id, currency, statement_id
+        linked_ids: set[int] = set()
+        # Same-instrument pairs resolve first: two equal-and-opposite legs of
+        # one security are a complete printed pair even when other funds
+        # convert on the same date (a multi-fund class conversion prints one
+        # pair per fund). Equal magnitudes are required — anything else is
+        # not a printed in-and-out pair.
+        by_instrument: dict[int, list[sqlite3.Row]] = defaultdict(list)
+        for row in legs:
+            by_instrument[int(row["instrument_id"])].append(row)
+        for instrument_legs in by_instrument.values():
+            if len(instrument_legs) != 2:
+                continue
+            first, second = instrument_legs
+            if first["txn_type"] != second["txn_type"]:
+                continue
+            neg = first if float(first["quantity"]) < 0 else second
+            pos = second if neg is first else first
+            if float(neg["quantity"]) >= 0 or float(pos["quantity"]) <= 0:
+                continue
+            if (
+                abs(abs(float(neg["quantity"])) - abs(float(pos["quantity"])))
+                > POSITION_TOLERANCE
+            ):
+                continue
+            conn.execute(
+                "UPDATE transactions SET counterpart_txn_id = ? WHERE transaction_id = ?",
+                (pos["transaction_id"], neg["transaction_id"]),
+            )
+            conn.execute(
+                "UPDATE transactions SET counterpart_txn_id = ? WHERE transaction_id = ?",
+                (neg["transaction_id"], pos["transaction_id"]),
+            )
+            linked_ids.update(
+                (int(neg["transaction_id"]), int(pos["transaction_id"]))
+            )
+            stats["pairs"] += 1
+            stats["legs_linked"] += 2
+
+        # Cross-instrument pairs: only the exact two remaining unlinked legs
+        # of a date may pair, and their derived ratio is recorded so the
+        # rollforward can validate the printed magnitudes.
+        remaining = [
+            row for row in legs if int(row["transaction_id"]) not in linked_ids
+        ]
+        if len(remaining) != 2:
+            if remaining:
+                stats[
+                    "ambiguous_dates" if len(remaining) > 2 else "unpaired_legs"
+                ] += len(remaining)
+            continue
+        first, second = remaining
+        if first["txn_type"] != second["txn_type"]:
+            stats["unpaired_legs"] += 2
+            continue
+        neg = first if float(first["quantity"]) < 0 else second
+        pos = second if neg is first else first
+        if float(neg["quantity"]) >= 0 or float(pos["quantity"]) <= 0:
+            stats["unpaired_legs"] += 2
+            continue
+        out_qty = abs(float(neg["quantity"]))
+        ratio = float(pos["quantity"]) / out_qty
+        # Same-instrument legs need no ratio row: their printed equal-and-
+        # opposite quantities are the deltas, and the schema forbids
+        # from == to pairs. Cross-instrument pairs record the ratio.
+        if neg["instrument_id"] != pos["instrument_id"]:
+            existing = conn.execute(
+                """
+                SELECT journal_pair_id FROM instrument_journal_pairs
+                 WHERE from_instrument_id = ? AND to_instrument_id = ?
+                   AND abs(conversion_ratio - ?) <= ?
+                   AND status IN ('catalog', 'reviewed')
+                 LIMIT 1
+                """,
+                (
+                    neg["instrument_id"],
+                    pos["instrument_id"],
+                    ratio,
+                    POSITION_TOLERANCE,
+                ),
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    """
+                    INSERT INTO instrument_journal_pairs(
+                        from_instrument_id, to_instrument_id, conversion_ratio,
+                        status, notes
+                    ) VALUES (?, ?, ?, 'catalog', ?)
+                    """,
+                    (
+                        neg["instrument_id"],
+                        pos["instrument_id"],
+                        ratio,
+                        f"auto: printed corporate-action leg pair {trade_date}",
+                    ),
+                )
+        conn.execute(
+            "UPDATE transactions SET counterpart_txn_id = ? WHERE transaction_id = ?",
+            (pos["transaction_id"], neg["transaction_id"]),
+        )
+        conn.execute(
+            "UPDATE transactions SET counterpart_txn_id = ? WHERE transaction_id = ?",
+            (neg["transaction_id"], pos["transaction_id"]),
+        )
+        stats["pairs"] += 1
+        stats["legs_linked"] += 2
+    return stats
+
+
+def audit_split_discontinuities(conn: sqlite3.Connection) -> list[dict]:
+    """Report unexplained holding-quantity jumps between complete checkpoints.
+
+    For every instrument whose consecutive complete positions scopes disagree
+    by more than the rollforward can explain (transaction components including
+    paired corporate-action legs), return the jump and the implied ratio.
+    Read-only: the report is advisory input for a human, never an automatic
+    write; the audit command cross-references known market split ratios on
+    top of it.
+    """
+    scopes = conn.execute(
+        f"""
+        SELECT ss.snapshot_set_id, ss.statement_id, ss.account_id, ss.currency,
+               ss.scope_key, ss.as_of_date
+          FROM snapshot_sets ss
+         WHERE ss.section_type = 'positions'
+           AND ss.completeness = 'complete'
+           AND {canonical_statement_clause("ss.statement_id")}
+         ORDER BY ss.account_id, ss.currency, ss.scope_key, ss.as_of_date
+        """
+    ).fetchall()
+    grouped: dict[tuple, list[sqlite3.Row]] = defaultdict(list)
+    for scope in scopes:
+        grouped[
+            (int(scope["account_id"]), str(scope["currency"]), str(scope["scope_key"]))
+        ].append(scope)
+
+    report: list[dict] = []
+    for (account_id, currency, scope_key), scope_list in grouped.items():
+        previous: sqlite3.Row | None = None
+        previous_rows: dict[str, tuple[int, float]] = {}
+        for scope in scope_list:
+            current_rows = {
+                str(row["instrument_key"]): float(row["quantity"])
+                for row in conn.execute(
+                    """
+                    SELECT i.instrument_key, ps.quantity
+                      FROM position_snapshots ps
+                      JOIN instruments i ON i.instrument_id = ps.instrument_id
+                     WHERE ps.snapshot_set_id = ?
+                    """,
+                    (scope["snapshot_set_id"],),
+                ).fetchall()
+            }
+            if previous is not None:
+                balances, components, _missing, _ids = _position_interval_replay(
+                    conn,
+                    account_id=account_id,
+                    currency=currency,
+                    prior_checkpoint=str(previous["as_of_date"]),
+                    current_checkpoint=str(scope["as_of_date"]),
+                    prior_rows=previous_rows,
+                    scope_statement_id=int(scope["statement_id"])
+                    if scope["statement_id"] is not None
+                    else None,
+                )
+                for key, current_qty in current_rows.items():
+                    prior_qty = (
+                        float(previous_rows[key][1]) if key in previous_rows else 0.0
+                    )
+                    jump = current_qty - prior_qty
+                    if abs(jump) <= POSITION_TOLERANCE:
+                        continue
+                    explained = sum(
+                        delta for _txn_id, delta in components.get(key, [])
+                    )
+                    if abs(jump - explained) <= POSITION_TOLERANCE:
+                        continue
+                    report.append(
+                        {
+                            "account_id": account_id,
+                            "currency": currency,
+                            "scope_key": scope_key,
+                            "instrument_key": key,
+                            "prior_date": previous["as_of_date"],
+                            "prior_qty": prior_qty,
+                            "current_date": scope["as_of_date"],
+                            "current_qty": current_qty,
+                            "explained_delta": explained,
+                            "implied_ratio": current_qty / prior_qty if prior_qty else None,
+                        }
+                    )
+            previous = scope
+            previous_rows = _position_rows_by_key(conn, scope["snapshot_set_id"])
+    return report
 
 
 def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
@@ -1002,6 +1398,9 @@ def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
                 prior_checkpoint=str(prior["as_of_date"]),
                 current_checkpoint=str(scope["as_of_date"]),
                 prior_rows=prior_rows,
+                scope_statement_id=int(scope["statement_id"])
+                if scope["statement_id"] is not None
+                else None,
             )
         instrument_keys = sorted(
             set(prior_rows) | set(current_rows) | set(interval_balances)
@@ -1206,6 +1605,16 @@ def _cash_components(
     missing_effects = 0
     for row in rows:
         if row["txn_type"] in NON_CASH_TXN_TYPES:
+            continue
+        # In-kind movements (journals, option delivery, account transfers)
+        # print their cash cells as blank em dashes. No cash figure anywhere
+        # on such a row is the printed fact, not a missing extraction; a
+        # printed amount keeps the row a cash component below.
+        if (
+            row["txn_type"] in IN_KIND_BLANK_CASH_TYPES
+            and row["cash_delta"] is None
+            and row["net_amount"] is None
+        ):
             continue
         value = row["cash_delta"] if row["cash_delta"] is not None else row["net_amount"]
         if value is None:
@@ -1572,8 +1981,18 @@ def rebuild_reconciliation_results(path: Path | str | None = None) -> dict[str, 
 
 
 def reconcile_after_ingest(path: Path | str | None = None) -> dict:
-    """Run all automatic reconciliation passes."""
+    """Run all automatic reconciliation passes.
+
+    Corporate-action leg pairing runs first: a re-ingest recreates
+    transaction rows with no counterpart links, so the printed leg pairs
+    must be re-linked (and their ratios recorded in
+    ``instrument_journal_pairs``) before the rollforward replay consumes
+    them. Already-linked legs are skipped, so the pass is idempotent.
+    """
+    with sqlite_db.session(path) as conn:
+        pairs = pair_corporate_action_legs(conn)
     return {
+        "pairs": pairs,
         "instrument_names": resolve_trade_instruments_from_holdings(path),
         "transfers": link_transfers(path),
         "positions": rebuild_position_transaction_links(path),

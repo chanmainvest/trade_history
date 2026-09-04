@@ -81,6 +81,15 @@ transaction is therefore an auditable negative component for the old instrument
 and positive component for the new one. It never derives a ticker relationship
 from the closing residual.
 
+Zero-cash DRIP reinvestment echoes (TD prints each month-end reinvestment on
+the next statement, dated the prior pay date — see `spec/parsers/TD.md`)
+settle inside the printing statement's checkpoint interval even though the
+printed date precedes the prior checkpoint. Interval replay and position
+movement attribution therefore include a pre-period `reinvest_dividend` row in
+the interval of the statement that recorded it, and exclude such rows from
+earlier intervals that merely contain the printed date. Cash-carrying echoes
+stay quarantined and never reach replay.
+
 For an empty scope, one scope-level result is stored. It records the same
 missing-prior or incomplete condition, or `not_applicable` when both complete
 checkpoints are known empty and no unresolved movement is present.
@@ -110,7 +119,10 @@ the current printed opening balance. Its expected close is the prior reported
 close and its summed delta is zero. That continuity check is
 `missing_prior_checkpoint` for the first scope and `incomplete_input` whenever
 one of the adjacent scopes or balances is unavailable. It is also incomplete
-when the two statement periods are not consecutive calendar intervals.
+when the two statement periods do not chain: the next period must start after
+the prior one ends and within one week of it, which tolerates brokers that cut
+periods on the last business day (CIBC Investor's Edge: May 29 -> June 1)
+while still flagging an overlap or a missing statement period as unobserved.
 
 ### Statement totals
 
@@ -163,12 +175,14 @@ does not parse the reconciliation key or free-text reason to infer semantics.
 
 ## `ingest reconcile` and rebuild behavior
 
-The CLI command performs four separate derived-data passes:
+The CLI command performs five separate derived-data passes:
 
-1. resolve defensible name-only buys/sells from observed holdings;
-2. pair unambiguous transfer counterparts;
-3. rebuild `position_transaction_links` for complete position scopes; and
-4. replace generated `recon:v1:*` result rows and their components with the
+1. link printed corporate-action leg pairs (below) so a re-ingest's fresh
+   transaction rows regain their counterpart links and recorded ratios;
+2. resolve defensible name-only buys/sells from observed holdings;
+3. pair unambiguous transfer counterparts;
+4. rebuild `position_transaction_links` for complete position scopes; and
+5. replace generated `recon:v1:*` result rows and their components with the
    position, cash, and total equations described above.
 
 The generated-key prefix preserves any future reviewed/manual result rows with
@@ -187,6 +201,40 @@ are enforced. Equally near candidates are skipped as ambiguous. Thus a
 DLR/DLR.U journal can pair at 1:1, while two listings that merely share an
 issuer/company name cannot. Reconciliation never treats different canonical
 keys as identical just to make an equation balance.
+
+## Corporate-action leg pairs in the position rollforward
+
+The position rollforward resolves printed corporate-action leg pairs
+(merger, exchange, split, spinoff) instead of leaving them as missing
+deltas. Two shapes are supported, both requiring the legs to be linked as
+counterparts and to print quantities on the same day:
+
+- same instrument: the printed equal-and-opposite quantities are the
+  deltas themselves; and
+- different instruments: an active `instrument_journal_pairs` row must link
+  them, and the ratio must reconcile the printed quantities
+  (|in| = |out| x ratio within tolerance); the out leg loses its printed
+  quantity and the in leg gains it scaled by the ratio.
+
+Inconsistent ratios stay unresolved. `ingest pair-corporate-actions` links
+such printed leg pairs and records the derived ratio; it is idempotent
+and also runs automatically as the first `ingest reconcile` pass, so a
+re-ingest cannot lose the links. Two equal-and-opposite legs of one
+instrument pair regardless of other funds converting on the same date (a
+multi-fund class conversion prints one pair per fund); otherwise the date
+must hold exactly two unlinked legs of the same type, whose out leg is the
+negative printed quantity and whose derived ratio is recorded. The
+unresolved-instrument scope gate counts
+only rows with no cash effect: broker wire transfers that move cash with no
+security printed are cash events, not unknown security movements.
+
+In the cash activity equation, in-kind movement types (journal, option
+assignment/exercise/expiration, account transfers) whose cash cells printed
+blank are no-cash facts, not missing extractions: their empty em-dash cells
+are the print, so they are excluded from both the component sum and the
+missing-effects count. A row of one of those types that does print an amount
+stays a cash component, and cash-only types (dividends, buys, sells, taxes)
+still report a blank cash figure as incomplete input.
 
 ## Quantity movement rules
 

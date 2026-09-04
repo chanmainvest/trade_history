@@ -67,6 +67,21 @@ NON_CASH_TXN_TYPES = frozenset(
         "merger",
     }
 )
+# Types that move a position in kind: journals, option delivery events, and
+# account transfers. Brokers print their blank cash cells as explicit em
+# dashes, so a row of one of these types with no cash figure anywhere is a
+# printed no-cash movement, not a failed extraction. A row of one of these
+# types that does carry an amount is a cash movement and stays one.
+IN_KIND_BLANK_CASH_TYPES = frozenset(
+    {
+        "journal",
+        "option_assignment",
+        "option_exercise",
+        "option_expiration",
+        "transfer_in",
+        "transfer_out",
+    }
+)
 LEGACY_UNDERIVABLE_POSITION_TYPES = frozenset(
     {"stock_split", "name_change", "spinoff", "merger"}
 )
