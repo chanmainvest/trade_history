@@ -1,0 +1,116 @@
+{
+  "identifier_type": "fund_code",
+  "asset_type": "mutual_fund",
+  "purpose": [
+    "Reviewed fund identities for statement fund names that print no fund code.",
+    "CIBC Investor's Edge / Imperial Service statements print only the fund",
+    "name and class label, so these identities were researched outside the",
+    "statements and recorded here for review. Humans and AI agents both apply",
+    "this file through: ledger ingest resolve-fund-lookup --file data/fund_lookups.json",
+    "Re-run ingest afterwards so the staged resolver picks the identities up."
+  ],
+  "reviewed_by": "hevan",
+  "reviewed_at": "2026-09-04",
+  "research_source": "z.ai web search (CIBC official fund pages, Fund Library FundServ codes, CANNEX fund-symbol table, Globe & Mail fundata, YCharts)",
+  "symbol_scheme_note": [
+    "resolved_symbol values are FundServ (dealer-network) codes as published by",
+    "CIBC on its fund pages; each entry also records the CANNEX/fundata fund",
+    "symbol (CIBxxx) that cross-checks the same fund/class. A FundServ code is",
+    "a broker identifier, not a Yahoo/provider ticker."
+  ],
+  "entries": [
+    {
+      "normalized_name": "CIBC DIVIDEND GROWTH FUND",
+      "currency": "CAD",
+      "institutions": ["CIBC_IS", "CIBC_ID"],
+      "resolved_symbol": "ATL486",
+      "resolved_exchange": null,
+      "resolved_name": "CIBC Dividend Growth Fund - Class A",
+      "cross_check_symbol": "CIB486",
+      "evidence_url": "https://www.fundlibrary.com/MutualFunds/Detail/324?FundName=CIBC%20Dividend%20Growth%20Fund%20Class%20A",
+      "evidence": [
+        "Fund Library detail page: FundServ Code ATL486",
+        "CANNEX fund-symbol table: CIB486 = CIBC Dividend Growth Fund"
+      ],
+      "notes": "Class A units (no class suffix printed on the statement)."
+    },
+    {
+      "normalized_name": "CIBC DIVIDEND GROWTH FUND CLASS F",
+      "currency": "CAD",
+      "institutions": ["CIBC_IS", "CIBC_ID"],
+      "resolved_symbol": "ATL129",
+      "resolved_exchange": null,
+      "resolved_name": "CIBC Dividend Growth Fund - Class F",
+      "cross_check_symbol": "CIB129",
+      "evidence_url": "https://www.cibc.com/en/personal-banking/investments/mutual-funds/growth-funds/dividend-growth-fund.html",
+      "evidence": [
+        "CIBC official fund page, Class F section: Fund Code ATL129",
+        "Fund Library detail page (cibc-dividend-growth-fund-class-f): ATL129",
+        "YCharts M:ATL129.TO; CANNEX: CIB129 = CIBC Dividend Growth Fund F"
+      ],
+      "notes": "Statement prints 'CL F'."
+    },
+    {
+      "normalized_name": "CIBC DIVIDEND INCOME FUND",
+      "currency": "CAD",
+      "institutions": ["CIBC_IS", "CIBC_ID"],
+      "resolved_symbol": "ATL522",
+      "resolved_exchange": null,
+      "resolved_name": "CIBC Dividend Income Fund - Class A",
+      "cross_check_symbol": "CIB522",
+      "evidence_url": "https://www.fundlibrary.com/MutualFunds/Detail/cibc-dividend-income-fund-class-a/4691",
+      "evidence": [
+        "Fund Library detail page: FundServ Code ATL522",
+        "CANNEX fund-symbol table: CIB522 = CIBC Dividend Income Fund"
+      ],
+      "notes": "Class A units (no class suffix printed on the statement)."
+    },
+    {
+      "normalized_name": "CIBC DIVIDEND INCOME FUND CLASS F",
+      "currency": "CAD",
+      "institutions": ["CIBC_IS", "CIBC_ID"],
+      "resolved_symbol": "ATL130",
+      "resolved_exchange": null,
+      "resolved_name": "CIBC Dividend Income Fund - Class F",
+      "cross_check_symbol": "CIB130",
+      "evidence_url": "https://ycharts.com/mutual_funds/M:ATL130.TO",
+      "evidence": [
+        "YCharts M:ATL130.TO = CIBC Dividend Income Fund Class F",
+        "CANNEX fund-symbol table: CIB130 = CIBC Dividend Income Fund F"
+      ],
+      "notes": "Statement prints 'CL F'."
+    },
+    {
+      "normalized_name": "CIBC MONTHLY INCOME FUND",
+      "currency": "CAD",
+      "institutions": ["CIBC_IS", "CIBC_ID"],
+      "resolved_symbol": "ATL8090",
+      "resolved_exchange": null,
+      "resolved_name": "CIBC Monthly Income Fund - Class A",
+      "cross_check_symbol": "CIB512",
+      "evidence_url": "https://www.cibc.com/en/personal-banking/investments/mutual-funds/income-funds/monthly-income-fund.html",
+      "evidence": [
+        "CIBC official fund page, Class A section: Fund Code ATL8090",
+        "Fund Library detail page (CIBC Monthly Income Fund Class A): ATL8090",
+        "CANNEX fund-symbol table: CIB512 = CIBC Monthly Income Fund"
+      ],
+      "notes": "Class A units (no class suffix printed on the statement)."
+    },
+    {
+      "normalized_name": "CIBC MONTHLY INCOME FUND CLASS F",
+      "currency": "CAD",
+      "institutions": ["CIBC_IS", "CIBC_ID"],
+      "resolved_symbol": "ATL239",
+      "resolved_exchange": null,
+      "resolved_name": "CIBC Monthly Income Fund - Class F",
+      "cross_check_symbol": "CIB239",
+      "evidence_url": "https://www.theglobeandmail.com/investing/markets/funds/CIB239.CF/",
+      "evidence": [
+        "Globe & Mail fundata: CIBC Monthly Income Fund Class F = CIB239.CF",
+        "CIBC official fund page, Class F section: Fund Code ATL239",
+        "CANNEX fund-symbol table: CIB239 = CIBC Monthly Income Fund F"
+      ],
+      "notes": "Statement prints 'CL F'."
+    }
+  ]
+}

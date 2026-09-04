@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from ..db import sqlite as sqlite_db
 from ..parsers.name_resolver import strip_leading_verbs
 
+REVIEWED_SYMBOL_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{1,11}$")
+
 CREATE_LOOKUP_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS instrument_identifier_lookups (
     lookup_id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -185,3 +187,110 @@ def lookup_status_summary(conn: sqlite3.Connection) -> dict[str, int]:
         " ORDER BY status"
     ).fetchall()
     return {str(row["status"]): int(row["count"]) for row in rows}
+
+
+def apply_reviewed_lookups(conn: sqlite3.Connection, entries: list[dict]) -> dict:
+    """Record reviewed fund identities from a JSON-derived entry list.
+
+    This is the manual review path shared by humans and agents: every symbol
+    comes from the reviewed record's own evidence (never inferred here), and
+    each entry is validated before it may resolve anything. The same
+    normalized_name is applied to every listed institution (and to the
+    institution-generic row when ``institutions`` is empty), so platform
+    variants of one fund resolve to the same identity.
+
+    Raises ``ValueError`` on a malformed entry without writing any of it:
+    a reviewed record that cannot be trusted must not half-apply.
+    """
+    ensure_lookup_table(conn)
+    prepared: list[tuple[str, str, str, dict]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("each lookup entry must be an object")
+        raw_name = entry.get("normalized_name")
+        normalized = normalize_fund_name(raw_name) if raw_name else None
+        if not normalized:
+            raise ValueError(f"entry has no normalizable fund name: {raw_name!r}")
+        symbol = str(entry.get("resolved_symbol") or "").strip().upper()
+        if not REVIEWED_SYMBOL_RE.fullmatch(symbol) or "_" in symbol:
+            raise ValueError(
+                f"{normalized}: resolved_symbol must be a short uppercase code "
+                f"without underscores, got {entry.get('resolved_symbol')!r}"
+            )
+        institutions = entry.get("institutions") or [""]
+        if not isinstance(institutions, list) or not all(
+            isinstance(code, str) for code in institutions
+        ):
+            raise ValueError(f"{normalized}: institutions must be a list of codes")
+        for institution_code in institutions:
+            prepared.append((normalized, institution_code, symbol, entry))
+
+    stats = {
+        "entries": len(entries),
+        "rows_updated": 0,
+        "rows_inserted": 0,
+    }
+    for normalized, institution_code, symbol, entry in prepared:
+        resolved_name = entry.get("resolved_name") or normalized
+        currency = entry.get("currency") or "CAD"
+        existing = conn.execute(
+            """
+            SELECT lookup_id FROM instrument_identifier_lookups
+             WHERE identifier_type = 'fund_code'
+               AND asset_type = 'mutual_fund'
+               AND institution_code = ?
+               AND normalized_name = ?
+               AND currency = ?
+            """,
+            (institution_code, normalized, currency),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                """
+                INSERT INTO instrument_identifier_lookups (
+                    identifier_type, asset_type, institution_code,
+                    normalized_name, display_name, currency, status,
+                    resolved_symbol, resolved_exchange, resolved_name,
+                    evidence_url, notes
+                )
+                VALUES ('fund_code', 'mutual_fund', ?, ?, ?, ?, 'resolved',
+                        ?, ?, ?, ?, ?)
+                """,
+                (
+                    institution_code,
+                    normalized,
+                    resolved_name,
+                    currency,
+                    symbol,
+                    entry.get("resolved_exchange"),
+                    resolved_name,
+                    entry.get("evidence_url"),
+                    entry.get("notes"),
+                ),
+            )
+            stats["rows_inserted"] += 1
+        else:
+            conn.execute(
+                """
+                UPDATE instrument_identifier_lookups
+                   SET status = 'resolved',
+                       resolved_symbol = ?,
+                       resolved_exchange = ?,
+                       resolved_name = ?,
+                       evidence_url = COALESCE(?, evidence_url),
+                       notes = COALESCE(?, notes),
+                       last_seen_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                 WHERE lookup_id = ?
+                """,
+                (
+                    symbol,
+                    entry.get("resolved_exchange"),
+                    resolved_name,
+                    entry.get("evidence_url"),
+                    entry.get("notes"),
+                    existing["lookup_id"],
+                ),
+            )
+            stats["rows_updated"] += 1
+    stats["status_counts"] = lookup_status_summary(conn)
+    return stats

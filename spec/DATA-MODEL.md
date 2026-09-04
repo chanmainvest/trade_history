@@ -146,7 +146,9 @@ or named/fingerprinted algorithms, not quantities that support arithmetic.
 effects used by new consumers; `net_amount` remains a compatibility field.
 When a generic split, name change, spinoff, or merger has no explicit safe
 position effect, `position_delta` remains null rather than being fabricated as
-zero.
+zero; the rollforward can still resolve such legs when they are linked as
+counterparts of a printed corporate-action pair in `instrument_journal_pairs`
+(see [RECONCILIATION.md](RECONCILIATION.md)).
 Resolution method/confidence, optional `resolution_source` (`auto` or
 `manual`), and an optional resolution-evidence link are also available. Phase 3
 writes these through its conservative staged resolver:
@@ -180,6 +182,11 @@ Both must have the same asset type/native currency and different symbols.
 `complete`, `partial`, `absent`, or `unknown` completeness. Position snapshots
 are unique within `(snapshot_set_id, instrument_id)` and cash balances within a
 cash snapshot set. `can_clear_omitted` is true only for a complete set.
+`position_snapshots.security_description` carries the printed share-class /
+security-type text that RBC wraps under a holding row (e.g. `COM NEW`,
+`SUB VOTING CL B`, `AMERICAN DEPOSITARY SHARES ON EACH REPRESENTING TWO ORD
+SHS`). It is source-descriptive metadata only — instrument identity stays in
+`instruments` and is never joined on this text.
 Every `partial` or `unknown` parser scope has at least one blocking
 `snapshot_scope_issues` row with a stable issue code and optional links to its
 evidence/quarantine row. A complete scope cannot have a blocking issue.

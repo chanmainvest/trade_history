@@ -30,6 +30,7 @@ ledger audit extraction [--statements-dir PATH] [--output PATH]
 ledger ingest run [--institution FOLDER] [--limit N] [--force]
 ledger ingest enrich-layout [--source-file-id ID]
 ledger ingest resolve-instruments [--verify-yahoo]
+ledger ingest resolve-fund-lookup --file PATH
 ledger ingest infer-initials
 ledger ingest repair-symbols
 ledger ingest reconcile
@@ -71,6 +72,14 @@ unique strong match with non-empty price history, and persist the result for a
 subsequent deterministic re-ingest. It never sends account numbers, statement
 text, quantities, or amounts. `ledger market refresh` rechecks stored provider
 symbols and marks them verified/failed.
+
+`ingest resolve-fund-lookup` applies the reviewed fund identities in a JSON
+file (the shipped record is `data/fund_lookups.json`) to
+`instrument_identifier_lookups`. Statements that print no fund code stay
+pending until a human or agent researches the identity from issuer-published
+fund codes and records it there with evidence; the command validates every
+symbol shape and writes nothing when an entry is malformed. Re-run ingest
+afterwards so the staged resolver picks the identities up.
 
 The extraction audit is read-only with respect to SQLite. It accepts either
 source PDFs or stored `.txt` dumps, overwrites a deterministic JSONL report

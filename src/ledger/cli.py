@@ -539,6 +539,48 @@ def ingest_resolve_instruments(verify_yahoo: bool, use_llm: bool | None) -> None
         )
 
 
+@ingest.command("resolve-fund-lookup")
+@click.option(
+    "--file",
+    "file_path",
+    type=click.Path(exists=True, dir_okay=False),
+    required=True,
+    help="JSON file with reviewed fund identities (see data/fund_lookups.json).",
+)
+def ingest_resolve_fund_lookup(file_path: str) -> None:
+    """Apply reviewed fund identities from a JSON file to the lookup table.
+
+    The shared manual-review path for humans and agents: the JSON carries one
+    entry per printed fund name/class (normalized_name, currency,
+    institutions, resolved_symbol, resolved_name, evidence_url, notes), and
+    every symbol comes from that reviewed record's own evidence. Statements
+    never print CIBC fund codes, so a resolution is always an external,
+    human-approved fact recorded here. Re-run ingest afterwards so the
+    staged resolver picks the identities up.
+    """
+    import json
+
+    from .db import sqlite as sqlite_db
+    from .ingest.fund_lookup import apply_reviewed_lookups
+
+    with open(file_path, encoding="utf-8") as handle:
+        payload = json.load(handle)
+    entries = payload.get("entries") if isinstance(payload, dict) else payload
+    if not isinstance(entries, list):
+        raise click.ClickException("JSON must be an object with an 'entries' list")
+    try:
+        with sqlite_db.session() as conn:
+            out = apply_reviewed_lookups(conn, entries)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(
+        f"Applied {out['entries']} reviewed fund entries "
+        f"({out['rows_updated']} rows updated, {out['rows_inserted']} inserted). "
+        "Lookup status: "
+        + ", ".join(f"{key}={value}" for key, value in sorted(out["status_counts"].items()))
+    )
+
+
 @ingest.command("reconcile")
 def ingest_reconcile() -> None:
     """Rebuild transfer links, movement attribution, and reconciliation results."""
@@ -549,6 +591,7 @@ def ingest_reconcile() -> None:
     transfers = out["transfers"]
     positions = out["positions"]
     results = out["results"]
+    pairs = out["pairs"]
     result_sections = (
         results["positions"],
         results["cash"],
@@ -560,6 +603,11 @@ def ingest_reconcile() -> None:
     )
     incomplete = sum(
         section.get("incomplete_input", 0) for section in result_sections
+    )
+    click.echo(
+        f"Linked {pairs['pairs']} corporate-action leg pairs "
+        f"({pairs['legs_linked']} legs); skipped {pairs['ambiguous_dates']} legs on "
+        f"ambiguous dates, {pairs['unpaired_legs']} unpaired."
     )
     click.echo(
         f"Resolved {instrument_names['resolved']} name-only buy/sell transactions "
@@ -578,6 +626,82 @@ def ingest_reconcile() -> None:
         f"Rebuilt {result_count} reconciliation results "
         f"({unresolved} unexplained residuals, {incomplete} incomplete inputs)."
     )
+
+
+@ingest.command("pair-corporate-actions")
+def ingest_pair_corporate_actions() -> None:
+    """Link printed corporate-action leg pairs and record exchange ratios.
+
+    Runs automatically inside ``ingest reconcile``; this command re-runs the
+    pass on its own after targeted repairs. Both legs must print quantities
+    on the same date; the ratio derived from them lands in
+    ``instrument_journal_pairs`` and the rollforward resolves both legs.
+    Idempotent — already-linked legs are skipped.
+    """
+    from .db import sqlite as sqlite_db
+    from .ingest.reconcile import pair_corporate_action_legs
+
+    with sqlite_db.session() as conn:
+        out = pair_corporate_action_legs(conn)
+    click.echo(
+        f"Linked {out['pairs']} corporate-action leg pairs "
+        f"({out['legs_linked']} legs); skipped {out['ambiguous_dates']} legs on "
+        f"ambiguous dates and {out['unpaired_legs']} unpaired legs."
+    )
+
+
+@ingest.command("audit-splits")
+def ingest_audit_splits() -> None:
+    """Report quantity jumps between complete checkpoints that txns don't explain.
+
+    Read-only. Each row shows the holding, the unexplained jump, the implied
+    ratio, and — when the market-data pipeline knows a split ratio near the
+    checkpoint — that candidate ratio for human review.
+    """
+    from .db import sqlite as sqlite_db
+    from .db.duckdb_store import connect as duckdb_connect
+    from .ingest.reconcile import audit_split_discontinuities
+
+    with sqlite_db.session() as conn:
+        rows = audit_split_discontinuities(conn)
+    splits_by_symbol: dict[str, list[tuple[str, float]]] = {}
+    if rows:
+        try:
+            con = duckdb_connect()
+            try:
+                for symbol, split_date, ratio in con.execute(
+                    "SELECT symbol, split_date, ratio FROM splits ORDER BY split_date"
+                ).fetchall():
+                    splits_by_symbol.setdefault(str(symbol).upper(), []).append(
+                        (str(split_date), float(ratio))
+                    )
+            finally:
+                con.close()
+        except Exception as exc:  # market DB is optional context for the report
+            click.echo(f"(market splits unavailable: {exc})")
+    if not rows:
+        click.echo("No unexplained checkpoint quantity jumps.")
+        return
+    for row in rows:
+        symbol = row["instrument_key"].split("|")[-2] if "|" in row["instrument_key"] else row["instrument_key"]
+        implied = row["implied_ratio"]
+        candidates = ""
+        known = splits_by_symbol.get(symbol.upper(), [])
+        if implied and known:
+            near = [
+                (date, ratio)
+                for date, ratio in known
+                if abs(ratio - abs(implied)) <= 0.01 * abs(ratio)
+            ]
+            if near:
+                candidates = f" candidate split {near[0][0]} 1:{near[0][1]:g}"
+        implied_text = f"{implied:g}" if implied else "n/a (new holding)"
+        click.echo(
+            f"acct {row['account_id']} {row['currency']} {row['instrument_key']}: "
+            f"{row['prior_date']} {row['prior_qty']:g} -> {row['current_date']} "
+            f"{row['current_qty']:g} (explained {row['explained_delta']:g}, "
+            f"implied ratio {implied_text}){candidates}"
+        )
 
 
 # -------------------------------------------------------------------------- mcp
