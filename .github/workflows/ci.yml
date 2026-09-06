@@ -18,6 +18,8 @@ jobs:
           python-version: '3.12'
       - name: Install Python dependencies
         run: uv sync --all-extras --dev
+      - name: Prepare test directories
+        run: mkdir -p temp
       - name: Run pytest
         run: uv run pytest -q
       - name: Run ruff
