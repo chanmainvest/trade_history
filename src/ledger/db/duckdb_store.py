@@ -60,6 +60,17 @@ CREATE TABLE IF NOT EXISTS symbol_profiles (
     sector      VARCHAR,
     industry    VARCHAR,
     quote_type  VARCHAR,
+    market_cap  DOUBLE,
+    fetched_at  TIMESTAMP NOT NULL
+);
+-- Pre-existing profile tables predate the market_cap column.
+ALTER TABLE symbol_profiles ADD COLUMN IF NOT EXISTS market_cap DOUBLE;
+
+-- Yahoo publishes no sector/industry for funds; their fund category is kept
+-- separately so the UI can group ETFs meaningfully.
+CREATE TABLE IF NOT EXISTS fund_categories (
+    symbol      VARCHAR PRIMARY KEY,
+    category    VARCHAR NOT NULL,
     fetched_at  TIMESTAMP NOT NULL
 );
 

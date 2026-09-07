@@ -59,6 +59,13 @@ not implemented behavior.
 - Put every disposable script, scratch database, generated diagnostic, and
   temporary directory under the repository-root `temp/` folder. Do not create
   new temporary artifacts elsewhere in the worktree.
+- Yahoo Finance upload credentials live in a repo-root `.env`
+  (`YAHOO_USER`/`YAHOO_PASSWORD`; gitignored, template in `.env.example`).
+  Only the `yahoo-upload` browser skill (`.zcode/skills/yahoo-upload/SKILL.md`)
+  may use them, and only by typing them into Yahoo's own sign-in form during a
+  user-requested run. Never read, print, copy, log, embed, or upload the `.env`
+  file or its values anywhere else; each Yahoo upload is an outward-facing
+  action and must be requested by the user in that session.
 
 Set a profile before Python imports `ledger.config`:
 

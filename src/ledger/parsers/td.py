@@ -38,10 +38,11 @@ from .layout import (
     declare_snapshot_scopes,
     quarantine_unsupported_rows,
 )
-from .name_resolver import resolve_ticker, synthetic_symbol
+from .name_resolver import PRINTED_FUND_CODE_RE, resolve_ticker, synthetic_symbol
 from .registry import register
 from .types import (
     ParsedAccount,
+    ParsedAnnualPerformance,
     ParsedCashBalance,
     ParsedInstrument,
     ParsedPosition,
@@ -83,13 +84,20 @@ RE_LEGACY_BEGIN_BAL = re.compile(rf"Cash-opening balance\s+{_SIGNED_MONEY_TOKEN}
 RE_LEGACY_END_BAL = re.compile(rf"Cash-closing balance\s+{_SIGNED_MONEY_TOKEN}")
 
 # Option token in activity (single line). Captures: cp, mult sign, root,
-# yy, [dd]mm, strike. Examples: "PUT -100 SLV'26 FB@100", "CALL-100 SLV'26 13FB@115"
+# yy, [dd]mm, strike. Examples: "PUT -100 SLV'26 FB@100", "CALL-100 SLV'26 13FB@115".
+# OCC adjusted roots may lead with a digit ("5SOXS") and carry the "+$"
+# adjustment marker ("98TRI+$"); the marker stays part of the root so the
+# activity instrument matches the holdings-table instrument.
 RE_OPT_TOKEN = re.compile(
-    r"(CALL|PUT)\s*[- ]\s*(?:-)?100\s*([A-Z][A-Z0-9.]{0,5})(?:\+\$)?'(\d{2})(?:-US)?\s*"
+    r"(CALL|PUT)\s*[- ]\s*(?:-)?100\s*([A-Z0-9][A-Z0-9.]{0,5}(?:\+\$)?)'(\d{2})(?:-US)?\s*"
     r"(\d{0,2})([A-Z]{2})@(\d+(?:\.\d+)?)"
 )
 # Expiry-only token used for stitching position rows: "[dd]mm@strike"
 RE_OPT_TAIL = re.compile(r"^(\d{0,2})([A-Z]{2})@(\d+(?:\.\d+)?)$")
+
+# Income rows whose description is an interest-period memo ("Interest
+# INTEREST TO JUL 16 -87.81"): cash events that never name a security.
+RE_INTEREST_MEMO = re.compile(r"^INTEREST\s+TO\s+[A-Z]{3}\.?\s+\d{1,2}", re.IGNORECASE)
 
 # A bare equity holding row: "BANK OF MONTREAL 1,600 SEG 174.230 45,606.97 278,768.00 233,161.03 16.87%"
 # Symbol may appear on this line (in parens) or on the *next* line.
@@ -104,6 +112,19 @@ RE_LEGACY_HOLDING_LINE = re.compile(
     r"(N/D|-?[\d,]+(?:\.\d+)?)\s+"
     r"(N/D|-?[\d,]+(?:\.\d+)?)\s+"
     r"(-?[\d,]+(?:\.\d+)?)$"
+)
+# 2017-2018 WebBroker holdings print the name first, then quantity, the SEG
+# marker, and a five-cell tail with an extra unrealized-gain column
+# ("CDN IMPERIAL BK 1,200 SEG 105.390 61,469.99 126,468.00 64,998.01
+# 15.68%"). Unpriced (defunct) securities print N/D in the price and market
+# cells ("NORTEL NETWORKS 2,019 SEG N/D 21,570.00 N/D -21,570.00 0.00%").
+RE_NAME_FIRST_HOLDING = re.compile(
+    r"^(.+?)\s+(-?[\d,]+(?:\.\d+)?-?)\s+SEG\s+"
+    r"(N/D|-?[\d,]+(?:\.\d+)?)\s+"
+    r"(N/D|-?[\d,]+(?:\.\d+)?)\s+"
+    r"(N/D|-?[\d,]+(?:\.\d+)?)\s+"
+    r"(N/D|-?[\d,]+(?:\.\d+)?)\s+"
+    r"(N/D|-?[\d,]+(?:\.\d+)?)\s*%$"
 )
 RE_TRAIL_SYM = re.compile(r"\(([A-Z][A-Z0-9.\-]{0,8})\s*\)")
 
@@ -120,7 +141,9 @@ RE_TD_REFERENCE = re.compile(r"\b[A-Z]{2}-\d{6}\b")
 
 # Activity date prefix:  "Oct 31", "Sep 30"
 RE_ACT_DATE = re.compile(
-    r"^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s+(.*)$"
+    # The 2016-era layout squashes the date ("Dec31 Dividend"); the current
+    # one prints a space ("Jan 05 ...").
+    r"^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s?(\d{1,2})\s+(.*)$"
 )
 
 ACT_VERBS = {
@@ -168,6 +191,19 @@ ACT_VERBS = {
     "Stock split": "stock_split",
     "Reverse Split": "stock_split",
     "Stock dividend": "dividend",
+    # Fractional-residue settlement notes print a 0.00 cash amount and an
+    # internal vehicle name ("Security Position RBC QUBE CDN 0.001 0.00");
+    # they move no listed security and no cash.
+    "Security Position": "adjustment",
+    # In-kind exchanges between broker-pooled fund series ("Stock Exchange
+    # RBC QUBE CDN 2,660.453 0.00"): signed unit deltas with no cash.
+    "Stock Exchange": "journal",
+    # Fund-series exchanges with a transferred value and running balance
+    # ("Exchange TD CDN EQ-D /NL'FRAC 2,379.892 -22,516.16 21,288.30").
+    "Exchange": "journal",
+    # Removal of a worthless security ("Defunct Security BATTERY
+    # TECHNOLOGIES -1,000 0.00 1,016.12").
+    "Defunct Security": "journal",
 }
 
 # TD's activity layouts often print debit/credit columns without a sign.  Use
@@ -263,7 +299,10 @@ def _reported_value(
     match = pattern.search(text)
     if not match:
         return None, None
-    values = re.findall(r"\$?\(?-?[\d,]+(?:\.\d+)?\)?-?", match.group(0))
+    # TD prints negative summary values with the minus before the dollar
+    # sign ("-$24,175.14"); the leading "-" must join the token or the sign
+    # is silently dropped.
+    values = re.findall(r"-?\$?\(?-?[\d,]+(?:\.\d+)?\)?-?", match.group(0))
     if value_index >= len(values):
         return None, match.group(0).strip()
     return parse_money(values[value_index]), match.group(0).strip()
@@ -293,6 +332,115 @@ def _capture_reported_totals(text: str, state: _ScopeState) -> None:
 def _is_summary(relpath: str) -> bool:
     rl = relpath.lower()
     return rl.endswith("_summary.pdf") or "_summary." in rl or "mid_year_summary" in rl
+
+
+# -------------------------------------------------- Annual performance report
+# December monthly statements and the *_summary.pdf files attach "Your
+# performance report" and "Your fees and charges report" pages for the
+# calendar year. The report is its own category with its own reconciliation:
+# its pages are extracted as a separate annual statement (or attached to the
+# summary-sourced one) and its printed lines and numbers are stored on that
+# record rather than mixed into monthly transactions or holdings.
+_TD_ANNUAL_PAGE_MARKERS = ("Your performance report", "Your fees and charges report")
+
+
+def _is_td_annual_report_page(text: str) -> bool:
+    return any(marker in text for marker in _TD_ANNUAL_PAGE_MARKERS)
+
+
+def _parse_td_performance_pages(pages: dict[int, str]) -> ParsedStatement | None:
+    """Build the annual statement from the performance-report pages.
+
+    One page prints per account currency (Canadian/U.S. dollars); each
+    carries the performance table with a report-year column and a
+    since-inception column, plus the personal rates of return.
+    """
+    perf_pages = {
+        number: text for number, text in sorted(pages.items())
+        if "Your performance report" in text
+    }
+    if not perf_pages:
+        return None
+    first = next(iter(perf_pages.values()))
+    pm = RE_PERIOD_FULL.search(first)
+    am = RE_ACCT_NUM.search(first)
+    if pm is None or am is None:
+        return None
+    period_start = (
+        f"{int(pm.group(3)):04d}-{_MON_FULL[pm.group(1)]:02d}-{int(pm.group(2)):02d}"
+    )
+    period_end = (
+        f"{int(pm.group(6)):04d}-{_MON_FULL[pm.group(4)]:02d}-{int(pm.group(5)):02d}"
+    )
+    acct = am.group(1)
+
+    performance: list[ParsedAnnualPerformance] = []
+    seen_currencies: set[str] = set()
+    for page_text in perf_pages.values():
+        cm = re.search(r"Account currency:\s*([A-Za-z .-]+)", page_text)
+        if cm is None:
+            continue
+        currency = (
+            "CAD" if "Canadian" in cm.group(1)
+            else "USD" if "U.S" in cm.group(1) or "US" in cm.group(1)
+            else None
+        )
+        if currency is None or currency in seen_currencies:
+            continue
+        seen_currencies.add(currency)
+
+        def printed_value(label: str, page_text: str = page_text) -> float | None:
+            for line in page_text.splitlines():
+                if line.strip().startswith(label):
+                    tokens = re.findall(r"-?\$?[\d,]+\.\d{2}", line)
+                    values = [parse_money(token) for token in tokens]
+                    values = [value for value in values if value is not None]
+                    return values[0] if values else None
+            return None
+
+        since_m = re.search(r"Since\s+([A-Z][a-z]{2})\s+(\d{1,2}),\s*(\d{4})", page_text)
+        since_date = None
+        since_mon = _MON.get(since_m.group(1)[:3].upper()) if since_m else None
+        if since_m and since_mon:
+            since_date = (
+                f"{int(since_m.group(3)):04d}-{since_mon:02d}"
+                f"-{int(since_m.group(2)):02d}"
+            )
+        rates = re.search(r"\(%\)\s*\n\s*(\d{1,3}\.\d{2})\s+(\d{1,3}\.\d{2})", page_text)
+        performance.append(ParsedAnnualPerformance(
+            currency=currency,
+            period_start=period_start,
+            period_end=period_end,
+            since_date=since_date,
+            beginning_market_value=printed_value(
+                "Performance reporting beginning balance"),
+            deposits_transfers_in=printed_value("Deposits including transfers in"),
+            withdrawals_transfers_out=printed_value(
+                "Withdrawals including transfers out"),
+            net_investment_return=printed_value("Change in value of your account"),
+            ending_market_value=printed_value(
+                "Performance reporting ending balance"),
+            money_weighted_1y=float(rates.group(1)) if rates else None,
+            money_weighted_3y=None,
+            money_weighted_5y=None,
+            money_weighted_10y=None,
+            money_weighted_since=float(rates.group(2)) if rates else None,
+        ))
+    if not performance:
+        return None
+    annual_pages = tuple(sorted(
+        number for number, text in pages.items()
+        if any(marker in text for marker in _TD_ANNUAL_PAGE_MARKERS)
+    ))
+    return ParsedStatement(
+        account=ParsedAccount(account_number=acct, account_type="Direct Trading",
+                              base_currency="CAD"),
+        period_start=period_start,
+        period_end=period_end,
+        statement_type="annual",
+        page_numbers=annual_pages,
+        annual_performance=performance,
+    )
 
 
 def _parse_period(text: str) -> tuple[str, str] | None:
@@ -541,14 +689,65 @@ def _apply_reinvestment_plan_continuation(cur: ParsedTxn, line: str) -> None:
     """
     if cur.txn_type != "dividend" or cur.net_amount not in (None, 0.0):
         return
-    if not re.search(r"Reinvestment\s+Plan\s+VALUE\s*=\s*\$?[\d,]+(?:\.\d+)?", line, re.IGNORECASE):
+    has_value_note = re.search(
+        r"Reinvestment\s+Plan\s+VALUE\s*=\s*\$?[\d,]+(?:\.\d+)?", line, re.IGNORECASE
+    )
+    # The 2016-era layout splits the row: the dividend row prints no
+    # numbers and the units lead the "Reinvestment Plan" continuation
+    # ("Reinvestment Plan 0.553 TDCDNMNY MKT-I /NL'FRAC 0.00 60,111.90"),
+    # with the reinvested value on its own "VALUE=" line.
+    units = re.match(
+        r"Reinvestment\s+Plan\s+([\d,]+(?:\.\d+)?)\s+(?!VALUE)",
+        line,
+        re.IGNORECASE,
+    )
+    if not has_value_note and units is None:
         return
     numbers = re.findall(r"-?[\d,]+(?:\.\d+)?", (cur.raw_line or "").splitlines()[0])
     quantity = parse_money(numbers[-3]) if len(numbers) >= 3 else None
     if quantity is None:
-        return
+        if units is None:
+            return
+        quantity = parse_money(units.group(1))
+        if quantity is None:
+            return
+        if cur.instrument is None:
+            name_part = re.split(
+                r"[\d,]+(?:\.\d+)?", line[units.end():].strip(), maxsplit=1,
+            )[0].strip()
+            instrument = _instrument_from_description(name_part, cur.currency)
+            if instrument is not None:
+                cur.instrument = instrument
     cur.txn_type = "reinvest_dividend"
     cur.quantity = quantity
+
+
+def _apply_web_banking_continuation(cur: ParsedTxn, line: str) -> None:
+    """Promote the cash amount printed on a Web Banking continuation line.
+
+    The 2016-era layout splits the row across lines: "Jan 05 Web Banking"
+    carries no numbers, and the direction verb, transfer reference, amount,
+    and running balance print on the next line ("Deposit RX534TSFFR3301767
+    10,000.00 70,111.90"). The continuation's leading verb also fixes the
+    direction the bare "Web Banking" row could not.
+    """
+    if cur.txn_type != "transfer_in" or cur.net_amount is not None:
+        return
+    direction = re.match(r"(Deposit|Withdrawal)\b", line, re.IGNORECASE)
+    if direction is None:
+        return
+    nums = re.findall(r"-?[\d,]+(?:\.\d+)?", line)
+    if len(nums) < 2:
+        return
+    amount = parse_money(nums[-2])
+    if amount is None:
+        return
+    cur.net_amount = -abs(amount) if direction.group(1).lower() == "withdrawal" \
+        else abs(amount)
+    cur.txn_type = (
+        "transfer_out" if direction.group(1).lower() == "withdrawal"
+        else "transfer_in"
+    )
 
 
 def _instrument_from_description(desc: str, currency: str) -> ParsedInstrument | None:
@@ -564,9 +763,20 @@ def _instrument_from_description(desc: str, currency: str) -> ParsedInstrument |
     known = resolve_ticker(identity, currency)
     if known is not None:
         symbol, asset_type = known
+        # A curated name entry resolving to a strict broker fund code carries
+        # that code's printed identity (holdings rows print name and code
+        # together), so the staged resolver retains it.
+        method = (
+            "printed_fund_code"
+            if asset_type == "mutual_fund"
+            and PRINTED_FUND_CODE_RE.fullmatch(symbol)
+            else None
+        )
         return ParsedInstrument(
             asset_type=asset_type, symbol=symbol,
             currency=currency, name=identity[:120],
+            resolution_method=method,
+            resolution_confidence=1.0 if method else None,
         )
     asset_type = (
         "mutual_fund"
@@ -660,6 +870,18 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
         if sl.startswith("definitions") or sl.startswith("an explanation"):
             break
 
+        # Holdings-page furniture: numbered footnotes ("4U=US dollars",
+        # "4Book costs are converted to Canadian dollars ..."), the
+        # squashed portfolio total ("Totalportfolio 341,788.09 ..."), and
+        # the account header repeated on every page
+        # ("Direct Trading - CDN - 77FF49").
+        if re.match(r"4(?:U=|Book (?:costs|values) |The US dollar)", s):
+            continue
+        if sl.startswith("totalportfolio") or sl.startswith("total portfolio"):
+            continue
+        if sl.startswith("direct trading - "):
+            continue
+
         legacy_holding = RE_LEGACY_HOLDING_LINE.match(s)
         if legacy_holding:
             qty_s, name, symbol, price_s, book_s, mv_s, _pct_s = legacy_holding.groups()
@@ -679,9 +901,18 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
                 ))
                 continue
             atype = section if section in {"equity", "etf", "mutual_fund", "bond"} else "equity"
+            # A printed FundServ code (TDB###/RBF###) identifies a mutual
+            # fund regardless of the section header it sat under — the
+            # 2016-era layout's headers don't always match the state
+            # machine, and an equity-typed fund code resolves to nothing.
+            if PRINTED_FUND_CODE_RE.fullmatch(symbol):
+                atype = "mutual_fund"
+            fund_code = atype == "mutual_fund"
             instr = ParsedInstrument(
                 asset_type=atype, symbol=symbol, currency=currency,
                 name=name.strip()[:120],
+                resolution_method="printed_fund_code" if fund_code else None,
+                resolution_confidence=1.0 if fund_code else None,
             )
             stmt.positions.append(ParsedPosition(
                 instrument=instr, quantity=quantity,
@@ -689,6 +920,75 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
                 market_price=parse_money(price_s), market_value=parse_money(mv_s),
                 unrealized_pnl=None, currency=currency, raw_line=ln,
             ))
+            continue
+
+        # Rows RE_HOLDING_LINE rejects are the N/D-cell variants of the same
+        # name-first layout; anything it accepts keeps the existing path.
+        name_first = not RE_HOLDING_LINE.match(s) and RE_NAME_FIRST_HOLDING.match(s)
+        if name_first:
+            (name_part, qty_s, price_s, book_s, mv_s, _gain_s,
+             _pct_s) = name_first.groups()
+            quantity = parse_money(qty_s)
+            if quantity is None:
+                holdings_complete = False
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="holding has no valid quantity",
+                ))
+                continue
+            # The ticker prints on a wrapped continuation line under the row
+            # ("COMMERCE (CM )"); pure name wraps ("TECHNOLOGIES INC",
+            # "CORP") merge into the security name.
+            j = i
+            extra = ""
+            symbol = None
+            consumed = i
+            while j < len(lines) and j < i + 4:
+                nxt = lines[j].strip()
+                if not nxt:
+                    j += 1
+                    continue
+                if RE_HOLDING_LINE.match(nxt) or RE_NAME_FIRST_HOLDING.match(nxt) \
+                        or RE_LEGACY_HOLDING_LINE.match(nxt):
+                    break
+                sm2 = RE_TRAIL_SYM.search(nxt)
+                if sm2:
+                    symbol = sm2.group(1)
+                    extra = (extra + " " + nxt[:sm2.start()]).strip()
+                    consumed = j + 1
+                    break
+                extra = (extra + " " + nxt).strip()
+                j += 1
+            if not symbol:
+                holdings_complete = False
+                stmt.quarantine.append(ParsedQuarantine(
+                    raw_line=ln,
+                    reason="holding without printed symbol",
+                ))
+                continue
+            name = (name_part + " " + extra).strip()
+            atype = section if section in {"equity", "etf", "mutual_fund", "bond"} else "equity"
+            fund_code = PRINTED_FUND_CODE_RE.fullmatch(symbol)
+            if fund_code:
+                atype = "mutual_fund"
+            instr = ParsedInstrument(
+                asset_type=atype, symbol=symbol, currency=currency,
+                name=name[:120],
+                resolution_method="printed_fund_code" if fund_code else None,
+                resolution_confidence=1.0 if fund_code else None,
+            )
+            # N/D price and market cells are printed no-value markers for
+            # defunct securities: the row is fully captured with the cells
+            # it printed, so the position persists and the scope stays
+            # complete.
+            stmt.positions.append(ParsedPosition(
+                instrument=instr, quantity=quantity,
+                avg_cost=None, book_value=parse_money(book_s),
+                market_price=parse_money(price_s), market_value=parse_money(mv_s),
+                unrealized_pnl=None, currency=currency,
+                raw_line="\n".join([ln, *lines[i:consumed]]),
+            ))
+            i = consumed
             continue
 
         opt_head = re.match(
@@ -874,19 +1174,12 @@ def _parse_holdings(body: str, currency: str, stmt: ParsedStatement) -> bool:
             ))
             continue
         atype = section if section in {"equity", "etf", "mutual_fund", "bond"} else "equity"
+        fund_code = atype == "mutual_fund" and PRINTED_FUND_CODE_RE.fullmatch(symbol)
         instr = ParsedInstrument(
             asset_type=atype, symbol=symbol, currency=currency,
             name=name[:120],
-            resolution_method=(
-                "printed_fund_code"
-                if atype == "mutual_fund" and re.fullmatch(r"TDB\d{4}[A-Z]?", symbol)
-                else None
-            ),
-            resolution_confidence=(
-                1.0
-                if atype == "mutual_fund" and re.fullmatch(r"TDB\d{4}[A-Z]?", symbol)
-                else None
-            ),
+            resolution_method="printed_fund_code" if fund_code else None,
+            resolution_confidence=1.0 if fund_code else None,
         )
         stmt.positions.append(ParsedPosition(
             instrument=instr, quantity=quantity,
@@ -978,6 +1271,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
             if cur is not None:
                 cur.description = (cur.description or "") + " | " + s
                 _apply_reinvestment_plan_continuation(cur, s)
+                _apply_web_banking_continuation(cur, s)
             elif re.search(r"\d", s):
                 stmt.quarantine.append(ParsedQuarantine(
                     raw_line=ln,
@@ -1161,6 +1455,23 @@ def _parse_activity(body: str, currency: str, year_end: int,
                 )
                 if instrument is None:
                     qty = None
+            elif (
+                numeric_tail is not None
+                and numeric_tail.group(4) is None
+                and numeric_tail.group(3) is not None
+                and transfer_amount is not None
+            ):
+                # Fund-series exchange legs print quantity, the transferred
+                # value, and the running balance. Both the movement and the
+                # printed value are real row data; the balance column is a
+                # running total, not the row's cash.
+                qty = parse_money(numeric_tail.group(1))
+                amount = transfer_amount
+                printed_signed = numeric_tail.group(2).lstrip().startswith("-")
+                instrument = _instrument_from_description(
+                    desc[:numeric_tail.start()].strip(),
+                    currency,
+                )
             if instrument is None and nums:
                 amount = parse_money(nums[-2]) if len(nums) >= 2 else parse_money(nums[-1])
                 printed_signed = (nums[-2] if len(nums) >= 2 else nums[-1]).startswith("-")
@@ -1173,7 +1484,37 @@ def _parse_activity(body: str, currency: str, year_end: int,
             else:
                 amount = parse_money(nums[-1])
                 printed_signed = nums[-1].startswith("-")
-            instrument = _instrument_from_description(desc, currency)
+            if RE_INTEREST_MEMO.match(desc):
+                # "INTEREST TO JUL 16" is a cash memo, not a security event:
+                # the row never claims an instrument, so it is stored
+                # deliberately without one (no unresolved-identity marker).
+                instrument = None
+            else:
+                instrument = _instrument_from_description(desc, currency)
+        elif txn_type == "stock_split":
+            numeric_tail = RE_ACTIVITY_NUMERIC_TAIL.search(desc)
+            if numeric_tail is None or numeric_tail.group(4) is not None:
+                # Unrecognized split shape: keep the generic amount-only
+                # treatment (second-to-last number, last is the balance).
+                if nums:
+                    amount = parse_money(nums[-2]) if len(nums) >= 2 else parse_money(nums[-1])
+                    printed_signed = (nums[-2] if len(nums) >= 2 else nums[-1]).startswith("-")
+            else:
+                amount = parse_money(numeric_tail.group(2))
+                split_qty = parse_money(numeric_tail.group(1))
+                if amount is not None and amount != 0.0 and split_qty is not None:
+                    # A two-leg book-value swap (non-zero amount) prints the
+                    # out/in share quantities as signed deltas — TD calls
+                    # them Reverse Split. A 0.00 split note instead prints
+                    # the resulting total, which is not a delta, so its
+                    # quantity stays uncaptured.
+                    qty = split_qty
+                    instrument = _instrument_from_description(
+                        desc[:numeric_tail.start()].strip(),
+                        currency,
+                    )
+                    if instrument is not None:
+                        txn_type = "journal"
         elif nums:
             amount = parse_money(nums[-2]) if len(nums) >= 2 else parse_money(nums[-1])
             printed_signed = (nums[-2] if len(nums) >= 2 else nums[-1]).startswith("-")
@@ -1234,7 +1575,7 @@ def _parse_activity(body: str, currency: str, year_end: int,
 # ---------------------------------------------------------------- Parser
 class TDParser:
     NAME = "td"
-    VERSION = "2.7.0"
+    VERSION = "2.9.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "TD Webbroker":
@@ -1244,7 +1585,19 @@ class TDParser:
 
     def parse(self, pdf: PdfText) -> ParseResult:
         result = ParseResult(parser_name=self.NAME, parser_version=self.VERSION)
-        page_index = PageTextIndex.from_pdf(pdf, include_page=_is_td_disclosure_page)
+        is_summary = _is_summary(pdf.relpath)
+        page_index = PageTextIndex.from_pdf(
+            pdf,
+            # The attached annual performance/fees report pages are their own
+            # category: monthly statements must not parse them as rows (the
+            # "January 1 to December 31" headers would otherwise create
+            # bogus year-long monthly statements). Summary files are annual
+            # reports themselves and keep every page.
+            include_page=lambda number, page: (
+                _is_td_disclosure_page(number, page)
+                and (is_summary or not _is_td_annual_report_page(page))
+            ),
+        )
         text = page_index.text
 
         if _is_summary(pdf.relpath):
@@ -1254,7 +1607,7 @@ class TDParser:
             an = re.search(r"Statement_([A-Z0-9]+)_", pdf.relpath)
             if ym and an:
                 year = int(ym.group(1))
-                result.statements.append(ParsedStatement(
+                shell = ParsedStatement(
                     account=ParsedAccount(account_number=an.group(1),
                                           account_type="Direct Trading",
                                           base_currency="CAD"),
@@ -1262,7 +1615,15 @@ class TDParser:
                     period_end=f"{year}-12-31",
                     statement_type="annual",
                     page_numbers=page_index.all_pages,
-                ))
+                )
+                # The summary file carries the same performance-report pages
+                # as a December statement; attach their printed numbers.
+                report = _parse_td_performance_pages(
+                    {number: text for number, text in enumerate(pdf.pages, 1)}
+                )
+                if report is not None:
+                    shell.annual_performance = report.annual_performance
+                result.statements.append(shell)
             attach_source_spans(pdf, result, parser_name=self.NAME)
             return result
 
@@ -1435,6 +1796,16 @@ class TDParser:
                     ),
                 ))
             result.statements.append(stmt)
+        # December statements attach the calendar-year performance and fees
+        # reports; extract them as their own annual statement.
+        annual_pages = {
+            number: text for number, text in enumerate(pdf.pages, start=1)
+            if any(marker in text for marker in _TD_ANNUAL_PAGE_MARKERS)
+        }
+        if annual_pages:
+            annual = _parse_td_performance_pages(annual_pages)
+            if annual is not None:
+                result.statements.append(annual)
         quarantine_unsupported_rows(result)
         attach_source_spans(pdf, result, parser_name=self.NAME)
         return result

@@ -1,0 +1,76 @@
+# Synthetic fixture: no real customer data.
+TD Direct Investing
+March 1, 2026 to March 31, 2026
+Account number: AB12CD
+Account type: Direct Trading - CDN
+Holdings in your account
+Canadian equity mutual funds
+RBC CDN DIV-F /NL 43.295 SEG 137.866 1,928.20 5,968.90 4,040.70 0.31%
+(RBF607C )
+RBC OSH CD 864.694 SEG 39.841 14,051.98 34,450.27 20,398.29 1.90%
+EQTY-F/NL (RBF610C )
+Activity in your account this period
+Beginning cash balance $5,569.09
+Mar 16 Stock Exchange RBC QUBE CDN 2,660.453 0.00 5,569.09
+EQ-F/NL'FRAC
+Mar 16 Stock Exchange RBC OSH CD -967.364 0.00 5,569.09
+EQTY-F/NL'FRAC
+Ending cash balance $5,569.09
+
+April 1, 2026 to April 30, 2026
+Account number: AB12CD
+Account type: Direct Trading - CDN
+Holdings in your account
+Canadian common shares
+THOMSON REUTERS CORP 100 SEG 125.000 12,500.00 12,196.99 303.01 2.42%
+(TRI )
+Activity in your account this period
+Beginning cash balance $56,317.71
+Apr 30 Security Position RBC QUBE CDN 0.001 0.00 56,317.71
+Ending cash balance $56,317.71
+
+May 1, 2026 to May 31, 2026
+Account number: AB12CD
+Account type: Direct Trading - CDN
+Holdings in your account
+Canadian common shares
+THOMSON REUTERS CORP 98 SEG 119.540 11,714.92 11,952.48 -237.56 0.55%
+(TRI )
+Activity in your account this period
+Beginning cash balance $56,317.71
+May 4 Reverse Split THOMSON REUTERS -100 12,196.99 68,514.70
+May 4 Reverse Split THOMSON REUTERS CORP 98 -12,196.99 56,317.71
+May 18 Stock Split CDN IMPERIAL BANK 1,200 0.00 56,317.71
+Ending cash balance $56,317.71
+
+June 1, 2026 to June 30, 2026
+Account number: AB12CD
+Account type: Direct Trading - CDN
+Holdings in your account
+Canadian common shares
+THOMSON REUTERS CORP 600 SEG 115.840 69,504.00 71,630.19 -2,126.19 2.97%
+(TRI )
+Activity in your account this period
+Beginning cash balance $56,317.71
+Jun 2 Buy THOMSON REUTERS CORP (TRI ) 502 118.860 -59,677.71 -3,360.00
+Jun 20 Sell CANADIAN NATIONAL -300 160.430 48,119.01 44,759.01
+Jun 19 Sell TD CDN EQ-D /NL'FRAC AS -2,792.832 23.520 65,687.41 110,446.42
+Jun 22 Transfer Out GLB X US DOLL CURR-A ETF -10,000 0.00 110,446.42
+Jun 22 Expiration CALL-100 98TRI+$'26JN@120 -1 0.00 110,446.42
+Ending cash balance $110,446.42
+
+July 1, 2026 to July 31, 2026
+Account number: AB12CD
+Account type: Direct Trading - CDN
+Holdings in your account
+Canadian common shares
+THOMSON REUTERS CORP 600 SEG 115.840 69,504.00 71,630.19 -2,126.19 2.97%
+(TRI )
+Activity in your account this period
+Beginning cash balance $110,446.42
+Jul 16 Interest INTEREST TO JUL 16 -87.81 110,358.61
+Jul 27 Dividends CANADIAN PAC KANSAS 400 107.20 110,465.81
+Jul 28 Dividends CDN IMPERIAL BK 2,400 2,568.00 113,033.81
+Jul 30 Dividends SUNCOR ENERGY INC NEW 1,600 960.00 113,993.81
+Jul 31 Dividends CANADIAN NATIONAL 305 279.08 114,272.89
+Ending cash balance $114,272.89

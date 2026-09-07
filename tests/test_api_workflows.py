@@ -192,6 +192,80 @@ def test_statement_boxes_rows_carry_option_contract_fields(tmp_path, monkeypatch
     assert option_txn["option_multiplier"] == 100
 
 
+def test_transaction_option_lists_scope_to_accounts_and_currency_filter(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_a, source_a = _seed_account(conn)
+        institution_id = conn.execute(
+            "SELECT institution_id FROM institutions WHERE code = 'TST'"
+        ).fetchone()[0]
+        account_b = sqlite_db.upsert_account(
+            conn,
+            institution_id=institution_id,
+            account_number="A2",
+            account_type="Margin",
+            base_currency="USD",
+        )
+        statement_a = _seed_statement(conn, account_a, source_a, "2024-01-31")
+        statement_b = _seed_statement(
+            conn, account_b, seed_source(conn, "Statements/Test/b.pdf"), "2024-01-31"
+        )
+        abc = sqlite_db.upsert_instrument(
+            conn, asset_type="equity", symbol="ABC", currency="CAD"
+        )
+        xyz = sqlite_db.upsert_instrument(
+            conn, asset_type="equity", symbol="XYZ", currency="USD"
+        )
+        conn.execute(
+            "INSERT INTO transactions("
+            "account_id, statement_id, trade_date, txn_type, instrument_id, "
+            "quantity, currency, net_amount"
+            ") VALUES (?, ?, '2024-01-10', 'buy', ?, 2, 'CAD', -100)",
+            (account_a, statement_a, abc),
+        )
+        conn.execute(
+            "INSERT INTO transactions("
+            "account_id, statement_id, trade_date, txn_type, instrument_id, "
+            "quantity, currency, net_amount"
+            ") VALUES (?, ?, '2024-01-11', 'buy', ?, 3, 'USD', -150)",
+            (account_b, statement_b, xyz),
+        )
+        conn.execute(
+            "INSERT INTO transactions("
+            "account_id, statement_id, trade_date, txn_type, instrument_id, "
+            "currency, net_amount"
+            ") VALUES (?, ?, '2024-01-12', 'dividend', ?, 'USD', 5)",
+            (account_b, statement_b, xyz),
+        )
+    monkeypatch.setattr(transactions_route.sqlite_db, "SQLITE_PATH", db_path)
+
+    assert [r["symbol"] for r in transactions_route.symbols()["rows"]] == ["ABC", "XYZ"]
+    assert [
+        r["symbol"] for r in transactions_route.symbols(account_id=str(account_a))["rows"]
+    ] == ["ABC"]
+    assert transactions_route.txn_types()["rows"] == ["buy", "dividend"]
+    assert transactions_route.txn_types(account_id=str(account_a))["rows"] == ["buy"]
+    assert transactions_route.currencies()["rows"] == ["CAD", "USD"]
+    assert transactions_route.currencies(account_id=str(account_a))["rows"] == ["CAD"]
+
+    usd_only = transactions_route.list_transactions(
+        start=None,
+        end=None,
+        institution=None,
+        account_id=None,
+        symbol=None,
+        txn_type=None,
+        currency="USD",
+        min_abs_amount=None,
+        limit=100,
+    )
+    assert [row["currency"] for row in usd_only["rows"]] == ["USD", "USD"]
+    assert {row["txn_type"] for row in usd_only["rows"]} == {"buy", "dividend"}
+
+
 def _seed_account(conn, *, source_relpath: str = "Statements/Test/sample.pdf"):
     institution_id = sqlite_db.upsert_institution(conn, "TST", "Test Broker")
     account_id = sqlite_db.upsert_account(
@@ -736,3 +810,185 @@ def test_composite_holding_contract_is_shared_across_monthly_performance_and_viz
     assert visualisation["rows"][0]["currency"] == "CAD"
     assert visualisation["rows"][0]["market_value"] == 360.0
     assert viz_route._held_symbols_at("2024-02-29", [], path=db_path) == ["ABC"]
+
+
+def test_holdings_by_sector_converts_market_values_to_display_currency(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = tmp_path / "ledger.sqlite"
+    market_path = tmp_path / "market.duckdb"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id, source_id = _seed_account(
+            conn,
+            source_relpath="Statements/Test/currency-jan.pdf",
+        )
+        statement_id = _seed_statement(conn, account_id, source_id, "2024-01-31")
+        cad_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="equity",
+            symbol="CCC",
+            currency="CAD",
+        )
+        usd_id = sqlite_db.upsert_instrument(
+            conn,
+            asset_type="equity",
+            symbol="UUU",
+            currency="USD",
+        )
+        seed_position(
+            conn,
+            statement_id=statement_id,
+            instrument_id=cad_id,
+            quantity=1,
+            market_value=140,
+            currency="CAD",
+        )
+        seed_position(
+            conn,
+            statement_id=statement_id,
+            instrument_id=usd_id,
+            quantity=1,
+            market_value=100,
+            currency="USD",
+        )
+
+    market = duckdb.connect(str(market_path))
+    try:
+        market.execute(
+            "CREATE TABLE fx_rates("
+            "base VARCHAR, quote VARCHAR, rate DOUBLE, rate_date DATE)"
+        )
+        market.execute("INSERT INTO fx_rates VALUES ('USD', 'CAD', 1.4, '2024-01-31')")
+        market.execute("INSERT INTO fx_rates VALUES ('CAD', 'USD', 0.7142857, '2024-01-31')")
+    finally:
+        market.close()
+
+    monkeypatch.setattr(holdings_service.sqlite_db, "SQLITE_PATH", db_path)
+    monkeypatch.setattr(holdings_service, "DUCKDB_PATH", market_path)
+    monkeypatch.setattr(viz_route, "DUCKDB_PATH", market_path)
+    monkeypatch.setattr(viz_route, "_resolve_as_of", lambda month_end: "2024-01-31")
+    monkeypatch.setattr(viz_route, "_symbol_profiles", lambda symbols: {})
+    monkeypatch.setattr(
+        viz_route,
+        "_symbol_performance",
+        lambda symbols, as_of, period: {symbol: None for symbol in symbols},
+    )
+    monkeypatch.setattr(viz_route, "_price_data_through", lambda: "2024-01-31")
+
+    cad_view = viz_route.holdings_by_sector(
+        month_end=None, account_id=None, period="1m", currency="CAD"
+    )
+    assert cad_view["fx"] == {"usd_cad": 1.4, "rate_date": "2024-01-31"}
+    assert cad_view["unconverted_currencies"] == []
+    cad_values = {(r["symbol"], r["currency"]): r["market_value"] for r in cad_view["rows"]}
+    assert cad_values[("CCC", "CAD")] == 140
+    assert abs(cad_values[("UUU", "CAD")] - 140) < 1e-6
+
+    usd_view = viz_route.holdings_by_sector(
+        month_end=None, account_id=None, period="1m", currency="USD"
+    )
+    usd_values = {(r["symbol"], r["currency"]): r["market_value"] for r in usd_view["rows"]}
+    assert abs(usd_values[("CCC", "USD")] - 100) < 1e-6
+    assert usd_values[("UUU", "USD")] == 100
+
+
+def test_display_sector_labels_etfs_from_category_then_generic():
+    assert viz_route._display_sector({"sector": "Technology"}, None) == "Technology"
+    assert viz_route._display_sector(
+        {"sector": None, "quote_type": "ETF", "category": "India Equity"}, None,
+    ) == "India Equity"
+    assert viz_route._display_sector(
+        {"sector": None, "quote_type": "ETF", "category": None}, None,
+    ) == "ETF"
+    assert viz_route._display_sector({"sector": None, "quote_type": "EQUITY"}, None) is None
+    assert viz_route._display_sector({}, "etf") == "ETF"
+    assert viz_route._display_sector({}, "equity") is None
+
+
+def test_assets_table_price_mktcap_hv_iv_and_sparklines(tmp_path, monkeypatch):
+    db_path = tmp_path / "ledger.sqlite"
+    market_path = tmp_path / "market.duckdb"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        account_id, source_id = _seed_account(
+            conn,
+            source_relpath="Statements/Test/assets-jan.pdf",
+        )
+        statement_id = _seed_statement(conn, account_id, source_id, "2024-01-31")
+        instrument_id = sqlite_db.upsert_instrument(
+            conn, asset_type="equity", symbol="ABC", currency="CAD",
+        )
+        seed_position(
+            conn,
+            statement_id=statement_id,
+            instrument_id=instrument_id,
+            quantity=5,
+            market_value=140,
+            currency="CAD",
+        )
+
+    from ledger.db import duckdb_store
+    duckdb_store.init_db(market_path)
+    market = duckdb.connect(str(market_path))
+    try:
+        # ~20 business days of closes ending 2024-02-05; 1w window = last 5.
+        dates = [
+            "2024-01-08", "2024-01-09", "2024-01-10", "2024-01-11", "2024-01-12",
+            "2024-01-15", "2024-01-16", "2024-01-17", "2024-01-18", "2024-01-19",
+            "2024-01-22", "2024-01-23", "2024-01-24", "2024-01-25", "2024-01-26",
+            "2024-01-29", "2024-01-30", "2024-01-31", "2024-02-01", "2024-02-02",
+            "2024-02-05",
+        ]
+        closes = [20 + ((i * 7) % 5) * 0.5 for i in range(len(dates) - 1)] + [22.0]
+        for d, c in zip(dates, closes, strict=False):
+            market.execute(
+                "INSERT INTO daily_prices VALUES ('ABC', NULL, 'CAD', ?, NULL, NULL, NULL, ?, ?, NULL)",
+                [d, c, c],
+            )
+        market.execute(
+            "INSERT INTO symbol_profiles VALUES "
+            "('ABC', 'ABC Inc', 'Tech', 'Software', 'EQUITY', 7.0e9, '2024-02-05 00:00:00')"
+        )
+        market.execute(
+            "INSERT INTO option_implied_vol VALUES ('ABC', DATE '2024-02-02', 25.0, NULL, NULL)"
+        )
+    finally:
+        market.close()
+
+    monkeypatch.setattr(holdings_service.sqlite_db, "SQLITE_PATH", db_path)
+    monkeypatch.setattr(viz_route, "DUCKDB_PATH", market_path)
+    monkeypatch.setattr(viz_route, "_resolve_as_of", lambda month_end: "2024-01-31")
+    monkeypatch.setattr(viz_route, "_price_data_through", lambda: "2024-02-05")
+
+    out = viz_route.assets(month_end=date(2024, 2, 5), account_id=None)
+    assert out["as_of_date"] == "2024-01-31"
+    assert len(out["rows"]) == 1
+    row = out["rows"][0]
+    assert row["symbol"] == "ABC"
+    assert row["quantity"] == 5
+    assert row["market_value"] == 140
+    assert row["price"] == 22.0
+    assert row["price_date"] == "2024-02-05"
+    assert row["market_cap"] == 7.0e9
+    assert row["name"] == "ABC Inc"
+    assert row["hv_30d"] is not None and row["hv_30d"] > 0
+    assert row["iv"] == 25.0
+    assert row["iv_date"] == "2024-02-02"
+    assert row["accounts"] == ["TST•A1"]
+
+    # 1w sparkline spans the last 5 sessions ending 2024-02-05.
+    week = row["sparks"]["1w"]
+    assert week["points"][-1] == 22.0
+    assert len(week["points"]) == 5
+    expected_pct = (22.0 / week["points"][0] - 1.0) * 100.0
+    assert abs(week["pct"] - expected_pct) < 1e-9
+    # Longer windows downsample to at most 24 points.
+    assert len(row["sparks"]["1y"]["points"]) <= 24
+    assert row["sparks"]["1y"]["pct"] is not None
+
+    # The market side clamps to the selected date, not the holdings checkpoint.
+    early = viz_route.assets(month_end=date(2024, 1, 19), account_id=None)
+    assert early["rows"][0]["price_date"] == "2024-01-19"
+    assert early["rows"][0]["iv"] is None

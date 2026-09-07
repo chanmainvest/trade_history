@@ -81,6 +81,27 @@ transaction is therefore an auditable negative component for the old instrument
 and positive component for the new one. It never derives a ticker relationship
 from the closing residual.
 
+A reviewed ticker change (`instrument_ticker_changes.status = 'reviewed'`,
+recorded by `ingest apply-ticker-changes` from the committed
+`data/ticker_changes.json`) carries no printed transaction row. When its
+effective date falls inside the interval, the replay moves the whole
+predecessor balance to the successor after ordinary transactions are applied,
+with no reconciliation components because there is no transaction to cite.
+The predecessor's rollforward row is then superseded — status
+`not_applicable` with the successor, date, and resolution method in the
+reason — while the successor's check opens from the moved balance. A rename
+effective after an interval never touches it. Reviewed records are curated
+state: re-ingest never deletes them, and both printed symbols stay distinct
+instruments.
+
+Reviewed symbol normalizations (`instrument_symbol_normalizations`, applied
+by `ingest apply-symbol-normalizations` from `data/symbol_normalizations.json`)
+are the complementary case where no rollforward is needed: the printed and
+canonical names are one instrument, so extraction already books every period
+under the canonical instrument and reconciliation sees a single continuous
+lineage. The printed symbol survives only in the rule record and in
+statement raw lines.
+
 Zero-cash DRIP reinvestment echoes (TD prints each month-end reinvestment on
 the next statement, dated the prior pay date — see `spec/parsers/TD.md`)
 settle inside the printing statement's checkpoint interval even though the
@@ -161,7 +182,9 @@ The component-total and change equations remain independently visible.
 - `missing_prior_checkpoint` — the first comparison has no prior scope;
 - `ambiguous_transfer` — reserved for conservative transfer-pairing outcomes;
   and
-- `not_applicable` — a known-empty scope or total has no applicable equation.
+- `not_applicable` — a known-empty scope or total has no applicable equation,
+  or a reviewed ticker change superseded the predecessor's close (the reason
+  names the successor).
 
 Position tolerance is `1e-8`; cash and statement-total tolerance is one cent.
 These are rounding tolerances, not a mechanism for absorbing missing rows.

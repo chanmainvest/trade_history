@@ -76,6 +76,29 @@ statement transaction and its evidence. Extracted relationships are removed
 only when their final source transaction is replaced; aliases remain reserved
 for names that are equivalent without a date.
 
+A second, reviewed path records a rename when no printed transaction exists —
+for example a broker re-printing the same option contract under a different
+adjusted symbol. `ingest apply-ticker-changes` validates entries from the
+committed `data/ticker_changes.json` (both printed symbols, asset
+type/currency, option economics when applicable, effective date, evidence)
+and writes rows with `status = 'reviewed'` and no sources row: curated state
+that re-ingest never deletes. The position rollforward consumes both statuses.
+
+A related reviewed path keeps one identity instead of two. When the reviewed
+decision is that both printed symbols denote the *same* instrument (TD
+printing the adjusted option root `5SOXS` for the lot it later prints as
+`SOXS1`), `data/symbol_normalizations.json` records a
+printed-symbol → canonical-symbol rule and
+`ingest apply-symbol-normalizations` writes it to
+`instrument_symbol_normalizations` (identity: printed symbol + asset
+type/currency + option economics, canonical instrument, evidence). The rule
+feeds `upsert_instrument`, so extraction resolves the printed symbol to the
+canonical instrument before the instrument row is written and every
+statement period shares one instrument; applying also remaps rows already
+extracted under the printed form. Unlike a ticker change nothing is dated —
+the two names never belong to two identities — but the printed symbol stays
+on record in the rule and in statement raw lines.
+
 The v5-to-v6 migration repoints dependent rows to the oldest canonical ID. If
 two duplicate legacy holding/initial rows collide, it preserves their total
 reported quantity/value and marks no new source facts. The shadow rebuild in
@@ -229,9 +252,10 @@ point to evidence-linked transactions. No result creates an adjustment row.
 | `daily_prices` | `(symbol, trade_date)` | provider symbol (for example `BCE.TO`) plus OHLC, adjusted close, volume, exchange/currency |
 | `dividends` | `(symbol, ex_date)` | amount and currency |
 | `splits` | `(symbol, split_date)` | split ratio |
-| `option_implied_vol` | `(symbol, trade_date)` | 30/60/90-day IV placeholders/data |
+| `option_implied_vol` | `(symbol, trade_date)` | at-the-money implied volatility snapshot (percent) from `market refresh-iv` — the nearest ~30-day expiry, `iv_30d` only (`iv_60d`/`iv_90d` NULL); one row per symbol per run, stamped with the symbol's latest priced trade date so repeated runs build the historical IV series |
 | `fx_rates` | `(base, quote, rate_date)` | dated conversion rate |
-| `symbol_profiles` | `symbol` | name, sector, industry, quote type, fetch time |
+| `symbol_profiles` | `symbol` | name, sector, industry, quote type, market cap (`market_cap`, native listing currency), fetch time |
+| `fund_categories` | `symbol` | Yahoo fund category (e.g. "India Equity"); Yahoo publishes no sector for ETFs, so the viz routes fall back to this category, then a generic "ETF" label, before "Unknown" |
 | `financials_quarterly` | `(symbol, period_end)` | fiscal metadata and statement metrics |
 | `financials_annual` | `(symbol, period_end)` | annual statement metrics |
 | `earnings_events` | `(symbol, report_date)` | estimates/actuals and surprise |

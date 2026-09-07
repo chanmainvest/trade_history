@@ -1,0 +1,48 @@
+# Synthetic fixture: no real customer data.
+TD Direct Investing
+Direct Trading - CDN - 77FF49
+January 1, 2017 to January 31, 2017
+Account number: AB12CD
+Account type: Direct Trading - CDN
+4U=US dollars
+4Book costs are converted to Canadian dollars at the exchange rate used at the time of the transaction.
+Holdings in your account
+Canadian common shares
+Totalportfolio 341,788.09 743,888.97 100.00
+1,600 Seg BANK OF MONTREAL BMO 75.220 45,606.97 120,352.00 16.70
+1,000 Seg BATTERYTECHNOLOGIESINC N/D 1,522.50 N/D 0.00
+194.256 Seg TDCDN SM CAPEQ-I TDB628C 29.890 7,055.27 5,806.31 0.81
+
+February 1, 2017 to February 28, 2017
+Account number: AB12CD
+Account type: Direct Trading - CDN
+Holdings in your account
+Canadian common shares
+BATTERY 1,000 SEG N/D 1,522.50 N/D -1,522.50 0.00%
+TECHNOLOGIES INC
+CDN IMPERIAL BK 1,200 SEG 105.390 61,469.99 126,468.00 64,998.01 15.68%
+COMMERCE (CM )
+Activity in your account this period
+Beginning cash balance $5,000.00
+Feb 14 Exchange TD CDN EQ-D /NL'FRAC 2,379.892 -22,516.16 21,288.30
+Feb 14 Exchange TD CDN EQ SER-I /NL'FRAC -769.017 22,516.16 43,804.46
+Feb 20 Defunct Security BATTERY TECHNOLOGIES -1,000 0.00 1,016.12
+Ending cash balance $5,000.00
+
+March 1, 2017 to March 31, 2017
+Account number: AB12CD
+Account type: Direct Trading - CDN
+Holdings in your account
+Canadian money market mutual funds
+TDCDNMNY MKT-I /NL TDB164C 10.000 500.00 5.53 0.00
+Activity in your account this period
+Cash-opening balance $5,000.00
+Mar 05 Web Banking
+Deposit RX534TSFFR3301767 10,000.00 15,000.00
+Mar 07 Admin FeeCharged DEC-PAPERSTATEMENT FEE 2.00 14,998.00
+Mar 20 Web Banking
+Withdrawal WX240 TSFTO6302722 10.00 14,988.00
+Mar 31 Dividend
+Reinvestment Plan 0.553 TDCDNMNY MKT-I /NL'FRAC 0.00 14,988.00
+VALUE= 5.53
+Cash-closing balance $14,988.00

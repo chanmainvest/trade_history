@@ -109,6 +109,57 @@ def test_cibc_tfsa_and_option_position():
     assert option.option_expiry == "2022-09-16"
     assert option.option_strike == 65.0
 
+    # Strike wrapped onto the continuation line: the inline number is the
+    # quantity ("70.50 ISHARES SILVER SHARES" carries the strike below the
+    # row), so the row parses as 25 contracts at strike 70.50 and neither
+    # the row nor its wrap quarantines.
+    slv = statement.positions[1]
+    assert (slv.instrument.option_root, slv.instrument.option_strike) == ("SLV", 70.5)
+    assert slv.instrument.option_expiry == "2026-04-17"
+    assert slv.quantity == 25.0
+    assert slv.book_value == 17463.20
+    assert slv.market_value == 13500.00
+    assert all(
+        "ISHARES SILVER" not in row.raw_line for row in statement.quarantine
+    )
+
+    # Negative quantity and book value printed flush together: the row
+    # splits at the minus sign (-200 / -$127,743.05).
+    gld = statement.positions[2]
+    assert (gld.instrument.option_root, gld.instrument.option_strike) == ("GLD", 340.0)
+    assert gld.quantity == -200.0
+    assert gld.book_value == -127743.05
+    assert gld.market_value == -62000.00
+
+    # Activity rows whose contract description split across lines join the
+    # strike-bearing continuation line: the quantity stays in the strike
+    # slot and the number printed below the row is the strike.
+    sold = next(row for row in statement.transactions
+                if row.txn_type == "option_sell_to_close")
+    assert sold.instrument.option_root == "SLV"
+    assert sold.instrument.option_strike == 63.0
+    assert sold.quantity == -50.0
+    assert sold.net_amount == 17430.55
+
+    bought = next(row for row in statement.transactions
+                  if row.txn_type == "option_buy_to_close")
+    assert bought.instrument.option_strike == 70.5
+    assert bought.instrument.option_expiry == "2022-09-16"
+    assert bought.quantity == 25.0
+    assert bought.price == 6.97
+    assert bought.net_amount == -17463.20
+    assert "70.50 ISHARES SILVER SHARES" in bought.description
+
+    expired = next(row for row in statement.transactions
+                   if row.txn_type == "option_expiration")
+    assert expired.instrument.option_strike == 70.5
+    assert expired.quantity == -25.0
+    assert "70.50 ISHARES SILVER SHARES" in expired.description
+
+    # Both printed forms parse; every description line was consumed with
+    # its row and nothing option-shaped is left quarantined.
+    assert statement.quarantine == []
+
 
 def test_cibc_tax_documents_are_explicitly_skipped_not_invalid():
     pdf = load_fixture("cibc/tfsa_option.txt")
@@ -344,9 +395,12 @@ def test_cibc_residual_flatten_wire_footer_tax_and_option_wraps():
     # The mutual-fund residual flatten ("Shrs in xc 1000THS <FUND> -2 — —")
     # is a journal movement of the fund its description names: the parser
     # keeps the printed-name identity attempt (a synthetic mutual_fund the
-    # staged resolver resolves through the reviewed fund lookup).
+    # staged resolver resolves through the reviewed fund lookup). The
+    # printed "1000THS" qualifier states the quantity's unit — thousandths
+    # of a fund unit — so -2 records as -0.002, the dust a full redemption
+    # leaves behind.
     flatten = next(row for row in txns if row.txn_type == "journal")
-    assert flatten.quantity == -2.0
+    assert flatten.quantity == -0.002
     assert flatten.instrument is not None
     assert flatten.instrument.asset_type == "mutual_fund"
     assert flatten.instrument.resolution_method == "unresolved_printed_identity"
@@ -355,11 +409,36 @@ def test_cibc_residual_flatten_wire_footer_tax_and_option_wraps():
         assert fragment in flatten.description
 
     # A dividend whose note line prints a reinvest price with a blank cash
-    # cell is an in-kind reinvestment, not a cash dividend.
+    # cell is an in-kind reinvestment, not a cash dividend. The component
+    # note block under it (L/T CAP GNS + REC/PAY dates) rides with the row.
     drip = next(row for row in txns if row.txn_type == "reinvest_dividend")
     assert drip.quantity == 34.801
     assert drip.net_amount is None
     assert "REINVESTED DIV @ 15.7635" in drip.description
+    for fragment in ("L/T CAP GNS 4000 SHS", "REC JUN 12 2025", "PAY JUL 1 2026"):
+        assert fragment in drip.description
+
+    # Year-end return-of-capital tax disclosure (all-dash cells over
+    # "RTN OF CAPITAL YEAREND" / "VALUE" lines) and the bare transfer
+    # confirmation number are furniture: neither reaches a transaction
+    # nor quarantine.
+    assert not any(
+        "SAMPLE MONTHLY INCOME FUND" in (row.description or "")
+        for row in txns
+    )
+    assert all(
+        "VALUE 472.18" not in row.raw_line
+        and "111102999888" not in row.raw_line
+        for row in statement.quarantine
+    )
+
+    # A cash return-of-capital row records as an adjustment with its
+    # component note lines merged into the description.
+    roc = next(row for row in txns if row.txn_type == "adjustment")
+    assert roc.net_amount == 55.00
+    for fragment in ("SAMPLE INTEREST RATE HEDGE", "ETF RTN OF CAPTL 100 SHS",
+                     "REC JUN 27 2026", "PAY JUL 25 2026"):
+        assert fragment in roc.description
 
     # Squeezed wire-confirmation footer fragments (wire reference, gross
     # amount / transfer fee) are receipt furniture, not quarantined rows.

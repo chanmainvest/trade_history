@@ -925,6 +925,7 @@ def _position_interval_replay(
     dict[str, list[tuple[int, float]]],
     dict[str, int],
     dict[str, int],
+    dict[str, tuple[str, str, str]],
 ]:
     """Replay one checkpoint interval, including whole-position ticker moves.
 
@@ -932,13 +933,20 @@ def _position_interval_replay(
     their pay date) settle inside this interval even though their printed date
     precedes it, so they are attributed to the interval of the statement that
     recorded them and excluded from earlier intervals that merely contain the
-    printed date. See spec/parsers/TD.md and spec/RECONCILIATION.md.
+    printed date. Ticker changes effective inside the interval move the whole
+    predecessor balance to its successor — either from a printed name-change
+    row or, when no transaction exists, from a reviewed
+    ``instrument_ticker_changes`` record; the returned ``renames`` maps each
+    touched instrument key to ``(direction, counterpart_key, date+method)``
+    so callers can supersede the predecessor's check. See spec/parsers/TD.md
+    and spec/RECONCILIATION.md.
     """
     rows = conn.execute(
         f"""
         SELECT t.transaction_id, t.txn_type, t.quantity, t.position_delta,
                i.instrument_id, i.instrument_key,
                tc.conversion_ratio,
+               tc.ticker_change_id AS ticker_change_id,
                successor.instrument_key AS successor_key,
                successor.instrument_id AS successor_id,
                t.counterpart_txn_id,
@@ -983,7 +991,7 @@ def _position_interval_replay(
                      AND ts.period_start IS NOT NULL
                      AND t.trade_date < ts.period_start
                  ))
-             OR (
+           OR (
                     t.txn_type = 'reinvest_dividend'
                 AND ts.period_start IS NOT NULL
                 AND t.trade_date < ts.period_start
@@ -1011,6 +1019,7 @@ def _position_interval_replay(
     }
     components: dict[str, list[tuple[int, float]]] = defaultdict(list)
     missing: dict[str, int] = defaultdict(int)
+    triggered_change_ids: set[int] = set()
     for row in rows:
         instrument_id = row["instrument_id"]
         instrument_key = row["instrument_key"]
@@ -1024,6 +1033,8 @@ def _position_interval_replay(
         if row["successor_id"] is not None:
             successor_id = int(row["successor_id"])
             successor_key = str(row["successor_key"])
+            if row["ticker_change_id"] is not None:
+                triggered_change_ids.add(int(row["ticker_change_id"]))
             id_to_key[successor_id] = successor_key
             moved = balances.get(instrument_id, 0.0)
             ratio = float(row["conversion_ratio"])
@@ -1067,13 +1078,62 @@ def _position_interval_replay(
         balances[instrument_id] = balances.get(instrument_id, 0.0) + effect
         if abs(effect) > EXACT_TOLERANCE:
             components[component_key].append((transaction_id, effect))
+    # Dated ticker changes effective within this interval move the whole
+    # predecessor balance to its successor. Printed name-change rows already
+    # moved their balance in the loop above, so those changes are skipped
+    # here (their components carry the transaction); reviewed changes — no
+    # printed transaction exists — are the ones that only run here.
+    # Components stay empty because there is no transaction row to cite.
+    renames: dict[str, tuple[str, str, str]] = {}
+    rename_rows = conn.execute(
+        """
+        SELECT tc.ticker_change_id, tc.from_instrument_id, tc.to_instrument_id,
+               tc.effective_date, tc.conversion_ratio, tc.resolution_method,
+               pred.instrument_key AS from_key, succ.instrument_key AS to_key
+          FROM instrument_ticker_changes tc
+          JOIN instruments pred ON pred.instrument_id = tc.from_instrument_id
+          JOIN instruments succ ON succ.instrument_id = tc.to_instrument_id
+         WHERE tc.effective_date > ? AND tc.effective_date <= ?
+         ORDER BY tc.effective_date, tc.ticker_change_id
+        """,
+        (prior_checkpoint, current_checkpoint),
+    ).fetchall()
+    for row in rename_rows:
+        if row["ticker_change_id"] is not None and int(
+            row["ticker_change_id"]
+        ) in triggered_change_ids:
+            continue
+        from_id = int(row["from_instrument_id"])
+        to_id = int(row["to_instrument_id"])
+        from_key = row["from_key"]
+        to_key = row["to_key"]
+        if from_key is None or to_key is None:
+            continue
+        moved = balances.get(from_id, 0.0)
+        balances[from_id] = 0.0
+        balances[to_id] = balances.get(to_id, 0.0) + moved * float(
+            row["conversion_ratio"]
+        )
+        id_to_key.setdefault(from_id, str(from_key))
+        id_to_key.setdefault(to_id, str(to_key))
+        renames[str(from_key)] = (
+            "moved_to",
+            str(to_key),
+            f"{row['effective_date']} {row['resolution_method']}",
+        )
+        renames[str(to_key)] = (
+            "came_from",
+            str(from_key),
+            f"{row['effective_date']} {row['resolution_method']}",
+        )
+
     key_balances = {
         id_to_key[instrument_id]: balance
         for instrument_id, balance in balances.items()
         if instrument_id in id_to_key
     }
     instrument_ids = {key: iid for iid, key in id_to_key.items()}
-    return key_balances, components, missing, instrument_ids
+    return key_balances, components, missing, instrument_ids, renames
 
 
 def _unresolved_position_effect_count(
@@ -1309,7 +1369,7 @@ def audit_split_discontinuities(conn: sqlite3.Connection) -> list[dict]:
                 ).fetchall()
             }
             if previous is not None:
-                balances, components, _missing, _ids = _position_interval_replay(
+                balances, components, _missing, _ids, renames = _position_interval_replay(
                     conn,
                     account_id=account_id,
                     currency=currency,
@@ -1321,6 +1381,11 @@ def audit_split_discontinuities(conn: sqlite3.Connection) -> list[dict]:
                     else None,
                 )
                 for key, current_qty in current_rows.items():
+                    if key in renames:
+                        # A reviewed/printed ticker change explains the
+                        # discontinuity; the rollforward already moved the
+                        # balance across it.
+                        continue
                     prior_qty = (
                         float(previous_rows[key][1]) if key in previous_rows else 0.0
                     )
@@ -1385,12 +1450,14 @@ def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
         interval_components: dict[str, list[tuple[int, float]]] = {}
         interval_missing: dict[str, int] = {}
         interval_ids: dict[str, int] = {}
+        interval_renames: dict[str, tuple[str, str, str]] = {}
         if prior is not None:
             (
                 interval_balances,
                 interval_components,
                 interval_missing,
                 interval_ids,
+                interval_renames,
             ) = _position_interval_replay(
                 conn,
                 account_id=int(scope["account_id"]),
@@ -1505,6 +1572,48 @@ def _reconcile_position_scopes(conn: sqlite3.Connection) -> dict[str, int]:
                 status = "incomplete_input"
                 reason = "position checkpoint interval has an unobserved statement period"
             else:
+                rename_info = interval_renames.get(instrument_key)
+                if (
+                    rename_info is not None
+                    and rename_info[0] == "moved_to"
+                    and current_value is None
+                ):
+                    # The predecessor's whole balance re-identified as the
+                    # successor inside this interval (printed name-change row
+                    # or reviewed ticker change). The successor's own check
+                    # opens from the moved balance; the predecessor has no
+                    # independent close to reconcile.
+                    _write_reconciliation_result(
+                        conn,
+                        reconciliation_key=(
+                            f"{RECONCILIATION_KEY_PREFIX}position:"
+                            f"{scope['snapshot_set_id']}:{instrument_id}"
+                        ),
+                        ingestion_run_id=scope["ingestion_run_id"],
+                        kind="position",
+                        check_type="position_rollforward",
+                        account_id=scope["account_id"],
+                        statement_id=scope["statement_id"],
+                        snapshot_set_id=scope["snapshot_set_id"],
+                        prior_snapshot_set_id=prior["snapshot_set_id"],
+                        instrument_id=instrument_id,
+                        currency=scope["currency"],
+                        prior_checkpoint=prior["as_of_date"],
+                        current_checkpoint=scope["as_of_date"],
+                        opening_value=opening_value,
+                        summed_deltas=None,
+                        expected_close=None,
+                        reported_close=None,
+                        residual=None,
+                        tolerance=POSITION_TOLERANCE,
+                        status="not_applicable",
+                        reason=(
+                            f"balance moved to successor {rename_info[1]} "
+                            f"by ticker change {rename_info[2]}"
+                        ),
+                    )
+                    _add_result_metric(metrics, "not_applicable")
+                    continue
                 components = interval_components.get(instrument_key, [])
                 missing_effects = interval_missing.get(instrument_key, 0)
                 summed_deltas = sum(delta for _transaction_id, delta in components)
@@ -1989,12 +2098,13 @@ def reconcile_after_ingest(path: Path | str | None = None) -> dict:
     ``instrument_journal_pairs``) before the rollforward replay consumes
     them. Already-linked legs are skipped, so the pass is idempotent.
     """
-    with sqlite_db.session(path) as conn:
+    db_path = path if path is not None else sqlite_db.SQLITE_PATH
+    with sqlite_db.session(db_path) as conn:
         pairs = pair_corporate_action_legs(conn)
     return {
         "pairs": pairs,
-        "instrument_names": resolve_trade_instruments_from_holdings(path),
-        "transfers": link_transfers(path),
-        "positions": rebuild_position_transaction_links(path),
-        "results": rebuild_reconciliation_results(path),
+        "instrument_names": resolve_trade_instruments_from_holdings(db_path),
+        "transfers": link_transfers(db_path),
+        "positions": rebuild_position_transaction_links(db_path),
+        "results": rebuild_reconciliation_results(db_path),
     }

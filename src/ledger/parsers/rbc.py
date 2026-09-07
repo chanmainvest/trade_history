@@ -718,6 +718,64 @@ def _parse_activity(
                     if txn_type:
                         break
         if txn_type is None:
+            # Legacy DRIP rows: the reinvestment prints as its own dated row
+            # ("SEPT16 DIVREIN FIRSTMAJESTICSILVERCORP 1 16.12" over
+            # "REINV@U$12.8182"). Both printed facts are load-bearing — the
+            # unit count moves the position and the debit moves the cash —
+            # so the row records as a journal leg on the security its
+            # squeezed name prints, the one type that carries both (the
+            # staged resolver ties the synthetic name to the same-statement
+            # holding, exactly as for the adjacent DIVIDEND rows).
+            if re.fullmatch(r"DIVREIN", verb_part.strip(), re.IGNORECASE):
+                drip_nums = re.findall(r"-?[\d,]+(?:\.\d+)?-?", rest)
+                drip_qty = parse_money(drip_nums[0]) if drip_nums else None
+                if cash_effect is not None:
+                    drip_amount: float | None = cash_effect
+                elif drip_nums:
+                    # The trailing value prints in the debit column.
+                    drip_amount = parse_money(drip_nums[-1])
+                    if drip_amount is not None and drip_amount > 0:
+                        drip_amount = -drip_amount
+                else:
+                    drip_amount = None
+                drip_name = re.split(
+                    r"\s+-?[\d,]+(?:\.\d+)?-?", rest, maxsplit=1,
+                )[0].strip()
+                instrument = None
+                if drip_name:
+                    from .name_resolver import resolve_ticker, synthetic_symbol
+
+                    known = resolve_ticker(drip_name, currency)
+                    if known is not None:
+                        tkr, atype = known
+                        instrument = ParsedInstrument(
+                            asset_type=atype, symbol=tkr,
+                            currency=currency, name=drip_name[:120],
+                        )
+                    else:
+                        instrument = ParsedInstrument(
+                            asset_type="equity",
+                            symbol=synthetic_symbol(drip_name),
+                            currency=currency, name=drip_name[:120],
+                            resolution_method="unresolved_printed_identity",
+                            resolution_confidence=0.0,
+                        )
+                stmt.transactions.append(ParsedTxn(
+                    trade_date=trade_date,
+                    settle_date=None,
+                    txn_type="journal",
+                    instrument=instrument,
+                    quantity=drip_qty,
+                    price=None,
+                    gross_amount=None,
+                    commission=None,
+                    other_fees=None,
+                    net_amount=drip_amount,
+                    currency=currency,
+                    description=full,
+                    raw_line=ln,
+                ))
+                continue
             if cash_effect is not None and abs(cash_effect) > 0:
                 # Some RBC rows leave the Activity column blank but still
                 # print a dated description and an unambiguous debit/credit
@@ -911,7 +969,7 @@ def _parse_activity(
 # ----------------------------------------------------------------- Parser
 class RBCParser:
     NAME = "rbc"
-    VERSION = "2.8.2"
+    VERSION = "2.8.3"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name == "RBC Invest Direct":

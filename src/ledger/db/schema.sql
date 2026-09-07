@@ -539,6 +539,44 @@ CREATE TABLE IF NOT EXISTS instrument_ticker_change_sources (
     evidence_id INTEGER REFERENCES source_evidence(evidence_id) ON DELETE SET NULL
 );
 
+-- Reviewed symbol normalizations: a broker prints one instrument under a
+-- different adjusted symbol (e.g. an OCC adjusted option root such as
+-- "5SOXS" or "98TRI+$") while the ledger keeps a single canonical
+-- instrument. Unlike a ticker change the two names never belong to two
+-- identities: extraction rewrites the printed symbol to the canonical one
+-- before the instrument row is resolved, so every statement period shares
+-- one instrument. The printed symbol stays on record here (and in the
+-- statement raw lines) so both printed forms remain traceable.
+CREATE TABLE IF NOT EXISTS instrument_symbol_normalizations (
+    normalization_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    printed_symbol    TEXT NOT NULL,
+    canonical_symbol  TEXT NOT NULL,
+    asset_type        TEXT NOT NULL,
+    currency          TEXT NOT NULL,
+    option_expiry     TEXT,
+    option_strike     REAL,
+    option_type       TEXT CHECK (option_type IS NULL OR option_type IN ('CALL','PUT')),
+    effective_date    TEXT CHECK (effective_date IS NULL OR
+                                  (length(effective_date) = 10 AND effective_date GLOB '????-??-??')),
+    resolution_method TEXT NOT NULL,
+    resolution_confidence REAL NOT NULL CHECK
+                          (resolution_confidence >= 0 AND resolution_confidence <= 1),
+    canonical_instrument_id INTEGER REFERENCES instruments(instrument_id),
+    notes             TEXT,
+    evidence          TEXT,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+-- One rule per printed symbol per instrument identity (brokers reuse
+-- adjusted option symbols across contract generations).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_symbol_normalization_identity
+    ON instrument_symbol_normalizations(
+        printed_symbol, asset_type, currency,
+        COALESCE(option_expiry, ''), option_strike, COALESCE(option_type, '')
+    );
+CREATE INDEX IF NOT EXISTS idx_symbol_normalizations_printed
+    ON instrument_symbol_normalizations(printed_symbol);
+
 -- Extracted relationships disappear only when their final source row does.
 -- Reviewed relationships are curated state and are never removed by ingest.
 CREATE TRIGGER IF NOT EXISTS cleanup_orphan_extracted_ticker_change

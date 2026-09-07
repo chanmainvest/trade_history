@@ -31,6 +31,8 @@ ledger ingest run [--institution FOLDER] [--limit N] [--force]
 ledger ingest enrich-layout [--source-file-id ID]
 ledger ingest resolve-instruments [--verify-yahoo]
 ledger ingest resolve-fund-lookup --file PATH
+ledger ingest apply-ticker-changes --file PATH
+ledger ingest apply-symbol-normalizations --file PATH
 ledger ingest infer-initials
 ledger ingest repair-symbols
 ledger ingest reconcile
@@ -43,6 +45,7 @@ ledger market refresh [--symbol SYMBOL ...] [--lookback-years N]
 ledger market refresh-dividends
 ledger market refresh-splits
 ledger market refresh-profiles
+ledger market refresh-iv
 ledger market refresh-financials
 ledger market refresh-earnings
 ledger market refresh-fx [--lookback-years N]
@@ -55,6 +58,11 @@ ledger serve [--host HOST] [--port PORT]
 `refresh-all` runs held-symbol prices, profiles, dividends, splits, financials,
 earnings, and FX. Benchmarks are a separate command. Market fetches primarily
 use yfinance; US financial history can fall back to SEC Company Facts.
+`refresh-iv` snapshots each held symbol's at-the-money option implied
+volatility (nearest ~30-day expiry, percent) into `option_implied_vol`, one
+row per symbol per run stamped with the symbol's latest priced trade date, so
+re-running it over time builds the historical IV series; symbols without
+listed options are skipped.
 
 `ingest reconcile` is CLI-only derived maintenance. It rebuilds conservative
 name-only buy/sell links from observed same-currency holdings, transfer pairs,
@@ -80,6 +88,29 @@ pending until a human or agent researches the identity from issuer-published
 fund codes and records it there with evidence; the command validates every
 symbol shape and writes nothing when an entry is malformed. Re-run ingest
 afterwards so the staged resolver picks the identities up.
+
+`ingest apply-ticker-changes` records reviewed, dated instrument renames from
+a JSON file (the shipped record is `data/ticker_changes.json`) into
+`instrument_ticker_changes` with `status = 'reviewed'`. Use it when a broker
+re-prints the same holding under a different symbol between consecutive
+statements and the two names are two identities — the entry carries both
+printed symbols, asset type/currency (plus expiry/strike/type for options,
+because brokers reuse adjusted option symbols across contract generations),
+the effective date, and the printed evidence. Reviewed records are curated
+state that ingest never deletes; run `ingest reconcile` afterwards so the
+position rollforward moves balances across them.
+
+`ingest apply-symbol-normalizations` is the sibling command for the other
+reviewed outcome: both printed names are the *same* instrument (TD printed
+the adjusted option root `5SOXS` through June 2026 and `SOXS1` from July for
+one short CALL lot). Rules live in `data/symbol_normalizations.json`
+(printed symbol, canonical symbol, asset type/currency, option economics,
+evidence) and are applied into `instrument_symbol_normalizations`.
+Extraction then resolves the printed symbol to the canonical instrument at
+`upsert_instrument` time — before any instrument row is written — so every
+statement period shares one instrument, and applying merges rows already
+extracted under the printed form. Applying is idempotent; run
+`ingest reconcile` afterwards.
 
 The extraction audit is read-only with respect to SQLite. It accepts either
 source PDFs or stored `.txt` dumps, overwrites a deterministic JSONL report

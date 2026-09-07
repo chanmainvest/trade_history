@@ -19,7 +19,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from ..config import DATA_DIR, DUCKDB_PATH
 from ..db import duckdb_store
 from ..logging_setup import get_logger, jsonl_path
-from .scrape import _held_symbols
+from .scrape import MarketTarget, _held_symbols
 
 log = get_logger("market_scrape")
 
@@ -36,12 +36,18 @@ def _audit(jsonl, **row) -> None:
 
 
 # --------------------------------------------------------------- profiles
-def refresh_profiles(*, sleep_s: float = 1.0) -> None:
+def _targets_for(symbols: list[str] | None) -> list[MarketTarget]:
+    if symbols:
+        return [MarketTarget(s, s, "USD", None) for s in symbols]
+    return _held_symbols()
+
+
+def refresh_profiles(*, symbols: list[str] | None = None, sleep_s: float = 1.0) -> None:
     duckdb_store.init_db()
     con = duckdb.connect(str(DUCKDB_PATH))
     jsonl = jsonl_path("market_scrape").open("a", encoding="utf-8")
     try:
-        for target in _held_symbols():
+        for target in _targets_for(symbols):
             sym = yfsym = target.provider_symbol
             log.info("Profile %s", yfsym)
             try:
@@ -57,15 +63,31 @@ def refresh_profiles(*, sleep_s: float = 1.0) -> None:
                 "sector": info.get("sector"),
                 "industry": info.get("industry"),
                 "quote_type": info.get("quoteType"),
+                "market_cap": info.get("marketCap"),
                 "fetched_at": datetime.utcnow(),
             }
             df = pd.DataFrame([row])
             con.execute("DELETE FROM symbol_profiles WHERE symbol = ?", [sym])
             con.register("d", df)
-            con.execute("INSERT INTO symbol_profiles SELECT * FROM d")
+            # Explicit column list: pre-existing tables carry market_cap last
+            # (ALTER) while fresh creates keep DDL order, so positional
+            # INSERT ... SELECT * would cast market_cap into fetched_at.
+            con.execute(
+                "INSERT INTO symbol_profiles "
+                "(symbol, short_name, sector, industry, quote_type, market_cap, fetched_at) "
+                "SELECT symbol, short_name, sector, industry, quote_type, market_cap, fetched_at FROM d",
+            )
             con.unregister("d")
+            # Yahoo publishes no sector/industry for funds; keep their fund
+            # category as a pseudo-sector so the UI can group ETFs.
+            category = info.get("category")
+            if category:
+                con.execute("DELETE FROM fund_categories WHERE symbol = ?", [sym])
+                con.execute("INSERT INTO fund_categories VALUES (?, ?, ?)",
+                            [sym, str(category), datetime.utcnow()])
             _audit(jsonl, kind="profile", symbol=sym, status="ok",
-                   sector=row["sector"], industry=row["industry"])
+                   sector=row["sector"], industry=row["industry"],
+                   category=category, market_cap=row["market_cap"])
             time.sleep(sleep_s)
     finally:
         jsonl.close()
@@ -423,6 +445,98 @@ def refresh_earnings(*, sleep_s: float = 1.5) -> None:
             con.execute("INSERT INTO earnings_events SELECT * FROM d")
             con.unregister("d")
             _audit(jsonl, kind="earnings", symbol=sym, status="ok", rows=int(len(out)))
+            time.sleep(sleep_s)
+    finally:
+        jsonl.close()
+        con.close()
+
+
+# --------------------------------------------------------------- option IV
+def _atm_iv(t, yfsym: str) -> float | None:
+    """At-the-money implied volatility (percent) from the nearest ~30d expiry."""
+    from datetime import datetime
+
+    expiries = t.options
+    if not expiries:
+        return None
+    today = datetime.utcnow().date()
+    target = today + timedelta(days=30)
+    expiry = min(expiries, key=lambda e: abs((pd.Timestamp(e).date() - target).days))
+    chain = t.option_chain(expiry)
+    rows = []
+    for frame in (chain.calls, chain.puts):
+        if frame is None or frame.empty:
+            continue
+        cols = {c.lower(): c for c in frame.columns}
+        strike_col = cols.get("strike")
+        iv_col = cols.get("impliedvolatility")
+        if not strike_col or not iv_col:
+            continue
+        sub = frame[[strike_col, iv_col]].dropna()
+        rows.extend((float(s), float(v)) for s, v in sub.itertuples(index=False))
+    if not rows:
+        return None
+    spot_row = None
+    try:
+        spot = float(t.fast_info["last_price"])
+        spot_row = min(rows, key=lambda r: abs(r[0] - spot))
+    except Exception:
+        strike_mid = sorted(r[0] for r in rows)[len(rows) // 2]
+        spot_row = min(rows, key=lambda r: abs(r[0] - strike_mid))
+    iv = spot_row[1]
+    return iv * 100.0 if iv <= 5.0 else iv  # Yahoo returns a fraction
+
+
+def refresh_iv(*, symbols: list[str] | None = None, sleep_s: float = 1.5) -> None:
+    """Snapshot each held symbol's ATM option IV into option_implied_vol.
+
+    One row per symbol per fetch date; re-running over time accumulates the
+    historical IV series the Viz assets table reads. The row is stamped with
+    the symbol's latest priced trade date (Yahoo's quote is effectively as of
+    that close), keeping IV on the price timeline so date-filtered views see
+    it; the wall-clock fetch time lives in the JSONL audit log.
+    """
+    duckdb_store.init_db()
+    con = duckdb.connect(str(DUCKDB_PATH))
+    jsonl = jsonl_path("market_scrape").open("a", encoding="utf-8")
+    today = datetime.utcnow().date()
+    try:
+        for target in _targets_for(symbols):
+            sym = yfsym = target.provider_symbol
+            log.info("Option IV %s", yfsym)
+            try:
+                t = _ticker(yfsym)
+                iv = _atm_iv(t, yfsym)
+                # Stamp to the symbol's latest priced date; symbols with no
+                # price rows fall back to the store's latest priced date so
+                # their IV stays on the price timeline.
+                row = con.execute(
+                    "SELECT MAX(trade_date) FROM daily_prices "
+                    "WHERE symbol = ? AND trade_date <= ?",
+                    [sym, today],
+                ).fetchone()
+                trade_date = row[0] if row and row[0] else con.execute(
+                    "SELECT MAX(trade_date) FROM daily_prices"
+                ).fetchone()[0]
+                if trade_date is None:
+                    trade_date = today
+            except Exception as e:
+                _audit(jsonl, kind="iv", symbol=sym, status="fail", err=str(e))
+                time.sleep(sleep_s)
+                continue
+            if iv is None:
+                _audit(jsonl, kind="iv", symbol=sym, status="empty")
+                time.sleep(sleep_s)
+                continue
+            con.execute(
+                "DELETE FROM option_implied_vol WHERE symbol = ? AND trade_date = ?",
+                [sym, trade_date],
+            )
+            con.execute(
+                "INSERT INTO option_implied_vol VALUES (?, ?, ?, NULL, NULL)",
+                [sym, trade_date, iv],
+            )
+            _audit(jsonl, kind="iv", symbol=sym, status="ok", iv_30d=iv)
             time.sleep(sleep_s)
     finally:
         jsonl.close()

@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .routes import config as config_route
-from .routes import monthly, performance, research, statements, transactions, viz
+from .routes import export, monthly, performance, research, statements, transactions, viz
 
 app = FastAPI(title="Trade History API", version="0.1.0")
 app.add_middleware(
@@ -22,6 +22,7 @@ app.include_router(performance.router)
 app.include_router(research.router)
 app.include_router(viz.router)
 app.include_router(config_route.router)
+app.include_router(export.router)
 app.include_router(statements.router)
 
 

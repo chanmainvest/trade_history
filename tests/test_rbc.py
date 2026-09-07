@@ -29,6 +29,20 @@ def test_rbc_dual_currency_blocks_form_one_statement_with_complete_scopes():
     }
     assert validate_parse_result(result).is_valid
 
+    # A legacy DRIP reinvestment prints as its own dated row with the unit
+    # count AND the cash debit it moved: it records as a journal leg with
+    # both facts, not a quantity-less adjustment.
+    drip = next(
+        row for row in statement.transactions
+        if "DIVREIN" in (row.description or "")
+    )
+    assert drip.txn_type == "journal"
+    assert drip.quantity == 1.0
+    assert drip.net_amount == -12.00
+    assert drip.instrument is not None
+    assert drip.instrument.name == "ALPHACORP"
+    assert "REINV@U$12.0000" in drip.description
+
 
 def test_rbc_compact_month_day_activity_is_not_dropped():
     result = RBCParser().parse(load_fixture("rbc/compact_month_day_activity.txt"))
@@ -87,7 +101,7 @@ def test_rbc_holdings_dividend_option_and_cash():
         if row.txn_type == "dividend" and row.currency == "CAD"
     )
     assert dividend.net_amount == 50.0
-    assert next(cash for cash in statement.cash_balances if cash.currency == "CAD").closing_balance == 1055.0
+    assert next(cash for cash in statement.cash_balances if cash.currency == "CAD").closing_balance == 1043.0
 
     option_transactions = [
         row
@@ -504,7 +518,10 @@ def test_rbc_merger_and_exchange_legs_print_in_kind_quantities():
     assert out_leg.instrument.asset_type == "mutual_fund"
     assert out_leg.instrument.resolution_method == "printed_fund_code"
 
-    exchanges = [row for row in statement.transactions if row.txn_type == "journal"]
+    exchanges = [
+        row for row in statement.transactions
+        if row.txn_type == "journal" and "DIVREIN" not in (row.description or "")
+    ]
     assert len(exchanges) == 1
     # Text-only fixtures carry no debit/credit columns, so the in-kind journal
     # quantity arrives via layout effects in production; the verb itself and

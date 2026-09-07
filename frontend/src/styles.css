@@ -357,6 +357,87 @@ tbody tr:hover td { background: var(--row-hover); }
   padding-right: 18px;
   box-shadow: 0 1px 0 var(--border);
 }
+.transactions-table .column-header-inner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.transactions-table .column-sort-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.transactions-table .column-sort-btn:hover {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+}
+.transactions-table .column-sort-arrow {
+  flex: none;
+  font-size: 9px;
+  color: var(--accent);
+}
+.transactions-table .column-filter-btn,
+.monthly-table .column-filter-btn {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.transactions-table .column-filter-btn:hover,
+.monthly-table .column-filter-btn:hover {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+}
+.transactions-table .column-filter-btn.has-value,
+.monthly-table .column-filter-btn.has-value { color: var(--accent); }
+.transactions-table .column-filter-count,
+.monthly-table .column-filter-count {
+  position: absolute;
+  top: -5px;
+  right: -7px;
+  background: var(--accent);
+  color: white;
+  border-radius: 8px;
+  font-size: 9px;
+  line-height: 1;
+  padding: 1px 4px;
+}
+.column-filter-pop { min-width: 0; }
+.monthly-th-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+.monthly-th-label { cursor: pointer; }
+.total-with-diff {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-weight: 600;
+}
 .transactions-table .column-header-label {
   display: block;
   overflow: hidden;
@@ -465,6 +546,122 @@ h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
 .checkbox-row { display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 0; }
 .checkbox-row label { display: flex; align-items: center; gap: 4px; cursor: pointer; color: var(--fg); }
 
+/* RRG sector groups: content-sized boxes packed into rows */
+.rrg-sector-list { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.rrg-sector-group {
+  border: 1px dashed var(--border); border-radius: 6px;
+  padding: 6px 10px 2px;
+  display: inline-flex; flex-direction: column;
+  width: fit-content; max-width: 100%;
+}
+.rrg-sector-group.off { opacity: 0.45; }
+.rrg-sector-header {
+  display: flex; align-items: center; gap: 6px;
+  cursor: pointer; font-weight: 600; font-size: 13px; color: var(--fg);
+}
+.rrg-sector-header input, .rrg-sector-group .checkbox-row input { cursor: pointer; }
+.rrg-sector-chip { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+/* RRG movement filter: highlights matching chips; Show/Hide all act on them only */
+.rrg-mov-filter { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-dim); font-size: 12px; }
+.rrg-mov-filter select { padding: 3px 4px; font: inherit; }
+.rrg-mov-op {
+  width: 28px; padding: 3px 0; text-align: center;
+  background: var(--bg-2); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px;
+  font: inherit; cursor: pointer;
+}
+.rrg-mov-op:hover { border-color: var(--accent); }
+.rrg-mov-count { font-size: 12px; color: var(--fg-dim); }
+.checkbox-row label.mov-match { outline: 1px solid var(--accent); border-radius: 3px; }
+.card.rrg-filtering .checkbox-row label:not(.mov-match) { opacity: 0.35; }
+
+/* Viz assets table */
+.table-scroll { overflow-x: auto; }
+.assets-table th, .assets-table td { white-space: nowrap; }
+.assets-table td.num, .assets-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.assets-table .asset-sym { font-weight: 700; margin-right: 6px; }
+.assets-table .asset-name { color: var(--fg-dim); margin-right: 6px; }
+.assets-table .asset-accounts { display: block; font-size: 11px; color: var(--fg-dim); opacity: 0.8; }
+.spark-cell { display: inline-flex; align-items: center; gap: 4px; }
+.spark-cell svg { display: block; }
+.spark-pct { font-size: 11px; font-weight: 700; min-width: 44px; text-align: right; }
+.spark-none { color: var(--fg-dim); }
+
+/* RRG help dialog */
+.rrg-help-btn {
+  background: var(--bg-2); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 50%;
+  width: 22px; height: 22px; min-width: 22px;
+  font-size: 13px; font-weight: 700; line-height: 1;
+  cursor: pointer; padding: 0;
+}
+.rrg-help-btn:hover { background: var(--accent); color: white; border-color: var(--accent); }
+
+/* RRG playback controls */
+.rrg-play-btn {
+  background: var(--bg-2); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 50%;
+  width: 30px; height: 30px; min-width: 30px;
+  font-size: 12px; line-height: 1;
+  cursor: pointer; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.rrg-play-btn:hover { background: var(--accent); color: white; border-color: var(--accent); }
+.rrg-play-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+/* Flat slider: the browser's default range styling insets the thumb travel by
+   half a thumb-width at each end (the thumb moves by its center), so the dot
+   can never sit on the ends. The negative margins let the track overhang its
+   slot by that half-width, putting the thumb center exactly on both ends.
+   Selector is scoped to beat `.filters input` padding. */
+.filters input.rrg-range {
+  -webkit-appearance: none; appearance: none;
+  height: 6px; background: var(--border); border-radius: 3px;
+  border: none;
+  margin: 0 -7px; padding: 0; cursor: pointer;
+}
+.rrg-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--panel, var(--bg-1));
+  cursor: pointer;
+}
+.rrg-range::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--panel, var(--bg-1));
+  cursor: pointer;
+}
+.rrg-range::-moz-range-track {
+  height: 6px; background: var(--border); border-radius: 3px;
+}
+.rrg-help-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.rrg-help-dialog {
+  background: var(--panel, var(--bg-1)); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 8px;
+  max-width: 620px; width: 100%;
+  max-height: 82vh; overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+.rrg-help-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--panel, var(--bg-1));
+}
+.rrg-help-head h3 { margin: 0; }
+.rrg-help-close {
+  background: none; border: none; color: var(--fg-dim);
+  font-size: 20px; line-height: 1; cursor: pointer; padding: 2px 6px;
+}
+.rrg-help-close:hover { color: var(--fg); }
+.rrg-help-body { padding: 12px 16px 16px; font-size: 13px; line-height: 1.55; }
+.rrg-help-body p { margin: 0 0 10px; }
+.rrg-help-body p:last-child { margin-bottom: 0; }
+
 /* SmartSelect (searchable multi-select) */
 .smart-select { position: relative; display: inline-block; min-width: 160px; }
 .smart-select .trigger {
@@ -560,6 +757,15 @@ h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--fg-dim); }
 }
 .snapshot-picker select {
   min-width: 168px;
+}
+.snapshot-picker button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.snapshot-picker button:disabled:hover {
+  border-color: var(--border);
+  background: var(--panel-2);
+  color: var(--fg);
 }
 .snapshot-compare-toggle {
   display: inline-flex;

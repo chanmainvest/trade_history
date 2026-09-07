@@ -21,6 +21,7 @@ from ..instrument_catalog import (
     listing_for_symbol,
     listing_for_text,
 )
+from ..parsers.name_resolver import PRINTED_FUND_CODE_RE as _PRINTED_FUND_CODE
 from ..parsers.name_resolver import resolve_ticker
 from ..parsers.types import (
     ParsedInstrument,
@@ -39,7 +40,6 @@ RESOLVER_VERSION = "identity-resolver-v5"
 _EXPLICIT_SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,8}$")
 _UNRESOLVED_SYMBOLS = {"", "UNKNOWN", "N/A", "NONE"}
 _NAME_TOKEN_SUFFIXES = ("INC", "LTD", "CORP", "FUND", "TRUST", "ETF")
-_PRINTED_FUND_CODE = re.compile(r"(?:RBF|TDB)\d{3,4}[A-Z]?")
 
 
 def _normalized(value: str | None) -> str:

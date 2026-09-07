@@ -31,6 +31,7 @@ def list_transactions(
     account_id: str | None = Query(None, description="comma-separated ids"),
     symbol: str | None = Query(None, description="comma-separated tickers"),
     txn_type: str | None = Query(None, description="comma-separated types"),
+    currency: str | None = None,
     min_abs_amount: float | None = Query(
         None, description="keep |net_amount| >= this value"
     ),
@@ -131,6 +132,10 @@ def list_transactions(
     if types:
         filters.append(f" AND txn_type IN ({','.join('?' * len(types))})")
         params.extend(types)
+    currencies = _csv_list(currency)
+    if currencies:
+        filters.append(f" AND currency IN ({','.join('?' * len(currencies))})")
+        params.extend(currencies)
     if min_abs_amount is not None and min_abs_amount > 0:
         filters.append(" AND ABS(COALESCE(net_amount, 0)) >= ?")
         params.append(min_abs_amount)
@@ -184,32 +189,87 @@ def accounts() -> dict:
 
 
 @router.get("/symbols")
-def symbols() -> dict:
+def symbols(account_id: str | None = None) -> dict:
+    """Distinct traded symbols; ``account_id`` narrows them to those accounts."""
+    acc_ids = [int(x) for x in _csv_list(account_id) if x.isdigit()]
+    txn_pred = ps_pred = ip_pred = tc_pred = ""
+    params: list = []
+    if acc_ids:
+        placeholders = ",".join("?" * len(acc_ids))
+        txn_pred = f" AND t.account_id IN ({placeholders})"
+        ps_pred = f" AND ps.account_id IN ({placeholders})"
+        ip_pred = f" AND ip.account_id IN ({placeholders})"
+        tc_pred = (
+            " AND EXISTS (SELECT 1 FROM transactions t2 "
+            f"WHERE t2.transaction_id = s.transaction_id AND t2.account_id IN ({placeholders}))"
+        )
+        params = acc_ids * 4
     with sqlite_db.session(sqlite_db.SQLITE_PATH) as conn:
         rows = [dict(r) for r in conn.execute(
             "SELECT DISTINCT COALESCE(i.option_root, i.symbol) AS symbol, "
             "       i.asset_type, i.currency FROM instruments i "
             "WHERE i.asset_type IN ('equity','etf','option','mutual_fund','bond') "
-            "  AND (EXISTS (SELECT 1 FROM transactions t WHERE t.instrument_id = i.instrument_id) "
-            "       OR EXISTS (SELECT 1 FROM position_snapshots ps WHERE ps.instrument_id = i.instrument_id) "
-            "       OR EXISTS (SELECT 1 FROM initial_positions ip WHERE ip.instrument_id = i.instrument_id) "
-            "       OR EXISTS (SELECT 1 FROM instrument_ticker_changes tc "
-            "                   WHERE tc.from_instrument_id = i.instrument_id "
-            "                      OR tc.to_instrument_id = i.instrument_id)) "
-            "ORDER BY symbol"
+            "  AND (EXISTS (SELECT 1 FROM transactions t WHERE t.instrument_id = i.instrument_id"
+            f"{txn_pred}) "
+            "       OR EXISTS (SELECT 1 FROM position_snapshots ps WHERE ps.instrument_id = i.instrument_id"
+            f"{ps_pred}) "
+            "       OR EXISTS (SELECT 1 FROM initial_positions ip WHERE ip.instrument_id = i.instrument_id"
+            f"{ip_pred}) "
+            "       OR EXISTS (SELECT 1 FROM instrument_ticker_change_sources s "
+            "                   JOIN instrument_ticker_changes tc "
+            "                     ON tc.ticker_change_id = s.ticker_change_id "
+            "                   WHERE (tc.from_instrument_id = i.instrument_id "
+            "                          OR tc.to_instrument_id = i.instrument_id)"
+            f"{tc_pred})) "
+            "ORDER BY symbol",
+            params,
         ).fetchall()]
     return {"rows": rows}
 
 
 @router.get("/txn-types")
-def txn_types() -> dict:
-    """Distinct transaction types actually present in the DB."""
+def txn_types(account_id: str | None = None) -> dict:
+    """Distinct transaction types actually present (optionally per account)."""
+    acc_ids = [int(x) for x in _csv_list(account_id) if x.isdigit()]
+    txn_where = ip_where = ""
+    params: list = []
+    if acc_ids:
+        placeholders = ",".join("?" * len(acc_ids))
+        txn_where = f" WHERE account_id IN ({placeholders})"
+        ip_where = f" WHERE account_id IN ({placeholders})"
+        params = acc_ids * 2
     with sqlite_db.session(sqlite_db.SQLITE_PATH) as conn:
         rows = [r[0] for r in conn.execute(
             "SELECT txn_type FROM ("
-            "SELECT DISTINCT txn_type FROM transactions "
-            "UNION ALL SELECT 'initial_position' WHERE EXISTS (SELECT 1 FROM initial_positions)"
-            ") ORDER BY txn_type"
+            "SELECT DISTINCT txn_type FROM transactions"
+            f"{txn_where} "
+            "UNION ALL SELECT 'initial_position' WHERE EXISTS (SELECT 1 FROM initial_positions"
+            f"{ip_where})"
+            ") ORDER BY txn_type",
+            params,
+        ).fetchall()]
+    return {"rows": rows}
+
+
+@router.get("/currencies")
+def currencies(account_id: str | None = None) -> dict:
+    """Distinct transaction currencies actually present (optionally per account)."""
+    acc_ids = [int(x) for x in _csv_list(account_id) if x.isdigit()]
+    where = ""
+    params: list = []
+    if acc_ids:
+        placeholders = ",".join("?" * len(acc_ids))
+        where = f" WHERE account_id IN ({placeholders})"
+        params = acc_ids * 2
+    with sqlite_db.session(sqlite_db.SQLITE_PATH) as conn:
+        rows = [r[0] for r in conn.execute(
+            "SELECT DISTINCT currency FROM ("
+            "SELECT currency FROM transactions"
+            f"{where} "
+            "UNION SELECT currency FROM initial_positions"
+            f"{where}"
+            ") WHERE currency IS NOT NULL ORDER BY currency",
+            params,
         ).fetchall()]
     return {"rows": rows}
 

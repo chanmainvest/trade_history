@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass
+from datetime import date
 
 from .parsers.types import ParsedInstrument, ParseResult
 
@@ -198,6 +199,138 @@ def record_ticker_change(
         (change_id, transaction_id, evidence_id),
     )
     return change_id
+
+
+def record_reviewed_ticker_change(
+    conn: sqlite3.Connection,
+    *,
+    from_instrument_id: int,
+    to_instrument_id: int,
+    effective_date: str,
+    conversion_ratio: float = 1.0,
+    resolution_method: str,
+    resolution_confidence: float,
+    notes: str | None = None,
+) -> tuple[int, bool]:
+    """Persist a curated (no printed transaction) ticker change.
+
+    Reviewed relationships are curated state: they carry no
+    ``instrument_ticker_change_sources`` row because no printed name-change
+    transaction exists, and ingest never deletes them.  Structural rules
+    mirror :func:`record_ticker_change` — two distinct instruments sharing
+    asset type and currency, a positive ratio, no branching lineage and no
+    cycle.  Re-applying the same (from, to, date) updates the record.
+    """
+    try:
+        date.fromisoformat(effective_date)
+    except ValueError as exc:
+        raise sqlite3.IntegrityError(
+            "ticker change effective_date must be an ISO date (YYYY-MM-DD)"
+        ) from exc
+    instruments = conn.execute(
+        """
+        SELECT instrument_id, asset_type, currency
+          FROM instruments
+         WHERE instrument_id IN (?, ?)
+        """,
+        (from_instrument_id, to_instrument_id),
+    ).fetchall()
+    if len(instruments) != 2 or from_instrument_id == to_instrument_id:
+        raise sqlite3.IntegrityError("ticker change requires two distinct instruments")
+    if len({(row["asset_type"], row["currency"]) for row in instruments}) != 1:
+        raise sqlite3.IntegrityError(
+            "ticker change instruments must have the same asset type and currency"
+        )
+    if conversion_ratio <= 0:
+        raise sqlite3.IntegrityError("ticker change ratio must be positive")
+
+    conflict = conn.execute(
+        """
+        SELECT 1 FROM instrument_ticker_changes
+         WHERE (from_instrument_id = ? AND
+                (to_instrument_id <> ? OR effective_date <> ?))
+            OR (to_instrument_id = ? AND
+                (from_instrument_id <> ? OR effective_date <> ?))
+         LIMIT 1
+        """,
+        (
+            from_instrument_id,
+            to_instrument_id,
+            effective_date,
+            to_instrument_id,
+            from_instrument_id,
+            effective_date,
+        ),
+    ).fetchone()
+    if conflict is not None:
+        raise sqlite3.IntegrityError("ticker change would create a branching lineage")
+
+    existing = conn.execute(
+        """
+        SELECT ticker_change_id FROM instrument_ticker_changes
+         WHERE from_instrument_id = ? AND to_instrument_id = ?
+           AND effective_date = ?
+        """,
+        (from_instrument_id, to_instrument_id, effective_date),
+    ).fetchone()
+    updated = existing is not None
+    if updated:
+        change_id = int(existing["ticker_change_id"])
+        conn.execute(
+            """
+            UPDATE instrument_ticker_changes
+               SET conversion_ratio = ?, status = 'reviewed',
+                   resolution_method = ?, resolution_confidence = ?, notes = ?
+             WHERE ticker_change_id = ?
+            """,
+            (
+                conversion_ratio,
+                resolution_method,
+                resolution_confidence,
+                notes,
+                change_id,
+            ),
+        )
+    else:
+        change_id = int(
+            conn.execute(
+                """
+                INSERT INTO instrument_ticker_changes(
+                    from_instrument_id, to_instrument_id, effective_date,
+                    conversion_ratio, status, resolution_method,
+                    resolution_confidence, notes
+                ) VALUES (?, ?, ?, ?, 'reviewed', ?, ?, ?)
+                RETURNING ticker_change_id
+                """,
+                (
+                    from_instrument_id,
+                    to_instrument_id,
+                    effective_date,
+                    conversion_ratio,
+                    resolution_method,
+                    resolution_confidence,
+                    notes,
+                ),
+            ).fetchone()[0]
+        )
+
+    cycle = conn.execute(
+        """
+        WITH RECURSIVE successors(instrument_id) AS (
+            SELECT to_instrument_id FROM instrument_ticker_changes
+             WHERE from_instrument_id = ?
+            UNION
+            SELECT tc.to_instrument_id
+              FROM instrument_ticker_changes tc
+              JOIN successors s ON tc.from_instrument_id = s.instrument_id
+        )
+        SELECT 1 FROM successors WHERE instrument_id = ? LIMIT 1
+        """,
+        (to_instrument_id, from_instrument_id),
+    ).fetchone()
+    if cycle is not None:
+        raise sqlite3.IntegrityError("ticker change would create a lineage cycle")
+    return change_id, updated
 
 
 def ticker_segments(conn: sqlite3.Connection, symbol: str) -> list[TickerSegment]:

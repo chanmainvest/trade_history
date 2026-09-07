@@ -154,7 +154,7 @@ just close the terminal.
     ```
 
     `uv run ledger market refresh-all` includes profiles, prices,
-    dividends, splits, financials, earnings, and FX in one pass.
+    dividends, splits, financials, earnings, IV snapshots, and FX in one pass.
 
 4. *(Optional but recommended)* Back-fill positions that pre-date your
     earliest statement:
@@ -222,13 +222,16 @@ just close the terminal.
 
 Every event the parser produced, filterable by:
 
-- **Institution** (multi-select with search).
-- **Account** (multi-select with search; respects the active portfolio).
-- **Symbol** (multi-select with search; scrolls inside max 2/3 screen
-  height).
-- **Type** (buy / sell / dividend / option_… etc., multi-select).
-- **Min |amount|** — 100 / 1k / 10k / 100k / 1M presets.
-- **Date range**.
+- **Date range** and **Min |amount|** (100 / 1k / 10k / 100k / 1M presets)
+  in the toolbar.
+- **Institution**, **Account**, **Symbol**, **Type**, and **Ccy** via a
+  funnel icon on each column header (multi-select with search; a colored
+  funnel with a count badge marks columns with an active filter). The option
+  lists follow the active portfolio; the **All accounts** control restores
+  the full lists.
+
+Click a column header to sort ascending, again for descending; quantity,
+price, and amount sort numerically, and empty values sort last.
 
 Click a symbol cell to jump to the Research tab.
 The table renders only the rows near the viewport (fixed-height rows between
@@ -258,12 +261,20 @@ database, across all accounts in the active portfolio.
   comparison date when you want to reset the diff.
 - Cash positions appear as `CAD Cash` / `USD Cash` rows per account. Totals
   show native currency buckets plus combined CAD and USD totals using the
-  latest FX rate on or before the snapshot date. The displayed FX chips state
-  both the rate and its date; native-currency buckets remain the primary total.
-- Columns are sortable; institution and account are visible, while the active
+  latest FX rate on or before the snapshot date; native-currency buckets
+  remain the primary total. When **Compare** is on, each totals box carries a
+  signed delta against the comparison snapshot — green for a gain, red for a
+  loss.
+- Columns are sortable; Institution and Account filter via funnel icons in
+  their column headers (multi-select with search), and the month stepper's
+  ◀/▶ buttons gray out at the earliest/latest available snapshot. The active
   portfolio is controlled by the top-bar dropdown instead of a repeated table
   column. Ticker symbols link to Research. The table scrolls inside its card
   and the header row stays pinned while rows scroll beneath it.
+- **P/L** shows unrealized profit/loss: the broker-printed value when the
+  statement provides one, otherwise market value minus book value (green
+  positive, red negative). It stays blank for cash rows and for holdings
+  whose cost basis the broker never printed — no number is invented.
 - When source icons are enabled, an icon appears only when the server has an
   exact/unique persisted rectangle. Reported rows link to their exact
   position/cash evidence. Reconstructed rows retain explicit checkpoint plus
@@ -279,6 +290,15 @@ database, across all accounts in the active portfolio.
   cell also shows its reconciliation result and warns about incomplete scopes,
   reconciliation issues, and stale or missing prices. These flags describe
   uncertainty; they never add a balancing transaction or guess a value.
+- **Export Yahoo CSV** — downloads the viewed snapshot's holdings as a CSV
+  that Yahoo Finance's "Import a CSV" portfolio flow accepts (one row per
+  holding: symbol, empty trade date, average cost, quantity). Only instruments
+  with a verified/candidate Yahoo symbol mapping are included; short and
+  other non-positive positions are exported with quantity `0` (Yahoo rejects
+  negative share lots); cash rows and incomplete holdings are skipped, and a
+  note under the
+  toolbar lists every skipped symbol so unmapped ones can be repaired via the
+  Yahoo symbol resolution workflow.
 
 ### 4.3 Performance
 
@@ -340,11 +360,32 @@ Per-symbol deep dive.
 Three views, all filtered by the active portfolio, with institution and
 account filters inside the tab:
 
-- **RRG (Relative Rotation Graph)** — animated, with adjustable trail.
-  Symbols in the same sector use related colors when profile metadata is
-  available. Use the checkbox row below the chart to hide individual
-  symbols.
-- **Treemap** — holdings sized by market value. Use **Group by** to switch
+- **RRG (Relative Rotation Graph)** — animated over the most recent year,
+  with adjustable trail that tapers from thick near each symbol's dot to thin
+  at its tail; dots glide between dates during playback. Separate ◀ / ▶
+  buttons play backward or forward (the active one becomes a pause button).
+  The play bar ends at
+  an **End** date picker (defaults to today; the chart shows the latest
+  available data on or before it). Symbols in the same sector use related
+  colors when profile metadata is available; ETFs group by their Yahoo fund
+  category (e.g. "Focused Region", "Digital Assets"), or as a generic "ETF"
+  group when no category exists, instead of landing in "Unknown". Use the
+  toggle card
+  below the chart to hide individual symbols, a whole sector (header
+  checkbox), or everything (**Hide all** / **Show all**). A **Movement**
+  filter in that card's header measures each symbol by the total distance it
+  travelled on the chart over the window: toggle the operator button
+  (`<` / `>`) for direction and pick a cut point from the dropdown — the
+  options are the movement quintiles, so each band holds about 20% of the
+  symbols (a match count is shown), then
+  **Show all** / **Hide all** apply to those matches only — e.g. hide every
+  symbol that moved more than the threshold to declutter the chart; clearing
+  the threshold restores whole-set behavior. The **?** button at
+  the top right opens a help dialog explaining how to read the chart.
+- **Treemap** — holdings sized by market value, all converted to one display
+  currency: a **CAD**/**USD** toggle (default **CAD**) converts every tile
+  presentation-only at the latest available USD/CAD rate, shown next to the
+  legend with its rate date. Use **Group by** to switch
   between institution/account, type, and sector. Use **Performance** to pick
   the period used for green/red coloring on the holding tiles. Defaults to
   the latest snapshot date (so it's never blank unless you actually have no
@@ -353,6 +394,19 @@ account filters inside the tab:
   `portfolio_dashboard`. **Sort-by** dropdown, top/left ticker labels, or
   cells can reorder both axes by correlation against a symbol; checkboxes
   hide/show individual symbols and use sector-colored accents.
+- **Assets** — a table of held assets (aggregated across the filtered
+  accounts) as of a selectable date (defaults to today; holdings come from
+  the latest complete checkpoint on or before it while prices use the
+  freshest data). Each row shows the latest Yahoo price when available, or a
+  `~`-prefixed broker-reported unit value when no Yahoo quote exists, plus
+  Yahoo market cap, 30-day realized (historical) volatility, the latest
+  option-implied IV with its date, and five Excel-style sparklines (1w / 1mo /
+  3mo / 1y / 3y) whose stroke shades red or green by the size of the window's
+  loss or gain with the signed percentage overlaid. The Value column is
+  intentionally hidden; click any remaining column header to sort and click
+  again to reverse the order. Unpriced assets and not-yet-scraped columns show
+  "—"; run `uv run ledger market refresh-iv` to populate or update the IV
+  column and `uv run ledger market refresh-profiles` for market caps.
 
 ### 4.6 Verify extraction
 

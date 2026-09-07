@@ -19,6 +19,7 @@ logs/*.jsonl
 Statements/
 frontend/node_modules/
 frontend/dist/
+# Local secrets (yahoo-upload skill; see .env.example for the expected keys)
 .env
 .minosa
 

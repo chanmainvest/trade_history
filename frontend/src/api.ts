@@ -33,8 +33,12 @@ export const api = {
   transactions: (p: Record<string, any> = {}) =>
     getJSON<{ rows: TxnRow[]; count: number; total_count: number; has_more: boolean }>("/transactions", p),
   accounts: () => getJSON<{ rows: Account[] }>("/transactions/accounts"),
-  symbols: () => getJSON<{ rows: SymbolRow[] }>("/transactions/symbols"),
-  txnTypes: () => getJSON<{ rows: string[] }>("/transactions/txn-types"),
+  symbols: (p: { account_id?: number[] } = {}) =>
+    getJSON<{ rows: SymbolRow[] }>("/transactions/symbols", p),
+  txnTypes: (p: { account_id?: number[] } = {}) =>
+    getJSON<{ rows: string[] }>("/transactions/txn-types", p),
+  currencies: (p: { account_id?: number[] } = {}) =>
+    getJSON<{ rows: string[] }>("/transactions/currencies", p),
   latestDate: () => getJSON<{ latest: string | null }>("/transactions/latest-date"),
 
   monthlyDates: (p: { account_id?: number[] } = {}) =>
@@ -43,6 +47,28 @@ export const api = {
     getJSON<{ as_of_date: string; rows: HoldingRow[]; totals?: SnapshotTotals }>("/monthly/snapshot", p),
   monthlyDiff: (p: { a: string; b: string; account_id?: number[] }) =>
     getJSON<{ a: string; b: string; rows: DiffRow[] }>("/monthly/diff", p),
+  exportYahooCsv: async (p: { month_end?: string; account_id?: number[] } = {}): Promise<{ skipped: string[] }> => {
+    const url = new URL(API_BASE + "/export/yahoo-csv", window.location.origin);
+    if (p.month_end) url.searchParams.set("month_end", p.month_end);
+    if (p.account_id && p.account_id.length > 0) {
+      url.searchParams.set("account_id", p.account_id.join(","));
+    }
+    const r = await fetch(url.toString());
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const text = await r.text();
+    const match = (r.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/);
+    const blobUrl = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = match ? match[1] : "yahoo_portfolio.csv";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    const [count, ...rest] = (r.headers.get("X-Yahoo-Export-Skipped") || "0:").split(":");
+    const skipped = Number(count) > 0 ? rest.join(":").split(",").filter(Boolean) : [];
+    return { skipped };
+  },
 
   perfTotal: (p: Record<string, any> = {}) =>
     getJSON<{ rows: { as_of_date: string; market_value: number; currency: string }[]; forward_fill_max_days: number | null; usd_cad?: [string, number][] }>(
@@ -60,14 +86,17 @@ export const api = {
     getJSON<{ symbol: string; period: string; rows: any[] }>(
       "/research/financials", { symbol, period }),
 
-  vizSector: (p: { month_end?: string; account_id?: number[]; period?: string } = {}) =>
-    getJSON<{ as_of_date: string | null; period?: string; price_data_through?: string | null; rows: { account_id: number; account_number: string; institution_code: string; institution_name: string; symbol: string; asset_type: string; currency: string; market_value: number; sector?: string | null; industry?: string | null; performance_pct?: number | null }[] }>(
+  vizSector: (p: { month_end?: string; account_id?: number[]; period?: string; currency?: string } = {}) =>
+    getJSON<{ as_of_date: string | null; period?: string; price_data_through?: string | null; currency?: string; fx?: { usd_cad: number; rate_date: string } | null; unconverted_currencies?: string[]; rows: { account_id: number; account_number: string; institution_code: string; institution_name: string; symbol: string; asset_type: string; currency: string; market_value: number; sector?: string | null; industry?: string | null; performance_pct?: number | null }[] }>(
       "/viz/holdings_by_sector", p),
   vizCorrelation: (p: { start: string; end: string; account_id?: number[] }) =>
     getJSON<{ symbols: string[]; matrix: number[][]; profiles?: Record<string, { sector?: string | null; industry?: string | null }> }>("/viz/correlation", p),
   vizRRG: (p: { benchmark?: string; window_days?: number; start?: string; end?: string; account_id?: number[] } = {}) =>
     getJSON<{ frames: { date: string; points: { symbol: string; x: number; y: number; sector?: string | null }[] }[] }>(
       "/viz/rrg", p),
+  vizAssets: (p: { month_end?: string; account_id?: number[] } = {}) =>
+    getJSON<{ as_of_date: string | null; price_data_through?: string | null; rows: AssetRow[] }>(
+      "/viz/assets", p),
 
   config: () => getJSON<UserConfig>("/config"),
   saveConfig: (cfg: Partial<UserConfig>) => putJSON<UserConfig>("/config", cfg),
@@ -117,6 +146,26 @@ export type Account = {
 };
 
 export type SymbolRow = { symbol: string; asset_type: string; currency: string };
+
+export type Sparkline = { points: number[]; pct: number | null };
+export type AssetRow = {
+  symbol: string;
+  market_symbol: string;
+  asset_type: string;
+  currency: string;
+  quantity: number;
+  market_value: number;
+  accounts: string[];
+  name: string | null;
+  price: number | null;
+  price_source: "yahoo" | "broker" | null;
+  price_date: string | null;
+  market_cap: number | null;
+  hv_30d: number | null;
+  iv: number | null;
+  iv_date: string | null;
+  sparks: Record<"1w" | "1mo" | "3mo" | "1y" | "3y", Sparkline>;
+};
 
 export type HoldingCheckpointContributor = {
   scope_key: string | null;

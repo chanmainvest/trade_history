@@ -581,6 +581,90 @@ def ingest_resolve_fund_lookup(file_path: str) -> None:
     )
 
 
+@ingest.command("apply-ticker-changes")
+@click.option(
+    "--file",
+    "file_path",
+    type=click.Path(exists=True, dir_okay=False),
+    required=True,
+    help="JSON file with reviewed ticker changes (see data/ticker_changes.json).",
+)
+def ingest_apply_ticker_changes(file_path: str) -> None:
+    """Apply reviewed, dated ticker changes from a JSON file.
+
+    The shared manual-review path for humans and agents: each entry carries
+    both printed symbols, asset_type/currency, the effective date, and the
+    evidence that justifies the relationship (never a name match). The
+    record is curated ``reviewed`` state — ingest never deletes it — and
+    ``ingest reconcile`` rolls positions across it. Re-run reconcile after
+    applying.
+    """
+    import json
+
+    from .db import sqlite as sqlite_db
+    from .ingest.ticker_change_lookup import (
+        apply_reviewed_ticker_changes,
+        load_ticker_change_entries,
+    )
+
+    try:
+        entries = load_ticker_change_entries(file_path)
+        with sqlite_db.session() as conn:
+            out = apply_reviewed_ticker_changes(conn, entries)
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(
+        f"Applied {out['entries']} reviewed ticker changes "
+        f"({out['inserted']} inserted, {out['updated']} updated). "
+        "Run 'ingest reconcile' to roll positions across them."
+    )
+
+
+@ingest.command("apply-symbol-normalizations")
+@click.option(
+    "--file",
+    "file_path",
+    type=click.Path(exists=True, dir_okay=False),
+    required=True,
+    help="JSON file with reviewed symbol normalizations.",
+)
+def ingest_apply_symbol_normalizations(file_path: str) -> None:
+    """Apply reviewed printed-symbol → canonical-symbol rules.
+
+    Each rule teaches extraction that a broker prints one instrument under
+    a different adjusted symbol (e.g. TD's OCC adjusted option roots);
+    future ingests resolve the printed symbol to the canonical instrument,
+    and applying merges any ledger rows already extracted under the
+    printed form. The printed symbol stays on record in the rule and in
+    the statement raw lines. Run 'ingest reconcile' afterwards.
+    """
+    import json
+
+    from .db import sqlite as sqlite_db
+    from .ingest.symbol_normalizations import (
+        apply_symbol_normalizations,
+        load_symbol_normalizations,
+    )
+
+    try:
+        entries = load_symbol_normalizations(file_path)
+        with sqlite_db.session() as conn:
+            out = apply_symbol_normalizations(conn, entries)
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    remapped = ", ".join(
+        f"{table}={count}" for table, count in sorted(out["remapped"].items())
+    )
+    click.echo(
+        f"Applied {out['rules']} reviewed symbol normalizations "
+        f"({out['rules_inserted']} inserted, {out['rules_updated']} updated; "
+        f"{out['instruments_merged']} instruments merged, "
+        f"{out['instruments_created']} created, {out['already_merged']} already merged, "
+        f"{out['pending_extraction']} pending extraction; remapped: {remapped}). "
+        "Run 'ingest reconcile' to refresh reconciliation results."
+    )
+
+
 @ingest.command("reconcile")
 def ingest_reconcile() -> None:
     """Rebuild transfer links, movement attribution, and reconciliation results."""
@@ -748,9 +832,20 @@ def market_refresh_splits() -> None:
 
 
 @market.command("refresh-profiles")
-def market_refresh_profiles() -> None:
+@click.option("--symbol", "symbols", multiple=True,
+              help="Provider symbols to (re)profile. Default: all held symbols.")
+def market_refresh_profiles(symbols: tuple[str, ...]) -> None:
     from .market.extras import refresh_profiles
-    refresh_profiles()
+    refresh_profiles(symbols=list(symbols) or None)
+
+
+@market.command("refresh-iv")
+@click.option("--symbol", "symbols", multiple=True,
+              help="Provider symbols to snapshot. Default: all held symbols.")
+def market_refresh_iv(symbols: tuple[str, ...]) -> None:
+    """Snapshot ATM option implied volatility into option_implied_vol."""
+    from .market.extras import refresh_iv
+    refresh_iv(symbols=list(symbols) or None)
 
 
 @market.command("refresh-financials")
@@ -792,6 +887,7 @@ def market_refresh_all(lookback_years: int) -> None:
         refresh_earnings,
         refresh_financials,
         refresh_fx,
+        refresh_iv,
         refresh_profiles,
         refresh_splits,
     )
@@ -802,6 +898,7 @@ def market_refresh_all(lookback_years: int) -> None:
     refresh_splits()
     refresh_financials()
     refresh_earnings()
+    refresh_iv()
     refresh_fx(lookback_years=lookback_years)
 
 

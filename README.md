@@ -156,6 +156,22 @@ Known limitations are shown in [Current state](spec/CURRENT-STATE.md). Monthly,
 Performance, and Visualisations share one canonical read-only holdings engine;
 Monthly now surfaces its quality fields without changing ledger data.
 
+### Yahoo Finance portfolio upload
+
+The Monthly tab's **Export Yahoo CSV** button downloads the selected
+portfolio's holdings as a CSV in Yahoo Finance's lots-import format
+(`Symbol, Trade Date, Purchase Price, Quantity`): only instruments with a
+Yahoo symbol mapping are exported, short and other non-positive quantities
+are exported with quantity `0` (Yahoo rejects negative lots), and cash and
+incomplete holdings are skipped (the skipped symbols are reported under the
+toolbar).
+
+The repo ships the `yahoo-upload` skill (`.zcode/skills/yahoo-upload/SKILL.md`)
+that drives a browser to sign in at Yahoo Finance and import that CSV into My
+Portfolio. It reads `YAHOO_USER` / `YAHOO_PASSWORD` from a repo-root `.env`
+file — copy `.env.example` to `.env` and fill in your own credentials. `.env`
+is gitignored; never commit it or place real credentials anywhere else.
+
 ## Repository map
 
 ```text

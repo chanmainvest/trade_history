@@ -1,0 +1,33 @@
+# Synthetic fixture: no real customer data.
+TD Direct Investing
+December 1, 2026 to December 31, 2026
+Account number: AB99ZZ
+Account type: Direct Trading - CDN
+Holdings in your account
+Canadian common shares
+THOMSON REUTERS CORP 100 SEG 119.540 11,714.92 11,952.48 -237.56 0.55%
+(TRI )
+Activity in your account this period
+Beginning cash balance $100.00
+Ending cash balance $100.00
+
+----- PAGE BREAK -----
+
+TD Direct Investing
+Your performance report
+January 1, 2026 to December 31, 2026
+Account number: AB99ZZ
+Account type: Direct Trading - CDN
+Account currency: Canadian dollars
+Last 12 months Since Jan 30, 2023
+(Jan 1, 2026 - Dec 31, 2026) (Jan 30, 2023 - Dec 31, 2026)
+Performance reporting beginning balance $1,000.00 $0.00
+Deposits including transfers in $5.00 $105.00
+Withdrawals including transfers out $0.00 $0.00
+Change in value of your account $10.00 $10.00
+Performance reporting ending balance $1,015.00 $1,015.00
+Your personal rates of return
+For the last Since
+12 months Jan 30, 2023
+(%) (%)
+3.50 1.20

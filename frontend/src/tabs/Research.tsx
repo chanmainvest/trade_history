@@ -78,7 +78,7 @@ export default function Research() {
     queryFn: () => api.financials(symbol, finPeriod),
     enabled: !!symbol,
   });
-  const symbolsQ = useQuery({ queryKey: ["symbols"], queryFn: api.symbols });
+  const symbolsQ = useQuery({ queryKey: ["symbols"], queryFn: () => api.symbols() });
 
   const allRows = pricesQ.data?.rows ?? [];
   // Period cutoff

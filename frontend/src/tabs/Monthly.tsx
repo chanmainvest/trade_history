@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { api, HoldingRow } from "../api";
 import { SourceLink } from "../SourceLink";
 import { usePortfolio } from "../portfolio";
-import { SmartSelect } from "../SmartSelect";
+import { SmartFilterIcon } from "../SmartSelect";
 import { useI18n } from "../i18n";
 
 type SnapshotLabel = { date: string; label: string; year: string };
@@ -65,6 +65,17 @@ function startOfYear(iso: string): string {
 function fmtNum(n: number | null | undefined, dec = 2) {
   if (n === null || n === undefined) return "";
   return n.toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+
+/** Signed money delta; green when positive (profit), red when negative. */
+function DiffValue({ value }: { value: number }) {
+  if (Math.abs(value) < 0.005) return null;
+  const magnitude = fmtNum(Math.abs(value));
+  return (
+    <span className={value > 0 ? "pos" : "neg"} aria-label={value > 0 ? "gain" : "loss"}>
+      {value > 0 ? "+" : "-"}{magnitude}
+    </span>
+  );
 }
 
 function interpolate(text: string, values: Record<string, string>): string {
@@ -174,8 +185,24 @@ export function HoldingSources({ row }: { row: HoldingRow }) {
 }
 
 type Col =
-  | "institution_code" | "account_number" | "symbol" | "asset_type"
+  | "institution_code" | "account_number" | "symbol" | "asset_type" | "option"
   | "quantity" | "market_price" | "market_value" | "unrealized_pnl" | "currency";
+
+function optionKey(r: { option_type: string | null; option_strike: number | null; option_expiry: string | null }) {
+  return r.option_type
+    ? `${r.option_type}|${r.option_strike ?? 0}|${r.option_expiry ?? ""}`
+    : "";
+}
+
+/** Broker-printed P/L when present, otherwise derived from printed
+ *  market/book values. Cash rows and rows without a printed cost basis
+ *  stay blank. */
+function displayedPnl(r: HoldingRow): number | null {
+  if (r.asset_type === "cash") return null;
+  if (r.unrealized_pnl !== null && r.unrealized_pnl !== undefined) return r.unrealized_pnl;
+  if (r.market_value == null || r.book_value == null) return null;
+  return r.market_value - r.book_value;
+}
 
 export default function Monthly() {
   const { activeAccountIds, config } = usePortfolio();
@@ -216,8 +243,24 @@ export default function Monthly() {
   const [instFilter, setInstFilter] = useState<string[]>([]);
   const [acctFilter, setAcctFilter] = useState<string[]>([]);
   const [hideZero, setHideZero] = useState(true);
+  const [yahooExport, setYahooExport] = useState<{ busy: boolean; skipped: string[]; error: boolean }>(
+    { busy: false, skipped: [], error: false },
+  );
   const [sortCol, setSortCol] = useState<Col>("market_value");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  async function exportYahooCsv() {
+    setYahooExport({ busy: true, skipped: [], error: false });
+    try {
+      const { skipped } = await api.exportYahooCsv({
+        month_end: effectiveB || undefined,
+        account_id: activeAccountIds.length > 0 ? activeAccountIds : undefined,
+      });
+      setYahooExport({ busy: false, skipped, error: false });
+    } catch {
+      setYahooExport({ busy: false, skipped: [], error: true });
+    }
+  }
 
   const snapQ = useQuery({
     queryKey: ["snap", effectiveB, activeAccountIds],
@@ -235,9 +278,51 @@ export default function Monthly() {
     }),
     enabled: !!effectiveA && !!effectiveB && effectiveA !== effectiveB,
   });
+  // Snapshot A is fetched when comparing so the totals boxes can show
+  // exact per-currency deltas (the diff endpoint only lists rows whose
+  // quantity changed, which would miss pure price moves).
+  const snapAQ = useQuery({
+    queryKey: ["snap", effectiveA, activeAccountIds],
+    queryFn: () => api.monthlySnapshot({
+      month_end: effectiveA,
+      account_id: activeAccountIds.length > 0 ? activeAccountIds : undefined,
+    }),
+    enabled: compare && !!effectiveA && effectiveA !== effectiveB,
+  });
 
   // Local filters + sort
   const allRows = snapQ.data?.rows ?? [];
+  const applyFilters = useMemo(() => {
+    return (rows: HoldingRow[]) => {
+      let out = [...rows];
+      if (instFilter.length) out = out.filter((r) => instFilter.includes(r.institution_code));
+      if (acctFilter.length) {
+        out = out.filter((r) =>
+          acctFilter.includes(`${r.institution_code}::${r.account_number}`));
+      }
+      if (hideZero) out = out.filter((r) => Math.abs(r.quantity) > 1e-9);
+      return out;
+    };
+  }, [instFilter, acctFilter, hideZero]);
+
+  const filtered = useMemo(() => {
+    const rows = applyFilters(allRows);
+    rows.sort((x, y) => {
+      const xv = sortCol === "option" ? optionKey(x) : (x as any)[sortCol];
+      const yv = sortCol === "option" ? optionKey(y) : (y as any)[sortCol];
+      if (xv == null && yv == null) return 0;
+      if (xv == null) return 1;
+      if (yv == null) return -1;
+      if (typeof xv === "number" && typeof yv === "number") {
+        return sortDir === "asc" ? xv - yv : yv - xv;
+      }
+      return sortDir === "asc"
+        ? String(xv).localeCompare(String(yv))
+        : String(yv).localeCompare(String(xv));
+    });
+    return rows;
+  }, [allRows, applyFilters, sortCol, sortDir]);
+
   const instOpts = useMemo(() => {
     const s = new Set<string>();
     for (const r of allRows) s.add(r.institution_code);
@@ -252,47 +337,31 @@ export default function Monthly() {
     return Array.from(s.entries()).map(([v, l]) => ({ value: v, label: l }));
   }, [allRows]);
 
-  const filtered = useMemo(() => {
-    let rows = [...allRows];
-    if (instFilter.length) rows = rows.filter((r) => instFilter.includes(r.institution_code));
-    if (acctFilter.length) {
-      rows = rows.filter((r) =>
-        acctFilter.includes(`${r.institution_code}::${r.account_number}`));
-    }
-    if (hideZero) rows = rows.filter((r) => Math.abs(r.quantity) > 1e-9);
-    rows.sort((x, y) => {
-      const xv = (x as any)[sortCol];
-      const yv = (y as any)[sortCol];
-      if (xv == null && yv == null) return 0;
-      if (xv == null) return 1;
-      if (yv == null) return -1;
-      if (typeof xv === "number" && typeof yv === "number") {
-        return sortDir === "asc" ? xv - yv : yv - xv;
-      }
-      return sortDir === "asc"
-        ? String(xv).localeCompare(String(yv))
-        : String(yv).localeCompare(String(xv));
-    });
-    return rows;
-  }, [allRows, instFilter, acctFilter, hideZero, sortCol, sortDir]);
-
   const totalsByCurrency: Record<string, number> = {};
   for (const r of filtered) {
     totalsByCurrency[r.currency] = (totalsByCurrency[r.currency] || 0) + (r.market_value || 0);
   }
+  // Same-scope totals for the comparison snapshot (only fetched when comparing).
+  const totalsAByCurrency: Record<string, number> = {};
+  for (const r of applyFilters(snapAQ.data?.rows ?? [])) {
+    totalsAByCurrency[r.currency] = (totalsAByCurrency[r.currency] || 0) + (r.market_value || 0);
+  }
+  const comparing = effectiveA !== effectiveB;
+
+  function combinedFrom(nativeTotals: Record<string, number>, fx?: { usd_cad?: number; cad_usd?: number }) {
+    const out: { CAD?: number; USD?: number } = {};
+    if (Object.keys(nativeTotals).length > 0) {
+      const cad = nativeTotals.CAD || 0;
+      const usd = nativeTotals.USD || 0;
+      if (usd === 0 || fx?.usd_cad !== undefined) out.CAD = cad + usd * (fx?.usd_cad || 0);
+      if (cad === 0 || fx?.cad_usd !== undefined) out.USD = usd + cad * (fx?.cad_usd || 0);
+    }
+    return out;
+  }
   const snapshotTotals = snapQ.data?.totals;
   const fxTotals = snapshotTotals?.combined;
-  const combinedTotals: { CAD?: number; USD?: number } = {};
-  if (Object.keys(totalsByCurrency).length > 0) {
-    const cad = totalsByCurrency.CAD || 0;
-    const usd = totalsByCurrency.USD || 0;
-    if (usd === 0 || fxTotals?.usd_cad !== undefined) {
-      combinedTotals.CAD = cad + usd * (fxTotals?.usd_cad || 0);
-    }
-    if (cad === 0 || fxTotals?.cad_usd !== undefined) {
-      combinedTotals.USD = usd + cad * (fxTotals?.cad_usd || 0);
-    }
-  }
+  const combinedTotals = combinedFrom(totalsByCurrency, fxTotals);
+  const combinedTotalsA = combinedFrom(totalsAByCurrency, snapAQ.data?.totals?.combined);
   const needsFxForCombined = (
     (totalsByCurrency.CAD || 0) > 0
     && (totalsByCurrency.USD || 0) > 0
@@ -355,12 +424,26 @@ export default function Monthly() {
             )}
           </label>
         )}
-        <SmartSelect label={t("f.institution")} options={instOpts} value={instFilter} onChange={setInstFilter} />
-        <SmartSelect label={t("f.account")} options={acctOpts} value={acctFilter} onChange={setAcctFilter} />
         <label><input type="checkbox" checked={hideZero}
                       onChange={(e) => setHideZero(e.target.checked)} />&nbsp;{t("monthly.hide_zero")}</label>
+        <button type="button" disabled={!effectiveB || yahooExport.busy}
+                title={t("monthly.export_yahoo_title")}
+                onClick={exportYahooCsv}>
+          {t("monthly.export_yahoo")}
+        </button>
         <span className="muted">{filtered.length} {t("monthly.rows")}</span>
       </div>
+      {yahooExport.error && (
+        <p className="muted" style={{ margin: "0 0 8px" }}>{t("monthly.export_yahoo_failed")}</p>
+      )}
+      {!yahooExport.error && yahooExport.skipped.length > 0 && (
+        <p className="muted" style={{ margin: "0 0 8px" }}>
+          {interpolate(t("monthly.export_yahoo_skipped"), {
+            count: String(yahooExport.skipped.length),
+            symbols: yahooExport.skipped.join(", "),
+          })}
+        </p>
+      )}
       {snapQ.data?.as_of_date && snapQ.data.as_of_date !== effectiveB && (
         <p className="muted" style={{ margin: "0 0 8px" }}>
           {interpolate(t("monthly.resolved_as_of"), { date: snapQ.data.as_of_date })}
@@ -368,34 +451,33 @@ export default function Monthly() {
       )}
 
       <div className="card">
-        <h3>{t("monthly.totals_as_of")} {effectiveB || `(${t("monthly.no_data")})`}</h3>
         <div className="kv">
           {Object.entries(totalsByCurrency).map(([c, v]) => (
-            <span key={c} className="tag accent"><strong>{c}</strong>&nbsp;{fmtNum(v)}</span>
+            <span key={c} className="total-with-diff">
+              <span className="tag accent"><strong>{c}</strong>&nbsp;{fmtNum(v)}</span>
+              {comparing && (
+                <DiffValue value={v - (totalsAByCurrency[c] || 0)} />
+              )}
+            </span>
           ))}
           {combinedTotals.CAD !== undefined && (
-            <span className="tag"><strong>{t("monthly.total_cad")}</strong>&nbsp;{fmtNum(combinedTotals.CAD)}</span>
-          )}
-          {combinedTotals.USD !== undefined && (
-            <span className="tag"><strong>{t("monthly.total_usd")}</strong>&nbsp;{fmtNum(combinedTotals.USD)}</span>
-          )}
-          {fxTotals?.usd_cad !== undefined && (
-            <span className="tag muted">
-              {interpolate(t("monthly.fx_usd_cad"), { rate: fmtNum(fxTotals.usd_cad) })}
-              {fxTotals.cad_fx_date ? ` · ${interpolate(t("monthly.fx_date"), { date: fxTotals.cad_fx_date })}` : ""}
+            <span className="total-with-diff">
+              <span className="tag"><strong>{t("monthly.total_cad")}</strong>&nbsp;{fmtNum(combinedTotals.CAD)}</span>
+              {comparing && combinedTotalsA.CAD !== undefined && (
+                <DiffValue value={combinedTotals.CAD - combinedTotalsA.CAD} />
+              )}
             </span>
           )}
-          {fxTotals?.cad_usd !== undefined && (
-            <span className="tag muted">
-              {interpolate(t("monthly.fx_cad_usd"), { rate: fmtNum(fxTotals.cad_usd) })}
-              {fxTotals.usd_fx_date ? ` · ${interpolate(t("monthly.fx_date"), { date: fxTotals.usd_fx_date })}` : ""}
+          {combinedTotals.USD !== undefined && (
+            <span className="total-with-diff">
+              <span className="tag"><strong>{t("monthly.total_usd")}</strong>&nbsp;{fmtNum(combinedTotals.USD)}</span>
+              {comparing && combinedTotalsA.USD !== undefined && (
+                <DiffValue value={combinedTotals.USD - combinedTotalsA.USD} />
+              )}
             </span>
           )}
           {needsFxForCombined && (
             <span className="tag muted">{t("monthly.fx_unavailable")}</span>
-          )}
-          {effectiveA !== effectiveB && (
-            <span className="tag">{interpolate(t("monthly.diff_legend"), { date: effectiveA })}</span>
           )}
         </div>
       </div>
@@ -405,10 +487,27 @@ export default function Monthly() {
           <thead>
             <tr>
               {showSourceLinks && <th aria-label={t("source.column")} />}
-              <th onClick={() => toggleSort("institution_code")}>{t("f.institution")}{arrow("institution_code")}</th>
-              <th onClick={() => toggleSort("account_number")}>{t("th.account")}{arrow("account_number")}</th>
+              <th onClick={() => toggleSort("institution_code")}>
+                <span className="monthly-th-inner">
+                  <span className="monthly-th-label">{t("f.institution")}{arrow("institution_code")}</span>
+                  <SmartFilterIcon
+                    label={t("f.institution")}
+                    options={instOpts} value={instFilter} onChange={setInstFilter}
+                  />
+                </span>
+              </th>
+              <th onClick={() => toggleSort("account_number")}>
+                <span className="monthly-th-inner">
+                  <span className="monthly-th-label">{t("th.account")}{arrow("account_number")}</span>
+                  <SmartFilterIcon
+                    label={t("th.account")}
+                    options={acctOpts} value={acctFilter} onChange={setAcctFilter}
+                  />
+                </span>
+              </th>
               <th onClick={() => toggleSort("symbol")}>{t("th.symbol")}{arrow("symbol")}</th>
               <th onClick={() => toggleSort("asset_type")}>{t("th.type")}{arrow("asset_type")}</th>
+              <th onClick={() => toggleSort("option")}>Option{arrow("option")}</th>
               <th>{t("quality.checkpoint")}</th>
               <th>{t("verify.quality")}</th>
               <th className="num" onClick={() => toggleSort("quantity")}>{t("th.quantity")}{arrow("quantity")}</th>
@@ -424,6 +523,7 @@ export default function Monthly() {
               const k = r.holding_key;
               const delta = diffMap.get(k);
               const showDelta = effectiveA !== effectiveB;
+              const pnl = displayedPnl(r);
               const rowClass = showDelta && delta != null
                 ? (delta > 0 ? "diff-add" : delta < 0 ? "diff-del" : "")
                 : "";
@@ -435,7 +535,8 @@ export default function Monthly() {
                   <td>{r.institution_code}</td>
                   <td>{r.account_number}</td>
                   <td>{r.asset_type === "cash" ? r.symbol : <Link to={`/research/${r.symbol}`}>{r.symbol}</Link>}</td>
-                  <td>{r.asset_type}{r.option_type ? ` ${r.option_type} ${fmtNum(r.option_strike, 2)} ${r.option_expiry || ""}` : ""}</td>
+                  <td>{r.asset_type}</td>
+                  <td>{r.option_type ? `${r.option_type} ${fmtNum(r.option_strike, 2)} ${r.option_expiry || ""}` : ""}</td>
                   <td>{r.provenance.type === "multiple_checkpoints"
                     ? t("quality.multiple_checkpoints")
                     : r.checkpoint_date || t("quality.unavailable")}</td>
@@ -446,7 +547,7 @@ export default function Monthly() {
                   <td className={"num " + (delta == null ? "" : delta > 0 ? "pos" : delta < 0 ? "neg" : "")}>
                     {showDelta && delta != null && delta !== 0 ? fmtNum(delta, 0) : ""}
                   </td>
-                  <td className={"num " + ((r.unrealized_pnl ?? 0) < 0 ? "neg" : "pos")}>{fmtNum(r.unrealized_pnl)}</td>
+                  <td className={"num " + (pnl == null ? "" : pnl < 0 ? "neg" : "pos")}>{fmtNum(pnl)}</td>
                   <td>{r.currency}</td>
                 </tr>
               );
@@ -460,6 +561,7 @@ export default function Monthly() {
                 <td>{d.account_number}</td>
                 <td>{d.asset_type === "cash" ? d.symbol : <Link to={`/research/${d.symbol}`}>{d.symbol}</Link>}</td>
                 <td>{d.asset_type}</td>
+                <td>{d.option_type ? `${d.option_type} ${fmtNum(d.option_strike, 2)} ${d.option_expiry || ""}` : ""}</td>
                 <td></td>
                 <td></td>
                 <td className="num">{fmtNum(d.qty_a, 0)}</td>

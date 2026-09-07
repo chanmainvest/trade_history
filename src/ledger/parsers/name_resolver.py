@@ -82,7 +82,17 @@ NAME_TO_TICKER: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"\bHECLA\s+MINING\s+(?:CO|COMPANY)\b"),                   "HL", "equity"),
     (re.compile(r"\bWHEATON\s+PRECIOUS\s+METALS\b"),                       "WPM", "equity"),
     (re.compile(r"\bPAN\s+AMERICAN\s+SILVER\b"),                           "PAAS", "equity"),
-    (re.compile(r"\bBMO\s+EURO(?:PE)?\s+HI(?:GH)?\s+DIV\s+COV\s+ETF\b"),   "ZWE", "etf"),
+    # ZWP is the UNHEDGED BMO Europe High Dividend Covered Call ETF; the
+    # hedged share class prints "HEDGED TO CAD" in its name (BMO distributes
+    # them as separate ETFs — ZWP $0.105 vs ZWE $0.120, Feb 2026 notice).
+    # The asset type matches TD's holdings-typed instrument so one identity
+    # carries both the holdings snapshots and the activity rows.
+    (re.compile(r"\bBMO\s+EURO(?:PE)?\s+HI(?:GH)?\s+DIV\s+COV\s+ETF\b"),   "ZWP", "equity"),
+    # Dividend rows print these equity names without their wrapped symbols
+    # (holdings rows pair them: "SUNCOR ENERGY INC … NEW (SU)",
+    # "CANADIAN NATIONAL … RAILWAY (CNR)").
+    (re.compile(r"\bSUNCOR\s+ENERGY\b"),                                    "SU", "equity"),
+    (re.compile(r"\bCANADIAN\s+NATIONAL\b"),                                "CNR", "equity"),
     (re.compile(r"\bNEWMONT\s+CORPORATION\b"),                              "NEM", "equity"),
     (re.compile(r"\bROYAL\s+GOLD\s+INC\b"),                                "RGLD", "equity"),
     (re.compile(r"\bOSISKO\s+GOLD\s+ROYALTIES\s+LTD\b"),                  "OR", "equity"),
@@ -106,6 +116,25 @@ NAME_TO_TICKER: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"\bSPROTT\s+PHYSICAL\s+URANIUM\b"),                        "U.UN", "equity"),
     (re.compile(r"\bENCORE\s+ENERGY\s+CORP\b"),                             "EU", "equity"),
     (re.compile(r"\bVANECK\b.*\bURANIUM\s+AND\s+NUCLEAR\s+ETF\b"),         "NLR", "etf"),
+    # Names below were added from TD WebBroker rows that print no symbol:
+    # reverse-split book-swap legs (2026-05) and abbreviated transfer names.
+    (re.compile(r"\bTHOMSON\s+REUTERS\b"),                                  "TRI", "equity"),
+    (re.compile(r"\bGLB\s+X\s+US\s+DOLL\s+CURR\b"),                         "DLR.U", "etf"),
+    # TD mutual-fund series print their name and TDB#### code together on
+    # the holdings row (TD WebBroker 58MRB0, 2026-04..2026-06).
+    (re.compile(r"\bTD\s+CDN\s+EQ-D\b"),                                    "TDB3089C", "mutual_fund"),
+    (re.compile(r"\bTD\s+DIV\s+INCM-D\b"),                                  "TDB3087C", "mutual_fund"),
+    # TD abbreviates these equity names on dividend rows; the holdings rows
+    # pair each name with its wrapped symbol on the same statement
+    # (TD WebBroker 58MRB0, 2026-06/2026-07).
+    (re.compile(r"\bCANADIAN\s+PAC(?:IFIC)?(?:\s+KANSAS(?:\s+CITY)?)?\b"),  "CP", "equity"),
+    (re.compile(r"\b(?:CDN|CANADIAN)\s+IMPERIAL\s+(?:BK|BANK)(?:\s+OF\s+COMMERCE)?\b"),
+                                                                            "CM", "equity"),
+    # RBC pooled-fund series print the pool name on exchange rows without
+    # the fund code; the holdings rows pair each name with its RBF#### code
+    # (TD WebBroker 58MRB0, 2026-02/2026-03).
+    (re.compile(r"\bRBC\s+QUBE\s+CDN\b"),                                   "RBF678C", "mutual_fund"),
+    (re.compile(r"\bRBC\s+OSH\s+CD\b"),                                     "RBF610C", "mutual_fund"),
 ]
 
 # Leading words that aren't part of the security name (verbs, qualifiers).
@@ -118,6 +147,12 @@ _LEADING_NOISE = {
     "OPENING", "CLOSING",
     "MGR", "MERGER", "EXCHANGE",
 }
+
+
+# Strict broker fund codes (RBC ICF / TD series). A curated name entry that
+# resolves to one of these carries the broker's own printed fund-code
+# identity: the holdings rows pair the name and code on the same line.
+PRINTED_FUND_CODE_RE = re.compile(r"(?:RBF|TDB)\d{3,4}[A-Z]?")
 
 
 def strip_leading_verbs(desc: str) -> str:
@@ -151,8 +186,9 @@ def resolve_ticker(desc: str, currency: str | None = None) -> tuple[str, str] | 
             return "NGT", atype
         if tkr == "DLR.U" and currency == "CAD":
             return "DLR", atype
-        if tkr == "AG" and currency == "CAD":
-            return "FR", atype
+        # First Majestic renamed its TSX ticker FR -> AG (the 2025-2026 CIBC
+        # holdings rows print "(AG/TSX)"), so a bare-name CAD row resolves
+        # to AG — the same identity its holdings snapshots already use.
         if tkr == "UROY" and currency == "CAD":
             return "URC", atype
         if tkr == "SAND" and currency == "CAD":

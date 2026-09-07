@@ -37,6 +37,7 @@ from .name_resolver import resolve_ticker, synthetic_symbol
 from .registry import register
 from .types import (
     ParsedAccount,
+    ParsedAnnualPerformance,
     ParsedCashBalance,
     ParsedInstrument,
     ParsedPosition,
@@ -67,12 +68,34 @@ RE_FILE_ACCT     = re.compile(r"(\d{3}[-]?\d{5})")
 # Option position line in "Other" subsection of Portfolio Assets:
 #   CALL .FNV MAR 15 2024 180   10  $4,119.45  2.000  $2,000.00  —
 #   PUT .NGT JUN 21 2024 50    -20 -$8,268.05  2.750 -$5,500.00  —
-# Adjusted roots may carry digits (SOXS1 after a reverse split).
+# Adjusted roots may carry digits (SOXS1 after a reverse split). When both
+# quantity and book value are negative the columns can print flush together
+# with no separating space ("PUT GLD JUN 18 2026 340 -200-$127,743.05 ...",
+# 588-93738 Mar 2026 holdings): the "-$" lookahead accepts exactly that
+# shape, where the split at the minus sign is the only tokenization.
 RE_OPT_POS = re.compile(
     r"^(CALL|PUT)\s+\.?([A-Z][A-Z0-9]{0,5})\s+([A-Z]{3})\s+(\d{1,2})\s+(\d{4})\s+"
-    r"(\d+(?:\.\d+)?)\s+(-?\d[\d,]*)\s+"
+    r"(\d+(?:\.\d+)?)\s+(-?\d[\d,]*)(?:\s+|(?=-\$))"
     r"(-?\$?[\d,]+\.\d+)\s+(\d+(?:\.\d+)?)\s+(-?\$?[\d,]+\.\d+)"
 )
+
+# Strikeless variant: the strike column wrapped onto the continuation line,
+# leaving the quantity in the strike slot (588-93738 Feb-Apr 2026 SLV rows):
+#   PUT SLV APR 17 2026 25 $17,463.20 5.400 $13,500.00  —
+#   70.50 ISHARES SILVER SHARES
+# Account-owner review (2026-09): the inline number is the quantity — the
+# printed market value pins it (5.400 x 25 x 100 = $13,500.00) — and the
+# wrapped number is the strike, echoed identically under the Feb 17 Bought
+# activity row. Rows whose strike prints nowhere stay quarantined.
+RE_OPT_POS_WRAPPED_STRIKE = re.compile(
+    r"^(CALL|PUT)\s+\.?([A-Z][A-Z0-9]{0,5})\s+([A-Z]{3})\s+(\d{1,2})\s+(\d{4})\s+"
+    r"(-?\d[\d,]*)\s+(-?\$?[\d,]+\.\d+)\s+(\d+(?:\.\d+)?)\s+(-?\$?[\d,]+\.\d+)"
+)
+
+# Continuation line carrying the wrapped strike: a leading positive number
+# followed by the underlying description text (never a data row — option
+# rows start with CALL/PUT — and never bare furniture digits).
+RE_OPT_WRAP_STRIKE_LINE = re.compile(r"^(\d+(?:\.\d+)?)\s+[A-Za-z]")
 
 # Option txn line inside Account Activity:
 #   Bought CALL .FNV MAR 15 2024 180 10 4.100 -$4,119.45
@@ -95,6 +118,30 @@ RE_OPT_EVENT = re.compile(
     r"\b(Expired|Exercised|Assignment|Assigned|Expire|Exercise|Assign|Shrs in xc)\s+"
     r"(CALL|PUT)\s+\.?([A-Z][A-Z0-9]{0,5})\s+([A-Z]{3})\s+(\d{1,2})\s+(\d{4})\s+"
     r"(\d+(?:\.\d+)?)(?:\s+(-?\d[\d,]*))?(?:\s+—){1,2}\s*$"
+)
+
+# Activity rows whose contract description split across lines: the strike
+# wrapped onto the continuation line under the row, leaving the quantity in
+# the strike slot (588-93738 Feb-Apr 2026 SLV rows, account-owner reviewed):
+#   Bought PUT SLV APR 17 2026 25 6.970 -$17,463.20
+#   70.50 ISHARES SILVER SHARES
+#   Expired PUT SLV APR 17 2026 -25 — —
+#   70.50 ISHARES SILVER SHARES
+# The priced variant only ever sees rows RE_OPT_TXN rejected (three tail
+# tokens, not four); the event variant requires a NEGATIVE quantity — a
+# strike never prints negative, so RE_OPT_EVENT's strike-only reading of a
+# single positive number is untouched. Both are gated on the strike line
+# actually printing below; rows whose strike prints nowhere keep the prior
+# handling (quarantine).
+RE_OPT_TXN_WRAPPED_STRIKE = re.compile(
+    r"\b(Bought|Sold)\s+"
+    r"(CALL|PUT)\s+\.?([A-Z][A-Z0-9]{0,5})\s+([A-Z]{3})\s+(\d{1,2})\s+(\d{4})\s+"
+    r"(-?\d[\d,]*)\s+(\d+(?:\.\d+)?)\s+(-?\$?[\d,]+\.\d+)\s*$"
+)
+RE_OPT_EVENT_WRAPPED_STRIKE = re.compile(
+    r"\b(Expired|Exercised|Assignment|Assigned|Expire|Exercise|Assign|Shrs in xc)\s+"
+    r"(CALL|PUT)\s+\.?([A-Z][A-Z0-9]{0,5})\s+([A-Z]{3})\s+(\d{1,2})\s+(\d{4})\s+"
+    r"(-\d[\d,]*)(?:\s+—){1,2}\s*$"
 )
 
 # In-kind transfers have a printed quantity but blank price/amount cells.
@@ -126,6 +173,9 @@ def _is_page_furniture(s: str) -> bool:
 _DISCLOSURE_MARKERS = (
     "gst/hst", "qst:", "annual fee", "conduct of our business",
     "we reserve the", "cibc world markets", "bay st",
+    # Registered-account book-value prose whose leading printer-barcode
+    # fragment ("RT0001.") fuses onto the sentence.
+    "cash balances held in registered accounts",
 )
 _RE_POSTAL_CODE = re.compile(r"\b[A-Z]\d[A-Z] \d[A-Z]\d\b")
 _RE_TOLL_FREE = re.compile(r"\b1-800-\d{3}-\d{4}\b")
@@ -482,6 +532,8 @@ RE_ROW_NOTE = re.compile(
     r"|\bADJ\s*\d+\s*:\s*\d"
     r"|VALUE\s*\$"
     r"|\bA/E\s+[A-Z0-9]{5,9}\s+\d"
+    r"|L/T\s+CAP\s+G"
+    r"|RTN\s+OF\s+CAPTL"
     r"|^(?:CALL|PUT)\s+\.?[A-Z][A-Z0-9]{0,5}\s+[A-Z]{3}\s+\d{1,2}\s+\d{4}\s+\d+(?:\.\d+)?$"
 )
 # Reinvested-dividend note text: "REINVESTED DIV @ 15.7635" under a
@@ -538,6 +590,26 @@ def _take_name_continuations(lines: list[str], i: int) -> tuple[list[str], int]:
         out.append(s)
         i += 1
     return out, i
+
+
+def _take_wrapped_strike(lines: list[str], i: int) -> tuple[str | None, str, int]:
+    """Peek at the line directly below a row for a strike CIBC wrapped off
+    the row ("70.50 ISHARES SILVER SHARES").
+
+    Returns the strike text, the consumed line, and the index past it, or
+    ``(None, "", i)`` — index untouched — when the next non-blank line is
+    not a strike line. A dated row never matches (rows start with the
+    month), and bare furniture digits lack the trailing description text.
+    """
+    j = i
+    while j < len(lines) and not lines[j].strip():
+        j += 1
+    if j < len(lines):
+        s = lines[j].strip()
+        wm = RE_OPT_WRAP_STRIKE_LINE.match(s)
+        if wm is not None:
+            return wm.group(1), s, j + 1
+    return None, "", i
 
 
 def _parse_activity_block(body: str, *, currency: str, year: int,
@@ -688,6 +760,82 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                 ))
                 continue
 
+            # Contract description split across lines: the strike wrapped
+            # onto the continuation line below the row, so the quantity
+            # sits in the strike slot. Gated on the strike line actually
+            # printing — without it the row keeps the prior handling.
+            wrapped_strike, wrapped_line, i_w = _take_wrapped_strike(lines, i)
+            if wrapped_strike is not None:
+                mt = RE_OPT_TXN_WRAPPED_STRIKE.search(rest)
+                if mt:
+                    verb, cp, root, mon3, dd, yr, qty_s, price_s, amt_s = mt.groups()
+                    expiry = _opt_expiry(mon3, dd, yr)
+                    instr = _make_option_instrument(
+                        root=root, expiry=expiry or "",
+                        strike=float(wrapped_strike), cp=cp, currency=currency,
+                    )
+                    qty = float(qty_s.replace(",", ""))
+                    txn_type = _classify_activity(verb, rest) or "buy"
+                    if not txn_type.startswith("option_") and txn_type in {"buy", "sell"}:
+                        txn_type = (
+                            "option_buy_to_open" if verb in {"Bought"} and qty > 0
+                            else "option_sell_to_open" if verb in {"Sold"} and qty < 0
+                            else "option_buy_to_close" if verb in {"Bought"} and qty < 0
+                            else "option_sell_to_close"
+                        )
+                    cont, i = _take_name_continuations(lines, i_w)
+                    stmt.transactions.append(ParsedTxn(
+                        trade_date=trade_date or "", settle_date=None,
+                        txn_type=txn_type, instrument=instr, quantity=qty,
+                        price=parse_money(price_s),
+                        gross_amount=None, commission=None, other_fees=None,
+                        net_amount=parse_money(amt_s), currency=currency,
+                        description=" ".join([rest, wrapped_line] + cont).strip(),
+                        raw_line=ln,
+                    ))
+                    continue
+                ev = RE_OPT_EVENT_WRAPPED_STRIKE.search(rest)
+                if ev:
+                    verb, cp, root, mon3, dd, yr, qty_s = ev.groups()
+                    expiry = _opt_expiry(mon3, dd, yr)
+                    instr = _make_option_instrument(
+                        root=root, expiry=expiry or "",
+                        strike=float(wrapped_strike), cp=cp, currency=currency,
+                    )
+                    cont, i = _take_name_continuations(lines, i_w)
+                    stmt.transactions.append(ParsedTxn(
+                        trade_date=trade_date or "", settle_date=None,
+                        txn_type=(_classify_activity(verb, rest)
+                                  or "option_expiration"),
+                        instrument=instr, quantity=parse_money(qty_s), price=None,
+                        gross_amount=None, commission=None, other_fees=None,
+                        net_amount=None, currency=currency,
+                        description=" ".join([rest, wrapped_line] + cont).strip(),
+                        raw_line=ln,
+                    ))
+                    continue
+
+            # Year-end return-of-capital tax disclosure: "Rtn of Cap <FUND>
+            # — — —" over "CL F RTN OF CAPITAL YEAREND" / "VALUE <amt>"
+            # lines. All three data cells print blank — unlike a cash
+            # return-of-capital row, whose amount records as an adjustment
+            # below — and every position/cash rollforward reconciles
+            # without them: per-unit tax-basis history, not a transaction.
+            if re.match(r"Rtn of Cap\b", rest) and rest.count("—") >= 3:
+                j = i
+                while j < len(lines):
+                    s2 = lines[j].strip()
+                    if not s2:
+                        j += 1
+                        continue
+                    if re.match(r"(?:CL\s+F\s+)?RTN OF CAPITAL\b", s2,
+                                re.IGNORECASE) or re.match(r"VALUE\s+\d", s2):
+                        j += 1
+                        continue
+                    break
+                i = j
+                continue
+
             # Stock / dividend / fee / interest / merger line: extract trailing
             # numbers.
             verb_match = re.match(
@@ -750,6 +898,15 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                             if m1:
                                 amount = parse_money(m1.group(1))
                                 desc = desc_and_nums[:m1.start()].strip()
+
+                # CIBC prints "1000THS" on a Shrs-in-xc residual flatten to
+                # state the quantity's unit: thousandths of a fund unit.
+                # The printed -2 clears the 0.002-unit dust a full
+                # redemption leaves behind (588-93738 Apr/Jun 2026, Feb
+                # 2023; wire footers use the same shorthand:
+                # "1000THS=639,WIRE=...").
+                if qty is not None and "1000THS" in desc_and_nums:
+                    qty = qty / 1000.0
 
                 # Wrapped name/ticker lines under the row identify the
                 # security; merge them before resolving the instrument.
@@ -841,6 +998,11 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
             if blank_cash:
                 amount = parse_money(blank_cash.group(2))
                 if amount is not None:
+                    # Component note lines under the row ("SIMPLIFY
+                    # INTEREST RATE HEDGE", "ETF RTN OF CAPTL 100 SHS",
+                    # "REC/PAY <date>") belong to the adjustment's
+                    # description, not orphan quarantines.
+                    cont, i = _take_name_continuations(lines, i)
                     stmt.transactions.append(ParsedTxn(
                         trade_date=trade_date or "",
                         settle_date=None,
@@ -853,7 +1015,9 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
                         other_fees=None,
                         net_amount=amount,
                         currency=currency,
-                        description=blank_cash.group(1).strip(),
+                        description=" ".join(
+                            [blank_cash.group(1).strip()] + cont
+                        ).strip(),
                         raw_line=ln,
                     ))
                     continue
@@ -868,6 +1032,11 @@ def _parse_activity_block(body: str, *, currency: str, year: int,
         # A no-date line cannot be assigned to the preceding transaction
         # defensibly. Keep activity-like evidence in quarantine instead of
         # contaminating that transaction's description and source geometry.
+        # Wire/transfer confirmation numbers print as a bare digit run
+        # directly under the dated row they confirm ("111102626289" under a
+        # Transfer) — receipt furniture with no data cells.
+        if re.fullmatch(r"\d{9,14}", s):
+            continue
         if re.search(r"\d", s):
             stmt.quarantine.append(ParsedQuarantine(
                 raw_line=ln,
@@ -933,6 +1102,10 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
 
         if section == "Other":
             mo = RE_OPT_POS.match(s)
+            wrapped_strike = False
+            if not mo:
+                mo = RE_OPT_POS_WRAPPED_STRIKE.match(s)
+                wrapped_strike = mo is not None
             if not mo:
                 if re.search(r"\d", s):
                     stmt.quarantine.append(ParsedQuarantine(
@@ -940,8 +1113,23 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
                         reason="unrecognized option portfolio row",
                     ))
                 continue
+            if wrapped_strike:
+                # The strike prints on the continuation line directly under
+                # the row; consume it there so it is not quarantined as a
+                # separate row.
+                strike_s, _, i = _take_wrapped_strike(lines, i)
+                if strike_s is None:
+                    stmt.quarantine.append(ParsedQuarantine(
+                        raw_line=ln,
+                        reason="option holdings row has no printed strike",
+                    ))
+                    continue
             _, i = _take_name_continuations(lines, i)
-            cp, root, mon3, dd, yr, strike_s, qty_s, book_s, mp_s, mv_s = mo.groups()
+            if wrapped_strike:
+                cp, root, mon3, dd, yr, qty_s, book_s, mp_s, mv_s = mo.groups()
+            else:
+                (cp, root, mon3, dd, yr, strike_s,
+                 qty_s, book_s, mp_s, mv_s) = mo.groups()
             expiry = _opt_expiry(mon3, dd, yr)
             qty = float(qty_s.replace(",", ""))
             instr = _make_option_instrument(
@@ -1003,10 +1191,141 @@ def _parse_portfolio_block(body: str, *, currency: str, period_end: str,
     return saw_section
 
 
+# -------------------------------------------------------- Year-end report
+# The December eStatement attaches a four-page "Your Year-end Account
+# Report" after the monthly statement (cover, performance, cost,
+# additional information). The report is its own category with its own
+# reconciliation: it is extracted as a separate annual statement whose
+# pages are excluded from the monthly statement, and its printed lines
+# and numbers are stored on that annual record rather than mixed into
+# monthly transactions or holdings.
+_YEAR_END_PAGE_MARKERS = (
+    "Year-end Account Report",
+    "The Performance of Your Investment Account",
+    "The Cost of Your Investment Account",
+    "Additional Information About Your Report",
+)
+
+_MONTH_NUM = {
+    "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+    "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
+}
+
+
+def _is_year_end_page(text: str) -> bool:
+    return any(marker in text for marker in _YEAR_END_PAGE_MARKERS)
+
+
+def _annual_money_tokens(line: str) -> list[float]:
+    values = []
+    for token in re.findall(r"-?\$?[\d,]+\.\d{2}", line):
+        value = parse_money(token)
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def _parse_year_end_report(
+    page_texts: dict[int, str], year: int, acct: str, account_type: str,
+    base_ccy: str,
+) -> ParsedStatement | None:
+    """Build the annual statement for an attached year-end report.
+
+    The performance page prints one row per line with either one value
+    (single-period reports) or two (the current year and since inception);
+    the money-weighted rates print as percentages on the "Per Year" line.
+    """
+    perf_page = next(
+        (t for t in page_texts.values()
+         if "The Performance of Your Investment Account" in t),
+        None,
+    )
+    if perf_page is None:
+        return None
+
+    rows: dict[str, list[float]] = {}
+    rates: list[float] = []
+    for line in perf_page.splitlines():
+        s = line.strip()
+        for key, pattern in (
+            ("beginning", r"^Opening Market Value"),
+            ("deposits", r"^\+\s*Deposits"),
+            ("withdrawals", r"^-\s*Withdrawals"),
+            ("return", r"^\+\s*Change in Value"),
+            ("ending", r"^=\s*Closing Market Value"),
+        ):
+            if re.match(pattern, s):
+                rows[key] = _annual_money_tokens(s)
+                break
+        if s.startswith("Per Year"):
+            for token in re.findall(r"(\d+(?:\.\d+)?)%", s):
+                value = parse_money(token)
+                if value is not None:
+                    rates.append(value)
+
+    def pick(key: str) -> tuple[float | None, float | None]:
+        values = rows.get(key) or []
+        if not values:
+            return None, None
+        if len(values) == 1:
+            return values[0], None
+        return values[0], values[-1]
+
+    since_m = re.search(
+        r"([A-Z][a-z]{2})\.?\s+(\d{1,2}),\s*(\d{4})\*?\s*\(\w+\)\s*$", perf_page,
+        re.MULTILINE,
+    ) or re.search(
+        r"Since\D{0,40}?([A-Z][a-z]{2})\.?\s+(\d{1,2}),\s*(\d{4})", perf_page,
+    )
+    since_date = None
+    if since_m and since_m.group(1) in _MONTH_NUM:
+        since_date = (
+            f"{int(since_m.group(3)):04d}-{_MONTH_NUM[since_m.group(1)]:02d}"
+            f"-{int(since_m.group(2)):02d}"
+        )
+
+    beginning, beginning_since = pick("beginning")
+    deposits, deposits_since = pick("deposits")
+    withdrawals, withdrawals_since = pick("withdrawals")
+    net_return, net_return_since = pick("return")
+    ending, ending_since = pick("ending")
+
+    def since_preferred(period_value: float | None, since_value: float | None) -> float | None:
+        # The first printed column is the report year; single-value reports
+        # merge the two columns into that one figure.
+        return period_value if period_value is not None else since_value
+
+    performance = ParsedAnnualPerformance(
+        currency=base_ccy,
+        period_start=f"{year}-01-01",
+        period_end=f"{year}-12-31",
+        since_date=since_date,
+        beginning_market_value=since_preferred(beginning, beginning_since),
+        deposits_transfers_in=since_preferred(deposits, deposits_since),
+        withdrawals_transfers_out=since_preferred(withdrawals, withdrawals_since),
+        net_investment_return=since_preferred(net_return, net_return_since),
+        ending_market_value=since_preferred(ending, ending_since),
+        money_weighted_1y=rates[0] if rates else None,
+        money_weighted_3y=rates[1] if len(rates) >= 3 else None,
+        money_weighted_5y=None,
+        money_weighted_10y=None,
+        money_weighted_since=rates[-1] if len(rates) >= 2 else None,
+    )
+    return ParsedStatement(
+        account=ParsedAccount(account_number=acct, account_type=account_type,
+                              base_currency=base_ccy),
+        period_start=f"{year}-01-01",
+        period_end=f"{year}-12-31",
+        statement_type="annual",
+        page_numbers=tuple(sorted(page_texts)),
+        annual_performance=[performance],
+    )
+
+
 # ----------------------------------------------------------------- Parser
 class CIBCParser:
     NAME = "cibc"
-    VERSION = "2.8.4"
+    VERSION = "2.9.0"
 
     def can_handle(self, folder_name: str, first_page_text: str) -> bool:
         if folder_name.startswith("CIBC "):
@@ -1030,8 +1349,15 @@ class CIBCParser:
                 "Disclosures" in page
                 and "Account Activity" not in page
                 and "Portfolio Assets" not in page
-            ),
+            ) and not _is_year_end_page(page),
         )
+        # The attached year-end report is its own category: its pages are
+        # excluded from the monthly statement above and extracted as a
+        # separate annual statement below.
+        year_end_pages = {
+            number: page for number, page in enumerate(pdf.pages, start=1)
+            if _is_year_end_page(page)
+        }
         text = page_index.text
 
         if _is_tax_doc(text, pdf.relpath):
@@ -1085,6 +1411,13 @@ class CIBCParser:
             cash_scopes=cash_scopes,
         )
         result.statements.append(stmt)
+        if year_end_pages:
+            year = int(period_end[:4])
+            annual = _parse_year_end_report(
+                year_end_pages, year, acct, atype, base_ccy,
+            )
+            if annual is not None:
+                result.statements.append(annual)
         quarantine_unsupported_rows(result)
         attach_source_spans(pdf, result, parser_name=self.NAME)
         return result

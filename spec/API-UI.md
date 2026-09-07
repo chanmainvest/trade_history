@@ -9,8 +9,9 @@ it updates preferences in JSON, not SQLite.
 | Prefix | Routes | Consumer/purpose |
 |---|---|---|
 | root | `GET /health` | liveness and app identity |
-| `/transactions` | list (including read-only opening positions), accounts, referenced symbols, transaction types, latest date | Transactions/filter controls |
+| `/transactions` | list (including read-only opening positions; filterable by date, institution, account, symbol, type, currency, min \|amount\|), accounts, referenced symbols, transaction types, currencies, latest date. `symbols`/`txn-types`/`currencies` accept an optional `account_id` CSV to scope the option lists | Transactions/filter controls |
 | `/monthly` | `GET /dates`, `GET /snapshot`, `GET /diff` | canonical point-in-time holdings and comparison |
+| `/export` | `GET /yahoo-csv` | selected portfolio as a Yahoo Finance lots-import CSV |
 | `/performance` | `GET /total`, `GET /cash` | canonical holdings value series and reported cash checkpoints |
 | `/research` | `GET /prices`, `/trades`, `/financials` | dated multi-ticker security research |
 | `/viz` | `GET /holdings_by_sector`, `/correlation`, `/rrg` | visual analytics |
@@ -30,7 +31,14 @@ reconciliation-rebuild endpoints in the current route set.
    never a free-form calendar. A Compare toggle reveals a second picker with
    swap and quick ranges (1M/3M/6M/YTD/1Y snapped to the nearest available
    date); the resolved checkpoint date is displayed when it differs from the
-   selection.
+   selection. An "Export Yahoo CSV" action downloads the viewed snapshot's
+   holdings from `GET /export/yahoo-csv` in Yahoo Finance's lots-import
+   format (`Symbol, Trade Date, Purchase Price, Quantity`, empty Trade Date):
+   only instruments with a Yahoo `candidate`/`verified` market-symbol mapping
+   are exported, short (non-positive) quantities are exported with quantity
+   ``0`` (Yahoo rejects negative lots), and cash, incomplete holdings, and
+   unmapped instruments are skipped — the skipped symbols are reported below
+   the toolbar.
 3. Performance: native-currency value/cash history with bounded forward fill.
 4. Research: price, trade, and fundamental detail; moving averages use full
    fetched history before the visible period is clipped. Dated ticker lineages
@@ -150,9 +158,32 @@ total is unavailable.
 market database so Performance can draw a presentation-only combined
 CAD-equivalent series; the rate and rate date are shown next to it. `GET
 /viz/holdings_by_sector` returns `price_data_through` (latest `daily_prices`
-trade date). Research computes its summary strip (last close, period change,
+trade date) and accepts a `currency` display-currency parameter (`CAD` or
+`USD`, default `CAD`): every row's `market_value` is converted
+presentation-only from its native currency via the latest `fx_rates` rate on
+or before the as-of date, the response reports the `fx` rate/date used, and
+`unconverted_currencies` lists any currencies left native when no rate
+exists. The Treemap renders a CAD/USD toggle (default CAD) and shows the
+conversion note. Research computes its summary strip (last close, period change,
 52-week range) client-side from the fetched price rows. All three analysis
 tabs show the price-data date and warn when it is a week or more stale.
+
+`GET /viz/assets` returns one row per held asset (holdings aggregated across
+the scoped accounts) for the Visualisations **Assets** table: resolved
+holdings checkpoint date (`as_of_date`), latest close/adj close on or before
+the selected date, Yahoo `market_cap`, 30-day annualized realized (historical)
+volatility computed from `daily_prices`, the latest `option_implied_vol` IV
+at or before the selected date with its trade date, and per-window sparkline
+series (`1w`/`1mo`/`3mo`/`1y`/`3y`, downsampled to ≤24 adjusted closes) with
+each window's first→last % change. Holdings resolve to the latest complete
+checkpoint on or before the selected date while the market side clamps to the
+selected date itself, so the default (today) view shows the freshest prices.
+When a Yahoo close is unavailable, `price` falls back to the broker-reported
+unit value when one is present and `price_source` is `broker`; otherwise the
+price is null. The frontend prefixes broker fallbacks with `~`, hides the
+Value column, and makes every displayed header sortable. The table respects
+the tab's institution/account filters and its sparkline cells shade red/green
+by the window's loss/gain magnitude with the signed percentage overlaid.
 
 ## Frontend rules
 
@@ -160,11 +191,19 @@ tabs show the price-data date and warn when it is a week or more stale.
 - Add translated strings in `frontend/src/i18n.tsx`.
 - Use CSS variables for theme colors and `plotlyTheme()` for charts.
 - Keep account filtering consistent with the active portfolio. Transactions
-  exposes an explicit **All accounts** control when a portfolio is active so
-  users can bypass the portfolio filter without selecting individual accounts.
-  Verify narrows its statement list and its Institution/Account filter options
-  to the active portfolio's accounts (the portfolio picker's **All accounts**
-  entry restores the full list).
+  and Visualisations expose an explicit **All accounts** control when a
+  portfolio is active so users can bypass the portfolio filter without
+  selecting individual accounts. Transactions, Verify, and Visualisations
+  narrow their Institution/Account filter options to
+  the active portfolio's accounts (the **All accounts** control or the
+  portfolio picker's `all` entry restores the full list); Transactions also
+  scopes its Symbol/Type/Currency option lists and prunes any selected filter
+  values the active portfolio excludes, and Visualisations prunes its
+  Institution/Account selections the same way.
+- Transactions moves the Institution/Account/Type/Symbol/Currency filters into
+  Excel-style funnel icons on the column headers and sorts client-side: a
+  header click toggles ascending/descending (numeric for quantity, price, and
+  amount; empty values last). Date-range and min-|amount| stay in the toolbar.
 - Verify renders PDF pages lazily as they enter the viewport; evidence overlays
   size to the PDF.js viewport so boxes stay aligned with the rendered canvas.
 - Source icons in Transactions and Monthly obey `show_source_links`; they deep

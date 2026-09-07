@@ -167,3 +167,84 @@ Capture timestamp: 2026-08-26T08:24:07.4962903-07:00.
 
 ### Follow-up status
 Task 4 is complete. All focused and full validation gates pass, documentation is current, and the completed composite-provenance change has no unresolved checkpoint issue.
+
+
+## GitHub Actions cross-repository investigation update
+
+Capture timestamp: 2026-09-05T20:23:24.7655236-07:00.
+
+### Work completed
+- Audited all local `.github/workflows` files and queried the current GitHub Actions history for the `chanmainvest` repositories.
+- Established that the recent `portfolio_dashboard` dependency-install workflow succeeds; there is no common GitHub Actions package-install outage.
+- Diagnosed `trade_history` CI runs 33927846478 (2026-09-04) and 33052396625 (2026-08-27): `astral-sh/setup-uv`, Python setup, and `uv sync --all-extras --dev` all succeed; pytest alone fails because `tests/test_holdings_service.py:195` opens `temp/hypothesis-composite-market.duckdb` without creating `temp/`. The repository ignores `temp/`, so a fresh GitHub checkout has no parent directory. Creating the parent locally allowed DuckDB file creation.
+- Diagnosed `knowledge_base` Pages run 33923275039: checkout requests recursive submodules and fails with `fatal: No url found for submodule path 'data' in .gitmodules`. The current tree contains a `data` gitlink, while `.gitmodules` maps only `data_public`; commit `2e6d0da` updated the data pointer without repairing the mapping. Remediation is to either restore a matching `submodule.data` URL or remove/replace the stale `data` gitlink, according to the intended repository layout.
+- Diagnosed `market_data` Dependabot run 31047780124: the `data` submodule URL is `https://github.com/chanmainvest/stock_data.git`, but GitHub cannot resolve that repository. The local checkout's `data` remote points elsewhere, confirming stale/inconsistent submodule metadata. Remediation is to publish/restore the intended repository or update/remove the submodule URL and gitlink.
+- Confirmed these are separate repository defects that may appear together as “all repos failed,” not one shared install-folder failure.
+
+### Validation
+- Retrieved and inspected failed remote logs and job step conclusions with `gh run view`; the trade_history install step was explicitly successful and pytest was the first failing step.
+- Verified the missing-directory mechanism by creating an untracked DuckDB probe under `trade_history/temp/`; creation succeeded once the parent existed, and the probe was removed afterward.
+- Verified the `knowledge_base` gitlink (`data`) and `.gitmodules` mismatch with `git ls-tree`, `git submodule`, and history inspection.
+- Verified `chanmainvest/stock_data` is not resolvable through GitHub CLI/API.
+- No tracked project files were modified. Exact per-model token totals, current conversation UUID, and exact wall-clock duration are not exposed by Kiro; no values were fabricated. Available invocation evidence is one delegated context-gatherer invocation plus the orchestrator's tool-driven investigation.
+
+### Recommended fixes
+1. In `trade_history/tests/test_holdings_service.py`, create `market_path.parent` before connecting (or use pytest's `tmp_path`) so CI does not depend on an ignored local directory.
+2. In `knowledge_base`, repair the `data` submodule metadata/tree before rerunning Pages; do not merely add a placeholder directory because checkout is failing on a gitlink.
+3. In `market_data`, correct the `data` submodule URL or remove the stale submodule reference, then rerun Dependabot. The repeated Dependabot errors about an existing latest `postcss` PR are secondary; the blocking clone error is the unavailable `stock_data` repository.
+
+
+## GitHub Actions fixes implementation and push update
+
+Capture timestamp: 2026-09-05T21:14:17.6987327-07:00.
+
+### Work completed
+- Added a `Prepare test directories` step to `.github/workflows/ci.yml` so GitHub's fresh checkout creates the ignored `temp/` parent before the DuckDB-based Hypothesis tests run.
+- Removed the stale `data` gitlink from `knowledge_base`, then removed the inaccessible `data_public` gitlink and `.gitmodules` after the Pages checkout exposed that its private GitHub repository was unavailable to the Pages token. Local submodule directories were preserved as untracked working-tree content.
+- Removed the unavailable `data` gitlink and `.gitmodules` from `market_data`, eliminating the Dependabot clone of nonexistent `chanmainvest/stock_data`.
+- Updated the `knowledge_base` GitHub Pages legacy source from `/docs` to `/` through the repository Pages setting. The repository has `doc/index.html`, while `/docs` did not exist; this setting change was made through GitHub and is not a local tracked-file change.
+
+### Commits and pushes
+- `trade_history` `142b176` — `ci: create ignored test directory` — pushed `main` to `origin`.
+- `knowledge_base` `2deab79` — `ci: remove stale data submodule gitlink` — pushed `main`, followed by `db616a5` — `ci: remove inaccessible data submodule` — pushed `main`.
+- `market_data` `b47c244` — `ci: remove unavailable data submodule` — pushed `master` to `origin`.
+- No unrelated modified or untracked files were staged or included in these commits.
+
+### Validation
+- Local focused `trade_history` composite regression: `2 passed, 10 deselected`.
+- Pushed `trade_history` CI run [34010784030](https://github.com/chanmainvest/trade_history/actions/runs/34010784030) completed successfully: dependency install, test-directory preparation, pytest, Ruff, generated-doc check, `npm ci`, and frontend build all passed.
+- The first pushed `knowledge_base` Pages run confirmed checkout no longer failed on the stale `data` gitlink, then exposed the remaining inaccessible `data_public` submodule. After `db616a5` and the Pages source correction, run [34010928778](https://github.com/chanmainvest/knowledge_base/actions/runs/34010928778) completed successfully through Jekyll build and deployment; Pages status is `built` with source `/`.
+- `market_data` has no push-triggered Dependabot run; its parent repository now has no submodule metadata, so the previously failing recursive clone path is removed. Remote heads were verified at `142b176`, `db616a5`, and `b47c244` respectively.
+- Exact per-model token totals and wall-clock model duration are not exposed by Kiro; no counts or duration were fabricated. Available invocation evidence consists of the orchestrated tool calls for this implementation and validation.
+
+
+## Assets table continuation update
+
+Capture timestamp: 2026-09-06T23:00:12.6632719-07:00.
+
+### Work completed
+- Continued the interrupted Visualisations Assets implementation in the existing dirty `trade_history` worktree; unrelated local modifications were preserved.
+- Completed the hidden Value-column behavior: the Assets table renders symbol, price, market cap, HV, IV, and sparkline headers only.
+- Completed click-to-sort behavior for all displayed asset headers, including ascending/descending reversal, null-last ordering, active sort arrows, and `aria-sort` state. The hidden market-value key remains the default exposure ordering without rendering a Value column.
+- Corrected price presentation so only broker-derived fallbacks receive the `~` marker; Yahoo prices display normally.
+- Extended the `/viz/assets` fallback to prefer a broker-reported unit price when no Yahoo close exists, then derive a unit value from broker market value and quantity when possible. The API marks these rows with `price_source = broker` and retains the broker date.
+- Wired `market refresh-all` to run the new IV snapshot refresh, while preserving `—` for assets for which the provider has no usable IV observation.
+- Added the missing sort-help and broker-price provenance translations across English, Traditional Chinese HK/TW, and Simplified Chinese.
+- Updated `spec/API-UI.md` and `spec/USER-GUIDE.md`; regenerated `docs/index.html`.
+
+### Validation
+- `npm run build` in `frontend`: passed; Vite emitted only the existing large-chunk advisory.
+- `$env:LEDGER_PROFILE = "example"; uv run --no-sync python -m pytest -q tests/test_api_workflows.py`: 15 passed, including the Assets price/market-cap/HV/IV/sparkline regression.
+- `$env:LEDGER_PROFILE = "example"; uv run --no-sync ruff check src tests`: passed.
+- `$env:LEDGER_PROFILE = "example"; uv run --no-sync python -m py_compile src/ledger/api/routes/viz.py src/ledger/market/extras.py src/ledger/cli.py src/ledger/db/duckdb_store.py`: passed.
+- `uv run --no-sync python scripts/build_docs.py --check`: passed; generated documentation is current.
+- `git diff --check`: passed.
+- Full pytest rerun reached 216 passed and 1 failure in the unrelated existing `tests/test_export_csv.py::test_yahoo_csv_zeroes_short_and_skips_incomplete_rows_and_honours_account_filter`; the failure omits expected `SHRT.TO,,,0` from the export path. No export/holdings code was changed for this Assets task, so that separate failure remains explicitly recorded rather than masked.
+
+### Model usage and duration
+- Exact input/output token totals, current conversation UUID, exact per-model call totals, and exact wall-clock duration are not exposed by Kiro; no values were fabricated.
+- Available model invocation evidence for this continuation: one delegated context-gatherer invocation. Tool execution evidence is recorded above; it is not a model-token count.
+
+### Follow-up status
+- The interrupted Assets implementation is complete and its changed-area validation passes.
+- One unrelated pre-existing full-suite export regression remains outside this task's changed paths.

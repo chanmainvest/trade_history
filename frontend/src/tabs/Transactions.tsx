@@ -3,7 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerE
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, TxnRow } from "../api";
-import { SmartSelect } from "../SmartSelect";
+import { SmartFilterIcon, type SmartOption } from "../SmartSelect";
 import { SourceLink } from "../SourceLink";
 import { usePortfolio } from "../portfolio";
 import { useI18n } from "../i18n";
@@ -88,6 +88,8 @@ export default function Transactions() {
   const [showAllAccounts, setShowAllAccounts] = useState(false);
   const [symbols, setSymbols] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
+  const [currencies, setCurrencies] = useState<string[]>([]);
+  const [sort, setSort] = useState<{ key: TxnColumnKey; dir: 1 | -1 } | null>(null);
   const [minAbs, setMinAbs] = useState(0);
   const [columnWidths, setColumnWidths] = useState<Record<TxnColumnKey, number>>(
     () => ({ ...DEFAULT_TRANSACTION_COLUMN_WIDTHS }),
@@ -119,8 +121,28 @@ export default function Transactions() {
   };
 
   const accountsQ = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
-  const symbolsQ = useQuery({ queryKey: ["symbols"], queryFn: api.symbols });
-  const typesQ = useQuery({ queryKey: ["txn-types"], queryFn: api.txnTypes });
+
+  // Option lists follow the top-bar portfolio scope (the "All accounts"
+  // bypass restores the full lists), but not the user's other filter picks,
+  // so selecting one account never empties the other dropdowns.
+  const optionScopeIds = activeAccountIds.length > 0 && !showAllAccounts
+    ? activeAccountIds.map(String)
+    : [];
+  const scopedOptionParams = optionScopeIds.length
+    ? { account_id: optionScopeIds.map(Number) }
+    : {};
+  const symbolsQ = useQuery({
+    queryKey: ["symbols", optionScopeIds],
+    queryFn: () => api.symbols(scopedOptionParams),
+  });
+  const typesQ = useQuery({
+    queryKey: ["txn-types", optionScopeIds],
+    queryFn: () => api.txnTypes(scopedOptionParams),
+  });
+  const currenciesQ = useQuery({
+    queryKey: ["currencies", optionScopeIds],
+    queryFn: () => api.currencies(scopedOptionParams),
+  });
 
   // If a portfolio is set AND the user hasn't manually picked accounts,
   // restrict the query to the portfolio's accounts.
@@ -133,7 +155,7 @@ export default function Transactions() {
         : [];
 
   const txnsQ = useQuery({
-    queryKey: ["txns", start, end, institutions, effectiveAcctIds, symbols, types, minAbs],
+    queryKey: ["txns", start, end, institutions, effectiveAcctIds, symbols, types, currencies, minAbs],
     queryFn: () =>
       api.transactions({
         start, end,
@@ -141,6 +163,7 @@ export default function Transactions() {
         account_id: effectiveAcctIds,
         symbol: symbols,
         txn_type: types,
+        currency: currencies,
         min_abs_amount: minAbs > 0 ? minAbs : undefined,
         limit: 10_000,
       }),
@@ -148,6 +171,58 @@ export default function Transactions() {
 
   const rows = txnsQ.data?.rows ?? [];
   rowCountRef.current = rows.length;
+
+  const toggleSort = (key: TxnColumnKey) => {
+    setSort((current) =>
+      current?.key === key ? { key, dir: current.dir === 1 ? -1 : 1 } : { key, dir: 1 },
+    );
+  };
+
+  // A new sort order should be read from its first row, not wherever the
+  // viewport happened to be scrolled.
+  useEffect(() => {
+    const node = tableWrapRef.current;
+    if (node && node.scrollTop !== 0) node.scrollTop = 0;
+    updateVirtualRange();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sort]);
+
+  const sortValue = (row: TxnRow): string | number | null => {
+    switch (sort?.key) {
+      case "date": return row.trade_date;
+      case "institution": return row.institution_code;
+      case "account": return row.account_number;
+      case "type": return row.txn_type;
+      case "symbol": return row.symbol ?? "";
+      case "option":
+        return row.option_type
+          ? `${row.option_type}|${row.option_strike ?? 0}|${row.option_expiry ?? ""}`
+          : "";
+      case "quantity": return row.quantity;
+      case "price": return row.price;
+      case "amount": return row.net_amount;
+      case "currency": return row.currency ?? "";
+      case "description": return row.description ?? "";
+      default: return "";
+    }
+  };
+
+  const sortedRows = useMemo(() => {
+    if (!sort) return rows;
+    const dir = sort.dir;
+    const copy = [...rows];
+    copy.sort((a, b) => {
+      const va = sortValue(a);
+      const vb = sortValue(b);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1; // nulls last regardless of direction
+      if (vb == null) return -1;
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
+      return String(va).localeCompare(String(vb), undefined, { numeric: true }) * dir;
+    });
+    return copy;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, sort]);
 
   const updateVirtualRange = () => {
     const node = tableWrapRef.current;
@@ -274,19 +349,63 @@ export default function Transactions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows.length]);
 
+  // The top-bar portfolio scopes the institution/account dropdown options the
+  // same way it scopes the query; "All accounts" bypasses it for both.
+  const portfolioScoped = activeAccountIds.length > 0 && !showAllAccounts;
+  const scopedAccounts = useMemo(() => {
+    const all = accountsQ.data?.rows ?? [];
+    if (!portfolioScoped) return all;
+    const ids = new Set(activeAccountIds.map(String));
+    return all.filter((a) => ids.has(String(a.account_id)));
+  }, [accountsQ.data, portfolioScoped, activeAccountIds]);
+
   const instOptions = useMemo(() => {
     const set = new Set<string>();
-    for (const a of accountsQ.data?.rows ?? []) set.add(a.institution_code);
+    for (const a of scopedAccounts) set.add(a.institution_code);
     return Array.from(set).sort().map((c) => ({ value: c, label: c }));
-  }, [accountsQ.data]);
+  }, [scopedAccounts]);
 
   const acctOptions = useMemo(() => {
-    return (accountsQ.data?.rows ?? []).map((a) => ({
+    return scopedAccounts.map((a) => ({
       value: String(a.account_id),
       label: `${a.institution_code} • ${a.account_number}`,
       hint: a.base_currency + (a.nickname ? ` · ${a.nickname}` : ""),
     }));
-  }, [accountsQ.data]);
+  }, [scopedAccounts]);
+
+  // Drop selected filter values that the active portfolio excludes.
+  useEffect(() => {
+    if (!portfolioScoped) return;
+    const validInst = new Set(scopedAccounts.map((a) => a.institution_code));
+    const validAcct = new Set(scopedAccounts.map((a) => String(a.account_id)));
+    setInstitutions((prev) => {
+      const next = prev.filter((v) => validInst.has(v));
+      return next.length === prev.length ? prev : next;
+    });
+    setAccountIds((prev) => {
+      const next = prev.filter((v) => validAcct.has(v));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [portfolioScoped, scopedAccounts]);
+
+  // Symbol/currency options arrive from scoped endpoints; prune once loaded.
+  useEffect(() => {
+    if (!portfolioScoped) return;
+    if (symbolsQ.data) {
+      const validSym = new Set(symbolsQ.data.rows.map((r) => r.symbol));
+      setSymbols((prev) => {
+        const next = prev.filter((v) => validSym.has(v));
+        return next.length === prev.length ? prev : next;
+      });
+    }
+    if (currenciesQ.data) {
+      const validCcy = new Set(currenciesQ.data.rows);
+      setCurrencies((prev) => {
+        const next = prev.filter((v) => validCcy.has(v));
+        return next.length === prev.length ? prev : next;
+      });
+    }
+  }, [portfolioScoped, symbolsQ.data, currenciesQ.data]);
 
   const symOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -303,15 +422,48 @@ export default function Transactions() {
     (typesQ.data?.rows ?? []).map((t) => ({ value: t, label: t })),
     [typesQ.data]);
 
+  const ccyOptions = useMemo(() =>
+    (currenciesQ.data?.rows ?? []).map((c) => ({ value: c, label: c })),
+    [currenciesQ.data]);
+
   const acctById = useMemo(() => {
     const m: Record<number, string> = {};
     for (const a of accounts) m[a.account_id] = a.account_number;
     return m;
   }, [accounts]);
 
-  const renderResizableHeader = (key: TxnColumnKey, label: string, className?: string) => (
+  const renderResizableHeader = (
+    key: TxnColumnKey,
+    label: string,
+    className?: string,
+    filter?: { options: SmartOption[]; value: string[]; onChange: (v: string[]) => void },
+  ) => (
     <th className={className}>
-      <span className="column-header-label">{label}</span>
+      <span className="column-header-inner">
+        <button
+          type="button"
+          className="column-sort-btn"
+          title={`Sort by ${label}`}
+          aria-label={`Sort by ${label}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            toggleSort(key);
+          }}
+        >
+          <span className="column-header-label">{label}</span>
+          <span className="column-sort-arrow" aria-hidden="true">
+            {sort?.key === key ? (sort.dir === 1 ? "▲" : "▼") : ""}
+          </span>
+        </button>
+        {filter && (
+          <SmartFilterIcon
+            label={label}
+            options={filter.options}
+            value={filter.value}
+            onChange={filter.onChange}
+          />
+        )}
+      </span>
       <span
         aria-label={`Resize ${label} column`}
         aria-orientation="vertical"
@@ -339,18 +491,6 @@ export default function Transactions() {
       <div className="filters">
         <input type="date" value={start} onChange={(e) => setStart(e.target.value)} title={t("f.start")} />
         <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} title={t("f.end")} />
-        <SmartSelect label={t("f.institution")} options={instOptions} value={institutions} onChange={setInstitutions} />
-        <SmartSelect
-          label={t("f.account")}
-          options={acctOptions}
-          value={accountIds}
-          onChange={(value) => {
-            setShowAllAccounts(false);
-            setAccountIds(value);
-          }}
-        />
-        <SmartSelect label={t("f.symbol")} options={symOptions} value={symbols} onChange={setSymbols} />
-        <SmartSelect label={t("f.type")} options={typeOptions} value={types} onChange={setTypes} />
         <label>{t("f.min_abs_amount")}:&nbsp;
           <select value={minAbs} onChange={(e) => setMinAbs(parseFloat(e.target.value))}>
             {MONEY_THRESHOLDS.map((t) => (
@@ -409,15 +549,30 @@ export default function Transactions() {
             <tr>
               {showSourceLinks && <th aria-label={t("source.column")} />}
               {renderResizableHeader("date", t("th.date"))}
-              {renderResizableHeader("institution", t("f.institution"))}
-              {renderResizableHeader("account", t("th.account"))}
-              {renderResizableHeader("type", t("th.type"))}
-              {renderResizableHeader("symbol", t("th.symbol"))}
+              {renderResizableHeader("institution", t("f.institution"), undefined, {
+                options: instOptions, value: institutions, onChange: setInstitutions,
+              })}
+              {renderResizableHeader("account", t("th.account"), undefined, {
+                options: acctOptions,
+                value: accountIds,
+                onChange: (value) => {
+                  setShowAllAccounts(false);
+                  setAccountIds(value);
+                },
+              })}
+              {renderResizableHeader("type", t("th.type"), undefined, {
+                options: typeOptions, value: types, onChange: setTypes,
+              })}
+              {renderResizableHeader("symbol", t("th.symbol"), undefined, {
+                options: symOptions, value: symbols, onChange: setSymbols,
+              })}
               {renderResizableHeader("option", "Option")}
               {renderResizableHeader("quantity", t("th.quantity"), "num")}
               {renderResizableHeader("price", t("th.price"), "num")}
               {renderResizableHeader("amount", t("th.amount"), "num")}
-              {renderResizableHeader("currency", t("th.currency"))}
+              {renderResizableHeader("currency", t("th.currency"), undefined, {
+                options: ccyOptions, value: currencies, onChange: setCurrencies,
+              })}
               {renderResizableHeader("description", t("th.description"))}
             </tr>
           </thead>
@@ -427,7 +582,7 @@ export default function Transactions() {
                 <td colSpan={visibleColumnSpecs.length} style={{ height: virtualRange.start * rowHeight }} />
               </tr>
             )}
-            {rows.slice(virtualRange.start, virtualRange.end).map((row: TxnRow, index: number) => {
+            {sortedRows.slice(virtualRange.start, virtualRange.end).map((row: TxnRow, index: number) => {
               const absoluteIndex = virtualRange.start + index;
               return (
               <tr key={row.row_id} className={absoluteIndex % 2 === 1 ? "row-alt-row" : undefined}>

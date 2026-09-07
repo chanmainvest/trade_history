@@ -18,7 +18,7 @@ from ..identity import (
 from ..quantity import normalized_position_delta
 
 _SCHEMA = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 def connect(path: Path | str = SQLITE_PATH) -> sqlite3.Connection:
@@ -996,10 +996,57 @@ def _migrate_existing_schema(conn: sqlite3.Connection) -> None:
             "(resolution_source IS NULL OR resolution_source IN ('auto', 'manual'))"
         )
     _migrate_reconciliation_check_v11(conn)
+    _migrate_symbol_normalizations(conn)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_instruments_security ON instruments(security_id)"
     )
     _install_domain_triggers(conn)
+
+
+def _migrate_symbol_normalizations(conn: sqlite3.Connection) -> None:
+    """Reviewed printed-symbol → canonical-symbol rules (v12).
+
+    A broker may print one instrument under a different adjusted symbol
+    (e.g. an OCC adjusted option root); extraction rewrites the printed
+    symbol to the canonical one before instrument resolution so every
+    statement period shares one instrument. The printed symbol stays on
+    record here and in the statement raw lines.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS instrument_symbol_normalizations ("
+        "  normalization_id  INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  printed_symbol    TEXT NOT NULL,"
+        "  canonical_symbol  TEXT NOT NULL,"
+        "  asset_type        TEXT NOT NULL,"
+        "  currency          TEXT NOT NULL,"
+        "  option_expiry     TEXT,"
+        "  option_strike     REAL,"
+        "  option_type       TEXT CHECK (option_type IS NULL OR"
+        "                                option_type IN ('CALL','PUT')),"
+        "  effective_date    TEXT CHECK (effective_date IS NULL OR"
+        "                                (length(effective_date) = 10 AND"
+        "                                 effective_date GLOB '????-??-??')),"
+        "  resolution_method TEXT NOT NULL,"
+        "  resolution_confidence REAL NOT NULL CHECK"
+        "                        (resolution_confidence >= 0"
+        "                         AND resolution_confidence <= 1),"
+        "  canonical_instrument_id INTEGER REFERENCES instruments(instrument_id),"
+        "  notes             TEXT,"
+        "  evidence          TEXT,"
+        "  created_at        TEXT NOT NULL DEFAULT"
+        "                    (strftime('%Y-%m-%dT%H:%M:%SZ','now'))"
+        ")"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_symbol_normalization_identity"
+        " ON instrument_symbol_normalizations("
+        " printed_symbol, asset_type, currency,"
+        " COALESCE(option_expiry, ''), option_strike, COALESCE(option_type, ''))"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_symbol_normalizations_printed"
+        " ON instrument_symbol_normalizations(printed_symbol)"
+    )
 
 
 def _migrate_reconciliation_check_v11(conn: sqlite3.Connection) -> None:
@@ -1828,6 +1875,43 @@ def queue_instrument_resolution_candidate(
     )
 
 
+def _canonical_symbol_for(
+    conn: sqlite3.Connection,
+    *,
+    asset_type: str,
+    symbol: str,
+    currency: str,
+    option_expiry: str | None,
+    option_strike: float | None,
+    option_type: str | None,
+) -> str | None:
+    """Reviewed normalization rule for a printed broker symbol, if any.
+
+    Rules are curated state in ``instrument_symbol_normalizations``: a
+    broker prints one instrument under a different adjusted symbol, and
+    extraction resolves it to the canonical instrument so every statement
+    period shares one row. The printed symbol itself stays on record in
+    the rule and in the statement raw lines. Identity constraints keep
+    rules for reused adjusted option symbols separate per contract
+    generation.
+    """
+    row = conn.execute(
+        """
+        SELECT canonical_symbol
+          FROM instrument_symbol_normalizations
+         WHERE UPPER(printed_symbol) = UPPER(?)
+           AND UPPER(asset_type) = UPPER(?)
+           AND UPPER(currency) = UPPER(?)
+           AND COALESCE(option_expiry, '') = COALESCE(?, '')
+           AND option_strike IS ?
+           AND UPPER(COALESCE(option_type, '')) = UPPER(COALESCE(?, ''))
+         LIMIT 1
+        """,
+        (symbol, asset_type, currency, option_expiry, option_strike, option_type),
+    ).fetchone()
+    return row[0] if row else None
+
+
 def upsert_instrument(
     conn: sqlite3.Connection,
     *,
@@ -1853,6 +1937,19 @@ def upsert_instrument(
     validate_ledger_currency(currency)
     if option_expiry is not None:
         validate_iso_date(option_expiry)
+    canonical = _canonical_symbol_for(
+        conn,
+        asset_type=asset_type,
+        symbol=symbol,
+        currency=currency,
+        option_expiry=option_expiry,
+        option_strike=option_strike,
+        option_type=option_type,
+    )
+    if canonical is not None and canonical.upper() != symbol.upper():
+        if option_root is not None and option_root.upper() == symbol.upper():
+            option_root = canonical
+        symbol = canonical
     instrument_key = canonical_instrument_key(
         asset_type=asset_type,
         symbol=symbol,

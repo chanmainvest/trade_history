@@ -3,15 +3,19 @@ from __future__ import annotations
 
 import calendar
 
+import pytest
+
 from ledger.db import sqlite as sqlite_db
 from ledger.holdings import holdings_at
 from ledger.ingest.reconcile import rebuild_reconciliation_results
+from ledger.ingest.ticker_change_lookup import apply_reviewed_ticker_changes
 from ledger.parsers.cibc import _classify_activity as classify_cibc
 from ledger.parsers.hsbc import _classify_activity as classify_hsbc
 from ledger.parsers.rbc import _classify_activity as classify_rbc
 from ledger.parsers.td import _classify as classify_td
 from ledger.ticker_changes import (
     explicit_ticker_change_symbols,
+    record_reviewed_ticker_change,
     record_ticker_change,
     ticker_segments,
 )
@@ -229,3 +233,212 @@ def test_ticker_change_replay_when_successor_already_has_prior_quantity(tmp_path
             (feb,),
         ).fetchone()
     assert tuple(new_row) == (5.0, 10.0, 15.0, 15.0, "reconciled")
+
+
+def test_reviewed_ticker_change_supersedes_predecessor_rollforward(tmp_path):
+    """A reviewed rename with no printed transaction rolls -20 across it.
+
+    TD re-printed the same short option lot under a different adjusted
+    symbol between consecutive statements with no activity row: the June
+    scope holds 5SOXS at -20, July holds SOXS1 at -20. The successor's
+    check opens from the moved balance; the predecessor has no independent
+    close to reconcile and its row is superseded, not failing.
+    """
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        institution_id = sqlite_db.upsert_institution(conn, "TST", "Test Broker")
+        account_id = sqlite_db.upsert_account(
+            conn,
+            institution_id=institution_id,
+            account_number="OPT-1",
+            account_type="Margin",
+            base_currency="USD",
+        )
+        old_id = sqlite_db.upsert_instrument(
+            conn, asset_type="option", symbol="5SOXS", currency="USD",
+            option_root="5SOXS", option_expiry="2027-01-15",
+            option_strike=34.0, option_type="CALL",
+        )
+        new_id = sqlite_db.upsert_instrument(
+            conn, asset_type="option", symbol="SOXS1", currency="USD",
+            option_root="SOXS1", option_expiry="2027-01-15",
+            option_strike=34.0, option_type="CALL",
+        )
+        jun = _statement(conn, account_id, "2024-06")
+        jul = _statement(conn, account_id, "2024-07")
+        seed_position(
+            conn, statement_id=jun, instrument_id=old_id,
+            quantity=-20, currency="USD",
+        )
+        seed_position(
+            conn, statement_id=jul, instrument_id=new_id,
+            quantity=-20, currency="USD",
+        )
+        record_reviewed_ticker_change(
+            conn,
+            from_instrument_id=old_id,
+            to_instrument_id=new_id,
+            effective_date="2024-07-31",
+            conversion_ratio=1.0,
+            resolution_method="reviewed_statement_reprint",
+            resolution_confidence=0.95,
+            notes="test: same lot re-printed",
+        )
+
+    rebuild_reconciliation_results(db_path)
+    with sqlite_db.session(db_path) as conn:
+        results = conn.execute(
+            """
+            SELECT i.symbol, rr.opening_value, rr.summed_deltas,
+                   rr.expected_close, rr.reported_close, rr.status, rr.reason
+              FROM reconciliation_results rr
+              JOIN instruments i ON i.instrument_id = rr.instrument_id
+             WHERE rr.kind = 'position' AND rr.statement_id = ?
+             ORDER BY i.symbol
+            """,
+            (jul,),
+        ).fetchall()
+    by_symbol = {row["symbol"]: tuple(row)[1:] for row in results}
+    assert by_symbol["5SOXS"][:5] == (-20.0, None, None, None, "not_applicable")
+    assert "SOXS1" in by_symbol["5SOXS"][5]
+    assert by_symbol["SOXS1"][:5] == (0.0, 0.0, -20.0, -20.0, "reconciled")
+
+    rows = holdings_at("2024-08-15", path=db_path, market_path=tmp_path / "missing.duckdb")
+    assert len(rows) == 1
+    assert rows[0]["symbol"] == "SOXS1"
+    assert rows[0]["quantity"] == -20.0
+    assert rows[0]["ticker_symbols"] == ["5SOXS", "SOXS1"]
+
+
+def test_reviewed_ticker_change_outside_interval_leaves_checks_failing(tmp_path):
+    """A rename effective after the interval must not paper over a jump."""
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        institution_id = sqlite_db.upsert_institution(conn, "TST", "Test Broker")
+        account_id = sqlite_db.upsert_account(
+            conn,
+            institution_id=institution_id,
+            account_number="OPT-2",
+            account_type="Margin",
+            base_currency="USD",
+        )
+        old_id = sqlite_db.upsert_instrument(
+            conn, asset_type="option", symbol="5SOXS", currency="USD"
+        )
+        new_id = sqlite_db.upsert_instrument(
+            conn, asset_type="option", symbol="SOXS1", currency="USD"
+        )
+        jun = _statement(conn, account_id, "2024-06")
+        jul = _statement(conn, account_id, "2024-07")
+        seed_position(
+            conn, statement_id=jun, instrument_id=old_id,
+            quantity=-20, currency="USD",
+        )
+        seed_position(
+            conn, statement_id=jul, instrument_id=new_id,
+            quantity=-20, currency="USD",
+        )
+        record_reviewed_ticker_change(
+            conn,
+            from_instrument_id=old_id,
+            to_instrument_id=new_id,
+            effective_date="2024-08-31",
+            conversion_ratio=1.0,
+            resolution_method="reviewed_statement_reprint",
+            resolution_confidence=0.95,
+        )
+
+    rebuild_reconciliation_results(db_path)
+    with sqlite_db.session(db_path) as conn:
+        statuses = conn.execute(
+            """
+            SELECT i.symbol, rr.status
+              FROM reconciliation_results rr
+              JOIN instruments i ON i.instrument_id = rr.instrument_id
+             WHERE rr.kind = 'position' AND rr.statement_id = ?
+            """,
+            (jul,),
+        ).fetchall()
+    assert all(row["status"] == "unexplained_residual" for row in statuses)
+
+
+def test_apply_reviewed_ticker_changes_validates_before_writing(tmp_path):
+    db_path = tmp_path / "ledger.sqlite"
+    sqlite_db.init_db(db_path)
+    with sqlite_db.session(db_path) as conn:
+        old_id = sqlite_db.upsert_instrument(
+            conn, asset_type="option", symbol="5SOXS", currency="USD",
+            option_root="5SOXS", option_expiry="2027-01-15",
+            option_strike=34.0, option_type="CALL",
+        )
+        new_id = sqlite_db.upsert_instrument(
+            conn, asset_type="option", symbol="SOXS1", currency="USD",
+            option_root="SOXS1", option_expiry="2027-01-15",
+            option_strike=34.0, option_type="CALL",
+        )
+        # A same-symbol contract generation must not be resolvable to.
+        sqlite_db.upsert_instrument(
+            conn, asset_type="option", symbol="SOXS1", currency="USD",
+            option_root="SOXS1", option_expiry="2026-01-16",
+            option_strike=25.0, option_type="CALL",
+        )
+
+        entry = {
+            "from_symbol": "5SOXS",
+            "to_symbol": "SOXS1",
+            "asset_type": "option",
+            "currency": "USD",
+            "option_expiry": "2027-01-15",
+            "option_strike": 34.0,
+            "option_type": "CALL",
+            "effective_date": "2026-07-31",
+            "resolution_method": "reviewed_statement_reprint",
+            "resolution_confidence": 0.95,
+            "notes": "same lot",
+        }
+        stats = apply_reviewed_ticker_changes(conn, [entry])
+        assert stats == {"entries": 1, "inserted": 1, "updated": 0}
+        row = conn.execute(
+            """
+            SELECT status, resolution_method, notes FROM instrument_ticker_changes
+             WHERE from_instrument_id = ? AND to_instrument_id = ?
+            """,
+            (old_id, new_id),
+        ).fetchone()
+        assert tuple(row) == ("reviewed", "reviewed_statement_reprint", "same lot")
+
+        # Re-applying the same relationship updates instead of duplicating.
+        refreshed = dict(entry, notes="same lot, refreshed")
+        stats = apply_reviewed_ticker_changes(conn, [refreshed])
+        assert stats == {"entries": 1, "inserted": 0, "updated": 1}
+
+        # An unknown symbol must fail without writing anything.
+        with pytest.raises(ValueError, match="expected exactly one"):
+            apply_reviewed_ticker_changes(
+                conn,
+                [dict(entry, from_symbol="NOPE1")],
+            )
+        # An option entry without contract economics must fail.
+        with pytest.raises(ValueError, match="option_expiry"):
+            apply_reviewed_ticker_changes(
+                conn,
+                [
+                    {
+                        key: value
+                        for key, value in entry.items()
+                        if not key.startswith("option_")
+                    }
+                ],
+            )
+        # A non-ISO date must fail before any write.
+        with pytest.raises(ValueError, match="ISO date"):
+            apply_reviewed_ticker_changes(
+                conn,
+                [dict(entry, effective_date="July 2026")],
+            )
+        count = conn.execute(
+            "SELECT COUNT(*) FROM instrument_ticker_changes"
+        ).fetchone()[0]
+        assert count == 1

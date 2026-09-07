@@ -47,6 +47,17 @@ Use `ingest.fund_lookup.lookup_fund_code()` / `lookup_fund_instrument_id()` inst
 
 - Option transactions must keep option instruments, not be repaired to the underlying equity just because the description also contains the underlying company name.
 - Display layers can show the underlying via `COALESCE(option_root, symbol)`, but the database row should retain expiry, strike, type, multiplier, and option root.
+- Brokers reuse adjusted option symbols across contract generations (`SOXS1` names several expiries/strikes), so an option identity requires symbol + expiry + strike + type. When a broker re-prints the identical contract under a different adjusted symbol between statements with no activity row (TD printed `5SOXS` then `SOXS1` for the same lot), never join by name. Review first, then pick one of two curated records: a dated reviewed ticker change (`data/ticker_changes.json` + `ingest apply-ticker-changes`) when the two names are two identities, or a symbol normalization (`data/symbol_normalizations.json` + `ingest apply-symbol-normalizations`) when both printed names are one instrument and extraction should resolve the adjusted root to the canonical symbol.
+
+## Summary Sign Forms
+
+- TD prints negative account-summary values with the minus before the dollar sign (`-$24,175.14`). Summary capture must keep that printed sign; dropping it flips the reported account change and fails the statement-change continuity check by exactly twice the change.
+
+## Split Legs And Broker Journals
+
+- TD prints some reverse splits as a two-leg book swap with the signed share counts inside the security name (`Reverse Split THOMSON REUTERS -100 12,196.99` / `THOMSON REUTERS CORP 98 -12,196.99`). Those quantities are out/in deltas and belong on in-kind journal rows; a `0.00` split note instead prints the resulting total and must not become a delta.
+- TD fractional-residue journals (`Security Position RBC QUBE CDN 0.001 0.00`, `Stock Exchange RBC QUBE CDN …`) print internal vehicle names, zero cash, and sometimes paired in/out quantities. They are broker-furniture journals, not listed-security movements; classify them so they complete the cash section without claiming a position identity.
+- TD transfer and fund rows abbreviate security names (`GLB X US DOLL CURR-A ETF`, `TD CDN EQ-D /NL'FRAC AS`); the reviewed name catalog maps them from the holdings rows that print the name and the `TDB####` code or full name together.
 
 ## Footer Contamination
 

@@ -1,7 +1,7 @@
 # CIBC parser
 
 Implementation: `src/ledger/parsers/cibc.py`, parser name `cibc`, current
-version `2.8.4`.
+version `2.9.0`.
 
 ## Recognition and account shape
 
@@ -43,6 +43,34 @@ separate positions and cash snapshot scopes.
   printed-name identities pending a reviewed fund-code lookup. The staged
   resolver either proves the identity or removes the pseudo-token before
   persistence.
+- Two deviant printed shapes of the "Other" option-holding row also parse
+  (2.8.5, reviewed against the 588-93738 Feb-Apr 2026 silver/gold rows).
+  First, when both quantity and book value are negative, CIBC may print the
+  two columns flush together with no separating space
+  (`PUT GLD JUN 18 2026 340 -200-$127,743.05 ...`); the row splits at the
+  minus sign, the only valid tokenization. Second, a row whose strike column
+  wrapped onto the following continuation line prints the quantity in the
+  strike slot (`PUT SLV APR 17 2026 25 $17,463.20 5.400 $13,500.00` over
+  `70.50 ISHARES SILVER SHARES`); the account-owner review fixed the
+  reading — inline number = quantity (pinned by the printed market value:
+  5.400 × 25 × 100 = $13,500.00), wrapped number = strike, echoed
+  identically under the Feb 17 `Bought` activity row. The strike-bearing
+  wrap is consumed with its row; a strikeless row whose strike prints
+  nowhere stays quarantined.
+- The same split-description shape exists in Account Activity, where the
+  option row's contract description wraps its strike onto the continuation
+  line under the row (2.8.6, corpus-wide: `Bought/Sold PUT <ROOT> MON DD
+  YYYY <qty> <price> <amount>` over `52.50 BHP GROUP LIMITED ADS`, and
+  unpriced `Expired PUT <ROOT> MON DD YYYY -25 — —` the same way). The
+  priced variant is gated on the strike line printing below the row; the
+  unpriced variant additionally requires a negative quantity, because a
+  strike never prints negative — `RE_OPT_EVENT`'s strike-only reading of a
+  single positive number is untouched. Both join the strike line into the
+  row's description and consume it, so it no longer quarantines as an
+  activity-like fragment. Activity rows whose strike prints nowhere keep
+  the prior handling (`option identity is incomplete`). Recovered 14
+  transactions across 2021-2023 and Feb/Apr 2026; each was spot-checked
+  against the printed continuation line.
 - Curated name fallback respects native-currency listings for dual-listed
   securities (for example, Barrick `ABX` in CAD and `GOLD` in USD).
 - `EFT DEBIT BANK ACCOUNT` is cash entering the brokerage account. Signed
@@ -99,7 +127,11 @@ separate positions and cash snapshot scopes.
   continuations) records a `journal` movement of the printed units: its
   identity stays unresolvable (no tradable symbol), so the transaction is
   persisted with `resolution_method = unresolved_printed_identity` instead
-  of either dropping the movement or inventing a token.
+  of either dropping the movement or inventing a token. The printed
+  `1000THS` qualifier states the quantity's unit — thousandths of a fund
+  unit (2.8.7) — so the printed `-2` records as `-0.002`: the dust a full
+  redemption leaves behind, exactly the balance the flatten clears
+  (`1000THS=639` in the wire footer is the same shorthand).
 - A dividend whose note line prints a reinvest price with a blank cash cell
   (`REINVESTED DIV @ 15.7635`, or the squeezed legacy `REINVEST. JAN 29 2016
   @ 9.0419` shape) is an in-kind reinvestment: it is recorded as
@@ -109,6 +141,24 @@ separate positions and cash snapshot scopes.
   dashes are the blank symbol cells): the row is a pure cash event and is
   recorded without an unresolved-identity marker. Tax rows that do print a
   security name keep resolving it.
+- Bare-name rows respect the printed native-listing symbol (2.8.8): First
+  Majestic renamed its TSX ticker `FR` → `AG`, so a bare `FIRST MAJESTIC
+  SILVER CORP` row in a CAD account resolves to `AG` — the symbol the
+  current holdings rows print as `(AG/TSX)` — instead of a dead legacy
+  listing. The 2021-2022 `FR` era lives on its own identity through the
+  same-statement holding of those statements.
+- Year-end return-of-capital tax disclosure is furniture, not a transaction
+  (2.8.9): `Rtn of Cap <FUND> — — —` prints all three data cells blank and
+  is followed by `CL F RTN OF CAPITAL YEAREND` / `VALUE <amt>` per-unit
+  history lines; every rollforward reconciles without them. A cash
+  return-of-capital row (amount printed, cells otherwise blank) still
+  records as an adjustment, with its component note lines
+  (`ETF RTN OF CAPTL n SHS`, `REC/PAY <date>`) merged into the description;
+  dividend component notes (`L/T CAP GNS n SHS`) ride with their dividend
+  the same way. Bare digit runs under a dated row are wire/transfer
+  confirmation numbers — receipt furniture. Registered-account book-value
+  boilerplate whose leading printer-barcode fragment (`RT0001.`) fuses onto
+  the sentence is skipped by its prose text.
 - A recognized portfolio section is declared `complete`; a cash scope is
   complete only after a valid printed closing balance and no unsupported dated
   numeric activity. Invalid/missing numeric fields and unclaimed numeric rows
@@ -118,6 +168,28 @@ separate positions and cash snapshot scopes.
   supplied them.
 - The statement explicitly owns its physical source pages; incomplete scopes
   carry structured blocking issues linked to evidence/quarantine.
+
+## Year-end Account Report (2.9.0)
+
+The December eStatement attaches a four-page "Your Year-end Account Report"
+after the monthly statement: a cover page, "The Performance of Your
+Investment Account #<acct>", "The Cost of Your Investment Account", and an
+information page. The report is its own category with its own
+reconciliation, so the parser extracts it as a separate annual statement
+(`statement_type = annual`, period January 1–December 31) whose pages are
+excluded from the monthly statement, and its printed lines and numbers are
+stored on that annual record (`annual_performance_reports`) rather than
+mixed into monthly transactions or holdings.
+
+The performance page prints one row per line with either one value
+(single-period reports) or two (the report year and since inception); the
+stored figure is the report-year column, and the since-inception date comes
+from the `... * (CAD)` column header. The "Change in Value" row maps to
+`net_investment_return`; the "Per Year" percentages map to the
+money-weighted returns (first = 1 year, last = since, third = 3 years when
+printed). The cost page's fee lines remain evidence lines on the annual
+statement — no monthly transaction or quarantine is created from the
+report. December PDFs 2021-2025 all carry the report.
 
 ## Remaining limits
 

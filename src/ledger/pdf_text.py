@@ -115,6 +115,45 @@ def sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
+def _without_leader_dot_rows(page):
+    """Drop visual rows composed almost entirely of period glyphs.
+
+    Older TD WebBroker statements print a dotted separator row between
+    holdings rows. ``extract_text()`` merges those dot glyphs into the
+    adjacent content rows ("1..,..2..0..0....S..e.g...."), corrupting both.
+    A leader row is decoration: nearly every glyph in the visual row is a
+    period, which never happens on a content row, so only period glyphs in
+    such rows are removed and decimals in content rows survive untouched.
+    """
+    try:
+        chars = page.chars
+        if not chars:
+            return page
+        from collections import defaultdict
+
+        rows: dict[float, list[object]] = defaultdict(list)
+        for c in chars:
+            rows[round(float(c["top"]) * 2) / 2].append(c)
+        leader_tops = {
+            top
+            for top, cs in rows.items()
+            if len(cs) >= 10
+            and sum(1 for c in cs if str(c.get("text")) == ".") >= 0.8 * len(cs)
+        }
+        if not leader_tops:
+            return page
+
+        def _is_leader(obj):
+            if obj.get("object_type") == "char" and str(obj.get("text")) == ".":
+                if round(float(obj["top"]) * 2) / 2 in leader_tops:
+                    return False
+            return True
+
+        return page.filter(_is_leader)
+    except Exception:
+        return page
+
+
 def _page_layout(page, page_number: int) -> tuple[list[PdfWord], list[PdfLine]]:
     """Extract words and reconstruct visual lines without altering raw text."""
     try:
@@ -188,7 +227,7 @@ def extract_pdf(
         with pdfplumber.open(str(path)) as pdf:
             page_count = len(pdf.pages)
             for page_number, p in enumerate(pdf.pages, start=1):
-                t = p.extract_text() or ""
+                t = _without_leader_dot_rows(p).extract_text() or ""
                 words, lines = _page_layout(p, page_number) if include_layout else ([], [])
                 pages.append(t or "\n".join(line.text for line in lines))
                 page_words.append(words)

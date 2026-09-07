@@ -1,0 +1,61 @@
+# Synthetic fixture: no real customer data.
+Investor's Edge Investment Account
+Account # 555-77777
+December 1-December 31, 2025
+
+Account Activity — Canadian Dollars
+Dec 1 Opening Cash Balance $100.00
+Dec 15 Dividend SAMPLE BANK — — $5.00
+Dec 31 Closing Cash Balance $105.00
+
+Portfolio Assets — Canadian Dollars
+Equities
+SAMPLE BANK INC 10 $50.00 10.000 $100.00 —
+(SB/TSX)
+
+----- PAGE BREAK -----
+
+Investor's Edge
+Your Year-end Account Report
+Your Year-end Account Report provides a clear picture of how your investment accounts are
+performing and what they cost you.
+2025 Year-end Account Report page 1 of 4
+
+----- PAGE BREAK -----
+
+Investor's Edge
+The Performance of Your Investment Account #555-77777
+How Your Account's Market Value Has Changed
+$0.00 $1,068,821.15
+Market Value on Market Value on
+Jan. 1, 2025* Dec. 31, 2025
+Since
+This year Jan. 1, 2025* (CAD)
+Opening Market Value $100.00 $0.00
++ Deposits** 1,031,325.00
+- Withdrawals** -14,000.00
++ Change in Value † 51,496.15
+= Closing Market Value $1,068,821.15
+How Your Account Has Performed
+YOUR AVERAGE ANNUAL INDIVIDUAL RATES OF RETURN
+This year
+Since Jan. 1, 2025*
+Per Year 6.37% 6.37%
+
+----- PAGE BREAK -----
+
+Investor's Edge
+The Cost of Your Investment Account #555-77777
+Fees You Paid
+This Year (CAD)
+CAD Equity Commission 20.85
+Total Transaction Fees $20.85
+Total Fees You Paid $20.85
+2025 Year-end Account Report page 3 of 4
+
+----- PAGE BREAK -----
+
+Investor's Edge
+Additional Information About Your Report
+This report contains information about your account performance and cost.
+2025 Year-end Account Report page 4 of 4

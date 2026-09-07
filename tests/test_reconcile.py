@@ -437,7 +437,7 @@ def test_interval_replay_resolves_paired_merger_legs(tmp_path):
                 (from_id, to_id),
             ).fetchall()
         )
-        balances, components, missing, _ids = _position_interval_replay(
+        balances, components, missing, _ids, _renames = _position_interval_replay(
             conn,
             account_id=account_id,
             currency="CAD",
@@ -474,7 +474,7 @@ def test_interval_replay_keeps_inconsistent_pair_ratios_missing(tmp_path):
                 (from_id, to_id),
             ).fetchall()
         )
-        _balances, _components, missing, _ids = _position_interval_replay(
+        _balances, _components, missing, _ids, _renames = _position_interval_replay(
             conn,
             account_id=account_id,
             currency="CAD",
@@ -526,7 +526,7 @@ def test_same_instrument_merger_legs_resolve_without_pair_row(tmp_path):
             "SELECT instrument_key FROM instruments WHERE instrument_id = ?",
             (instrument_id,),
         ).fetchone()[0]
-        balances, _components, missing, _ids = _position_interval_replay(
+        balances, _components, missing, _ids, _renames = _position_interval_replay(
             conn,
             account_id=account_id,
             currency="USD",
@@ -585,7 +585,7 @@ def test_interval_replay_attributes_drip_echo_to_printing_statement(tmp_path):
         ).fetchone()[0]
         prior_rows = {key: (instrument_id, 100.0)}
 
-        attributed, _components, missing, _ids = _position_interval_replay(
+        attributed, _components, missing, _ids, _renames = _position_interval_replay(
             conn,
             account_id=account_id,
             currency="CAD",
@@ -594,7 +594,7 @@ def test_interval_replay_attributes_drip_echo_to_printing_statement(tmp_path):
             prior_rows=prior_rows,
             scope_statement_id=feb_id,
         )
-        leaked, _c2, _m2, _i2 = _position_interval_replay(
+        leaked, _c2, _m2, _i2, _r2 = _position_interval_replay(
             conn,
             account_id=account_id,
             currency="CAD",

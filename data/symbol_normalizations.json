@@ -1,0 +1,40 @@
+{
+  "symbol_normalizations": [
+    {
+      "printed_symbol": "5SOXS",
+      "canonical_symbol": "SOXS1",
+      "asset_type": "option",
+      "currency": "USD",
+      "option_expiry": "2027-01-15",
+      "option_strike": 34.0,
+      "option_type": "CALL",
+      "effective_date": "2026-07-31",
+      "resolution_method": "reviewed_statement_reprint",
+      "resolution_confidence": 0.95,
+      "notes": "TD prints the same short 20-contract CALL lot (strike 34.00, expiry 2027-01-15, x100 multiplier) under the adjusted root 5SOXS through the June 2026 statement and under SOXS1 from July 2026; quantity and book value are identical across the two months and no activity row was printed for the symbol change. One instrument identity; extraction resolves the printed root to the canonical symbol.",
+      "evidence": [
+        "TD WebBroker 58MRB0-USD June 2026 statement, holdings section (5SOXS line)",
+        "TD WebBroker 58MRB0-USD July 2026 statement, holdings section (SOXS1 line)",
+        "PDF spot-check 2026-09-04"
+      ]
+    },
+    {
+      "printed_symbol": "98TRI+$",
+      "canonical_symbol": "TRI",
+      "asset_type": "option",
+      "currency": "CAD",
+      "option_expiry": "2026-06-19",
+      "option_strike": 120.0,
+      "option_type": "CALL",
+      "effective_date": "2026-05-31",
+      "resolution_method": "reviewed_statement_reprint",
+      "resolution_confidence": 0.95,
+      "notes": "TD prints the one-contract CALL lot (expiry 2026-06-19, strike 120.00, x100 multiplier) under the OCC adjusted root 98TRI+$ after the Thomson Reuters 100-for-98 reverse split, while the underlying equity stays TRI; quantity and book value are identical across the April (TRI) and May (98TRI+$) statements and no activity row was printed for the symbol change. One instrument identity; extraction resolves the adjusted root to the canonical symbol.",
+      "evidence": [
+        "TD WebBroker 58MRB0-CAD April 2026 statement, holdings section (TRI option line)",
+        "TD WebBroker 58MRB0-CAD May 2026 statement, holdings section (98TRI+$ option line)",
+        "PDF spot-check 2026-09-04"
+      ]
+    }
+  ]
+}

@@ -17,11 +17,11 @@ def test_fixture_corpus_audit_is_read_only_deterministic_and_passes_phase_four_p
     summary = audit_extraction(statements_dir=FIXTURES, output=output)
     first_bytes = output.read_bytes()
 
-    assert summary["files"] == 16
+    assert summary["files"] == 20
     assert summary["duplicate_statement_keys"] == 0
     assert summary["invalid_files"] == 0
     assert summary["validation_errors"] == 0
-    assert summary["counts"]["statements"] == 20
+    assert summary["counts"]["statements"] == 32
     assert summary["cash_checks"] > 0
     assert summary["cash_unbalanced"] == 0
     assert summary["position_unbalanced"] == 0

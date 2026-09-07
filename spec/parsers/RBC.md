@@ -1,7 +1,7 @@
 # RBC parser
 
 Implementation: `src/ledger/parsers/rbc.py`, parser name `rbc`, current
-version `2.8.2`.
+version `2.8.3`.
 
 ## Recognition and account shape
 
@@ -96,6 +96,14 @@ overwrite the first currency while writing the second.
 - A dividend followed by a printed fund-series code and `REINVEST @` becomes
   `reinvest_dividend`: printed units and price are retained against the matching
   mutual-fund holding, with zero cash effect.
+- A legacy dividend reinvestment prints as its own dated `DIVREIN` row with
+  the unit count and the cash debit it moved (`SEPT16 DIVREIN
+  FIRSTMAJESTICSILVERCORP 1 16.12` over `REINV@U$12.8182`). Both printed
+  facts are load-bearing, so the row records as a journal leg on the
+  security its squeezed name prints (2.8.3): the staged resolver ties the
+  synthetic name to the same-statement holding, exactly as for the adjacent
+  `DIVIDEND` rows. Rows dated outside the statement period keep the
+  pending-row quarantine.
 - Strict printed `RBF###`/`RBF####` codes remain broker identifiers, not
   inferred market-provider tickers.
 
